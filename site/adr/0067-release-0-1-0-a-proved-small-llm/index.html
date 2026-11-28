@@ -1,0 +1,4839 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="A programming language whose compiler proves your code correct before it runs.">
+      
+      
+      
+        <link rel="canonical" href="https://pia-lang.dev/adr/0067-release-0-1-0-a-proved-small-llm/">
+      
+      
+        <link rel="prev" href="../0066-int-blasting-for-nonlinear-goals/">
+      
+      
+        <link rel="next" href="../0068-gpu-compute-through-spirv-and-metal/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
+    
+    
+      
+        <title>67. Release 0.1.0 is a small Llama-architecture LLM ported from PyTorch to Pia, proved where a proof means something, running inference on an M3 Mac on CPU SIMD and on the GPU through linalg - Pia</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="teal">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#67-release-010-is-a-small-llama-architecture-llm-ported-from-pytorch-to-pia-proved-where-a-proof-means-something-running-inference-on-an-m3-mac-on-cpu-simd-and-on-the-gpu-through-linalg" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Pia" class="md-header__button md-logo" aria-label="Pia" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Pia
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              67. Release 0.1.0 is a small Llama-architecture LLM ported from PyTorch to Pia, proved where a proof means something, running inference on an M3 Mac on CPU SIMD and on the GPU through linalg
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="teal"  aria-label="Dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="teal"  aria-label="Light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/deanberris/pia-lang" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    deanberris/pia-lang
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Pia" class="md-nav__button md-logo" aria-label="Pia" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Pia
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/deanberris/pia-lang" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    deanberris/pia-lang
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../repl/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The REPL
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent skills and MCP
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pia and other verified languages
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../demo/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: edge detection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../streams.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: stream delineation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../sediment.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: sediment transport
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../basins.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: sediment by basin, in parallel
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pull.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: sediment in pull form
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../placed.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: D8 directions and the picture on the GPU
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pull_gpu.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: the sediment pull step on the GPU
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../gpu-demo/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: CPU and GPU, side by side
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tour/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    A tour of Pia
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Feature index
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../library/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The standard library today
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../idioms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Idiomatic Pia
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../json/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    JSON
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../verification/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How verification works
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../theories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Theories: teaching the verifier a domain
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../repl-debugging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Debugging C++ with the REPL
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_22" >
+        
+          
+          <label class="md-nav__link" for="__nav_22" id="__nav_22_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Case studies
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_22">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Case studies
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cases/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Famous bugs, proved away
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cases/heartbleed.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Heartbleed
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cases/binary-search.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Binary search
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cases/cloudbleed.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cloudbleed
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cases/crowdstrike.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CrowdStrike Channel File 291
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cases/rust-str-repeat.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust str::repeat
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cases/rust-vecdeque.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust VecDeque::reserve
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cases/libwebp.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    libwebp Huffman tables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cases/bun-readfile.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bun readFile on Windows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cases/zlib-gzip-extra.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    zlib gzip extra field
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cases/giflib-background.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    giflib background colour
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Status and roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_24" >
+        
+          
+          <label class="md-nav__link" for="__nav_24" id="__nav_24_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_24_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_24">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Design
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Language design
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../grammar/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Grammar
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../meta/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Metaprograms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../stdlib/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Standard library (proposal)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cpp-std/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The C++23 standard library in Pia
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../abi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Shared libraries and certificates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../advisories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advisories
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../init/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Module initialisation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concurrency/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Coroutines, races and deadlocks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_25" >
+        
+          
+          <label class="md-nav__link" for="__nav_25" id="__nav_25_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compiler internals
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_25_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_25">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Compiler internals
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../irgen/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    IRGen
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../verifier/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Verifier
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../codegen/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Codegen
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../style/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Style guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_26" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_26" id="__nav_26_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Decision records
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_26_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_26">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Decision records
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Index
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0001-record-architecture-decisions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1. Record architecture decisions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0002-single-let-binding-form/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2. let is the only binding form
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0003-static-typing-with-tagged-dyn/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    3. Strong static typing; dynamic typing only through tagged values
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0004-strongest-guarantee-by-default/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    4. The strongest guarantee is always the default
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0005-parameter-modifiers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    5. Parameters carry ownership, access and modifiability modifiers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0006-contracts-and-module-state/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    6. Contracts, refinement types, and module state as exported symbols
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0007-metaprogramming-fixed-point-expansion/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    7. Metaprogramming from day one, expanded to a fixed point
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0008-operators-via-metaprograms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    8. Operators are defined only through metaprograms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0009-generics-concepts-adapters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    9. User-defined generics, checked concepts with laws, and adapters
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0010-modules-interfaces-and-proof-certificates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    10. Modules export interfaces; imports name them; proofs carry certificates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0011-mlir-and-z3-implementation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    11. Compiler in C++ on MLIR, verifying with interval analysis then Z3
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0012-floating-point-reassociation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    12. Three ways to license float reassociation and FMA
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0013-auto-vectorisation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    13. Auto-vectorise as much as possible; keep vec&lt;T, k&gt; for explicit control
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0014-concurrency-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    14. Concurrent by default: collectives, task graphs, futures; collectives proved to match
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0015-device-placement/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    15. Device placement: compiler cost model, explicit, or overridable
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0016-stream-delineation-flagship-demo/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    16. Stream delineation on Apple Silicon is the flagship demo
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0017-bazel-build/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    17. Build with Bazel; depend on LLVM/MLIR and Z3 as Bazel modules
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0018-dialect-layering/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    18. Three Pia dialects over upstream MLIR, with smt for solving
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0019-grammar-disambiguation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    19. Grammar disambiguation rules
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0020-presburger-for-affine-goals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    20. Decide affine aliasing and dependence goals with MLIR's Presburger library
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0021-language-server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    21. A language server, pia-lsp, with a VS Code client first
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0022-metaprogram-hygiene/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    22. Hygiene and name lookup: no shadowing, renamed quote binders, qualified names, ADL
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0023-minimal-core-self-hosted-stdlib/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    23. A minimal core, with the standard library written and proved in Pia
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0024-published-proof-certificates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    24. Shared libraries publish interfaces and proof certificates; loaders check them
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0025-sanitizers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    25. Sanitizers check the edges of the proof
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0026-memory-manager/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    26. A memory manager of explicit allocators, with no garbage collection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0027-coroutines-and-race-freedom/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    27. Stackless coroutines, structured tasks, and race freedom proved from permissions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0028-error-propagation-and-cleanup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    28. Errors propagate with ? to a scope's handler; cleanup runs at scope end
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0029-comments-as-syntax-and-literate-pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    29. Comments are syntax: \ line comments, doc comments, and literate .pia.md files
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0030-published-object-layouts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    30. Optimised object layouts are published, and a changed layout fails to load until relinked
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0031-verified-repl-and-live-environment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    31. A verified REPL over a reusable session, with proved live redefinition
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0032-parallel-sliced-cached-proving/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    32. Proofs run in parallel, one goal per solver, sliced, cached and selectable
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0033-module-initialisation-and-registries/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    33. Module initialisation: registries, proved @init hooks, and opt-in dynamic registration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0034-concepts-and-overload-resolution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    34. Concepts as checked signatures, and concept-based overload resolution
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0035-substitution-failure-and-total-constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    35. Substitution failure removes a candidate, and constraints are proved to terminate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0036-library-theories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    36. Libraries extend the solver with theories: sorts, functions and axioms, proved consistent by a model or listed as trusted
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0037-idiomatic-pia-and-lints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    37. Idiomatic Pia: facts in types first, written as opinions and checked by lints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0038-float-kernels-against-real-theories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    38. Float kernels are proved against real-valued specifications by rounding-error bounds
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0039-module-and-interface-syntax/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    39. Modules are private by default: one module per file, interfaces list every export, imports name interfaces
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0040-cpp23-standard-library-in-pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    40. The C++23 standard library, mapped onto Pia and proved
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0041-allocator-semantics-as-a-theory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    41. Allocator semantics are a theory, and allocators prove they refine it through spec-only state
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0042-lifetimes-liveness-and-escape-analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    42. Lifetimes are checked by liveness, marked where values cross boundaries, and escape analysis places memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0043-generic-definitions-proved-once/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    43. Generic definitions are proved once, against their concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0044-function-values-and-lambdas/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    44. Function values: typed and generic lambdas, a Function concept, and proofs through function arguments
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0045-json-derived-codecs-and-conforming-dom/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    45. JSON: derived streaming codecs, typed construction, and a DOM proved to conform to a type
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0046-box-over-a-type-or-a-concept/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    46. A box holds a type or any type meeting a concept, and what it holds is proved to have the concept's shape
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0047-recursive-sum-types-and-shared-references/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    47. Recursive sum types are explicit, recurse through an owning indirection, and share through strong and weak references
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0048-buffers-whose-elements-hold-slices/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    48. Buffers may hold slices: owned slices are written through, shared ones only read
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0049-targets-are-theories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    49. Linux x86_64 is a second target, tested in Linux CI, and each target is a model of a built-in Pia.Target theory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0050-senders-and-receivers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    50. Asynchronous work is senders and receivers whose completion rules are proved, over io_uring on Linux and a kqueue completion adapter on macOS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0051-variadic-generics-and-foreign-varargs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    51. Variadic functions and types take a pack that is called like any argument list, walked by metaprograms and proved once; foreign bindings are generated from tables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0052-atomics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    52. Atomics are a core cell type with checked orders and stated overflow, modelled by RC11 with a litmus battery before tasks exist, and lowered per target by a table proved against each hardware model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0053-protocols-checked-by-z3/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    53. Protocols and deadlock are checked in Z3, as transition systems proved by constrained Horn clauses; explicit search stays for atomics, and TLA+ is an export format
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0054-proved-gif-and-inflate-codecs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    54. GIF and inflate are proved total on every input, decode to a written specification, and GIF round-trips exactly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0055-sediment-transport-in-fixed-point/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    55. Sediment transport is integer mass moved downhill in height order, with conservation proved exactly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0056-tests-generated-from-contracts-and-theories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    56. Tests are generated by metaprograms from contracts, types and theories; a case the verifier can decide is proved, and only the rest is run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0057-posix-module-per-target-behind-one-interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    57. Pia.Sys.Posix is one generated module per target behind one hand-written interface, and the generator joins the contract overlay
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0058-spec-buffers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    58. Spec buffers: spec-only arrays that code writes, contracts read and codegen erases
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0059-digit-separators-and-type-bounds/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    59. Digits group with ' or _; min t and max t are an integer type's bounds, folded to literals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0060-spread-v0-ownership-and-runtime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    60. spread v0: iterations own the cells they write, proved one iteration at a time; MLIR's async runtime runs them
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0061-lean-proved-facts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    61. Lean proves the facts Z3 cannot: lemmas and theory models are proved in Lean against statements piac generates, recorded in certificates by statement hash, and checked outside the edit loop; cost bounds are proved by Z3, and their asymptotics in Lean
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0062-cost-bounds-in-contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    62. Cost bounds are contracts: costs c &lt;= e bounds what a function spends on a named counter, tracked by a spec-only spent c and proved by Z3
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0063-opaque-spec-functions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    63. Opaque spec functions: a spec function marked @opaque keeps its definition out of every goal until a proof reveals it
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0064-distinct-types/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    64. type always makes a new type: let length = type u32 is distinct from u32, converts only by applying a type to a value, and inherits only what it derives
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0065-lowerings-written-in-pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    65. Pia code extends the compiler's lowering: @lower gives a function an MLIR form and a type an MLIR type, the Pia definition stays the specification, and each lowering is proved to refine it or is listed as trusted
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0066-int-blasting-for-nonlinear-goals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    66. Nonlinear goals are tried first with Z3's int-blasting solver, and other solvers are kept out of the pipeline for now
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    67. Release 0.1.0 is a small Llama-architecture LLM ported from PyTorch to Pia, proved where a proof means something, running inference on an M3 Mac on CPU SIMD and on the GPU through linalg
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    67. Release 0.1.0 is a small Llama-architecture LLM ported from PyTorch to Pia, proved where a proof means something, running inference on an M3 Mac on CPU SIMD and on the GPU through linalg
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Decision">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-the-model-karpathys-tinystories-llama-checkpoints-stories260k-first-then-stories15m" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. The model: Karpathy's TinyStories Llama checkpoints, stories260K first, then stories15M
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-weights-load-from-safetensors-checked-once-at-load" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Weights load from safetensors, checked once at load
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-what-is-proved-and-what-is-not" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. What is proved, and what is not
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-execution-on-the-m3-in-three-stages" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Execution on the M3, in three stages
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-dependency-prs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Dependency PRs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#6-the-010-release-checklist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. The 0.1.0 release checklist
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#consequences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Consequences
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#answers-to-the-review-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Answers to the review questions
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0068-gpu-compute-through-spirv-and-metal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    68. GPU compute: a proved spread placed on the GPU, lowered through SPIR-V and SPIRV-Cross to Metal, launched by a small trusted shim
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0069-pure-and-impure-functions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    69. Pure and impure functions: computed purity, @pure assertions, and @impure interface boundaries
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0070-raw-binary-embedding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    70. Raw binary embedding: @embed for compile-time fixed byte blobs, hermetic roots, opaque verification and direct LLVM emission
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0071-function-references/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    71. Function references: a function is a value that travels by reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0072-drops-run-in-constant-stack/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    72. A drop never grows the stack: every drop is one walk, proved against the recursive drop, with a fixed stack bound per type
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0073-prover-identity-abi-version-and-advisories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    73. Certificates record who proved a module and with what, advisories revoke trust in faulty provers, and every breaking change ships a migration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0074-library-types-tensors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    74. Library types: a type written in Pia gets an MLIR type, ops and proofs from its library, and Pia.Tensor over MLIR tensor is the proof point
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0075-codegen-benchmarks-against-c-cpp-rust-zig/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    75. Codegen is benchmarked against C, C++, Rust and Zig on public problems, same algorithm first, counted in instructions on Linux and timed on Apple Silicon
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0076-transparent-exports/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    76. Transparent exports: an importer proves against an exported function's body, as a caller in its own module does
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0077-definitions-inherit-interface-contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    77. A definition that states no contract takes the contract of the interface that lists it
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0078-pia-lib-ops-with-proved-substitutions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    78. Library functions lower to pia_lib.call, a Pia-owned op whose meaning is its Pia body, and a late pass either expands it into the body or substitutes an upstream op through a rule proved against the body
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0079-pia-module-format/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    79. Pia IR: a versioned op schema Pia controls, in lock-step with piac, with deprecations and migrations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0080-protocol-buffers-in-pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    80. Protocol Buffers in Pia: a metaprogram that turns .proto into proved types and codecs, and Pia IR as a protobuf schema
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Decision">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-the-model-karpathys-tinystories-llama-checkpoints-stories260k-first-then-stories15m" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. The model: Karpathy's TinyStories Llama checkpoints, stories260K first, then stories15M
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-weights-load-from-safetensors-checked-once-at-load" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Weights load from safetensors, checked once at load
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-what-is-proved-and-what-is-not" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. What is proved, and what is not
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-execution-on-the-m3-in-three-stages" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Execution on the M3, in three stages
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-dependency-prs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Dependency PRs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#6-the-010-release-checklist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. The 0.1.0 release checklist
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#consequences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Consequences
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#answers-to-the-review-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Answers to the review questions
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="67-release-010-is-a-small-llama-architecture-llm-ported-from-pytorch-to-pia-proved-where-a-proof-means-something-running-inference-on-an-m3-mac-on-cpu-simd-and-on-the-gpu-through-linalg">67. Release 0.1.0 is a small Llama-architecture LLM ported from PyTorch to Pia, proved where a proof means something, running inference on an M3 Mac on CPU SIMD and on the GPU through linalg<a class="headerlink" href="#67-release-010-is-a-small-llama-architecture-llm-ported-from-pytorch-to-pia-proved-where-a-proof-means-something-running-inference-on-an-m3-mac-on-cpu-simd-and-on-the-gpu-through-linalg" title="Permanent link">&para;</a></h1>
+<p>Date: 2026-11-24</p>
+<p>Status: Accepted (2026-11-24, with Dean's answers to its questions below)</p>
+<h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
+<p>Dean asked for 0.1.0 to ship when Pia has floats and the linalg work, shown by a large language model ported from PyTorch to Pia: start with a small model, prove what can be proved, and have an inference stack that runs on his M3 Mac.</p>
+<p>Where the pieces stand today (main at <code>738b5ec</code>):</p>
+<ul>
+<li><strong>Floats do not exist yet.</strong> <code>0.5</code> is a spec-only <code>real</code>; a suffixed literal such as <code>0.5f32</code> is refused in <code>genRealConst</code> (<code>src/irgen/IRGen.cpp</code>), and there is no <code>f32</code> type in Sema, IRGen, the verifier or codegen. <a href="../0038-float-kernels-against-real-theories/">ADR 0038</a> (Accepted) designs how float kernels are proved against real specifications, and none of its eight steps is built. <a href="../0012-floating-point-reassociation/">ADR 0012</a>'s licences and milestone M11 (<a href="https://github.com/deanberris/pia-lang/issues/12">#12</a>) are open.</li>
+<li><strong>Reals exist in specs.</strong> <code>real</code> and unbounded <code>int</code> reach Z3 (ADR 0036, step 1), so spec functions over reals, which ADR 0038's error goals need, already work.</li>
+<li><strong>linalg is designed, not linked.</strong> <a href="../0065-lowerings-written-in-pia/">ADR 0065</a> (Proposed) gives <code>@lower</code> and <code>@schedule</code>, proved lowerings for integer <code>linalg.generic</code>, and the GPU route (tile, map to blocks and threads, <code>convert-gpu-to-spirv</code>, SPIRV-Cross to MSL, a trusted Metal shim). Its 4x4 integer matmul prototype proved 51 of 51 goals in 17.5 s. piac links none of <code>linalg</code>, <code>tensor</code>, <code>gpu</code> or <code>spirv</code> yet.</li>
+<li><strong>Nonlinear index goals</strong> such as <code>i * dim + j &lt; len w</code> are what a transformer's indexing is made of. <a href="https://github.com/deanberris/pia-lang/pull/421">ADR 0066</a> (Accepted, in review as PR #421) turns on Z3 int-blasting for them, which proved 13 of 13 such goals in about a second each where bit-blasting timed out.</li>
+<li><strong>Libraries that help:</strong> the JSON library (ADR 0045) reads a safetensors header, <code>Pia.Mem</code> allocators and <code>vec</code> (ADR 0041, 0046) hold weights and the KV cache, <code>Pia.Sys.Posix</code> reads files, and contract-driven tests (ADR 0056) run kernels against references.</li>
+<li><strong>libm is never trusted</strong> (stdlib rule, 2026-11-21). <code>exp</code>, <code>sin</code> and <code>cos</code> must be written and proved in Pia. <code>sqrt</code> is an IEEE 754 operation, correctly rounded by the hardware (<code>fsqrt</code> on arm64), so it is in ADR 0038's <code>round</code> encoding like <code>+</code> and needs no library.</li>
+<li><strong>Nothing GPL</strong> may be used, bundled or depended on, including the model, its tokenizer and any tool in the release path (Dean's standing rule).</li>
+</ul>
+<h2 id="decision">Decision<a class="headerlink" href="#decision" title="Permanent link">&para;</a></h2>
+<h3 id="1-the-model-karpathys-tinystories-llama-checkpoints-stories260k-first-then-stories15m">1. The model: Karpathy's TinyStories Llama checkpoints, <code>stories260K</code> first, then <code>stories15M</code><a class="headerlink" href="#1-the-model-karpathys-tinystories-llama-checkpoints-stories260k-first-then-stories15m" title="Permanent link">&para;</a></h3>
+<p>The demo ports the PyTorch <code>Transformer</code> of <a href="https://github.com/karpathy/llama2.c">llama2.c</a> (<code>model.py</code>), a Llama 2 architecture trained on the TinyStories dataset, and runs the checkpoints Karpathy published in <a href="https://huggingface.co/karpathy/tinyllamas">karpathy/tinyllamas</a>:</p>
+<table>
+<thead>
+<tr>
+<th>Checkpoint</th>
+<th>Shape</th>
+<th>Weights (f32)</th>
+<th>Tokenizer</th>
+<th>Licence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>stories260K</code></td>
+<td>dim 64, 5 layers, 8 heads, 4 KV heads (grouped-query attention), context 512</td>
+<td>about 1 MB</td>
+<td><code>tok512</code>, a 512-token SentencePiece BPE that Karpathy trained</td>
+<td>MIT (code and weights)</td>
+</tr>
+<tr>
+<td><code>stories15M</code></td>
+<td>dim 288, 6 layers, 6 heads, context 256</td>
+<td>about 60 MB</td>
+<td>Llama 2's 32,000-token SentencePiece vocabulary</td>
+<td>MIT for code and weights; the vocabulary file came from Meta's Llama 2 release</td>
+</tr>
+</tbody>
+</table>
+<p>Why this family:</p>
+<ul>
+<li><strong>It is a real modern LLM, small enough to prove.</strong> Token embedding, RMSNorm, rotary position embeddings (RoPE), grouped-query attention with a KV cache, SwiGLU feed-forward, residuals, a tied output projection, then sampling. This is the architecture of Llama, Mistral and Qwen, so the kernels are the ones a larger port needs, and every shape is a small constant.</li>
+<li><strong>It is PyTorch at the source.</strong> <code>model.py</code> is the PyTorch module the checkpoints were trained with, so "ported from PyTorch" is literal: each method of <code>Transformer</code>, <code>Attention</code>, <code>FeedForward</code> and <code>RMSNorm</code> becomes a Pia function with the PyTorch line it ports beside it.</li>
+<li><strong>It has a reference implementation to test against.</strong> <code>run.c</code> in the same repository runs the same checkpoints in f32, so token-for-token agreement under greedy decoding is a test, not a claim.</li>
+<li><strong>The licence is clean.</strong> MIT, with no GPL anywhere. <code>stories260K</code> and <code>tok512</code> are entirely Karpathy's own work; <code>stories15M</code>'s vocabulary is Meta's, which is not GPL but is not MIT either, so the release ships <code>stories260K</code> in its tests and fetches <code>stories15M</code> only for the larger demo (open question 1).</li>
+</ul>
+<p>Rejected: GPT-2 124M (MIT), which needs LayerNorm, GELU's <code>tanh</code>, learned positions and a 50,257-token byte-level BPE, at 500 MB of f32, with no proof that the extra kernels teach anything Llama's do not; and <code>roneneldan/TinyStories-1M</code> and its siblings, whose model cards state no licence.</p>
+<p>f32 throughout for 0.1.0. bf16 or block-format weights (ADR 0038, step 8) are a later example.</p>
+<h3 id="2-weights-load-from-safetensors-checked-once-at-load">2. Weights load from safetensors, checked once at load<a class="headerlink" href="#2-weights-load-from-safetensors-checked-once-at-load" title="Permanent link">&para;</a></h3>
+<p>A one-off script, <code>tools/llm/export.py</code> (PyTorch, BSD; not in the trusted base and not in the build), converts a llama2.c checkpoint to <a href="https://github.com/huggingface/safetensors">safetensors</a> with the config in the header's <code>__metadata__</code>. The Pia side, <code>Pia.Format.Safetensors</code>, is pure Pia over bytes read through <code>Pia.Sys.Posix</code>:</p>
+<ul>
+<li>an 8-byte little-endian header length, a JSON header parsed by the JSON library into a typed record per tensor (dtype, shape, byte offsets), and the data region;</li>
+<li>proved total on every input: every offset pair is in bounds and ordered, every shape's element count times the dtype size equals its byte range, and a malformed file is an error value, never a crash (the same standard as ADR 0054's codecs);</li>
+<li><code>Pia.Llm.Llama.load</code> then checks each tensor's name and shape against the config, and that every weight is finite with <code>|w| &lt;= bound</code>, computing <code>bound</code> from the file. Those checks are what the type of the loaded weights records, so the forward pass starts from proved facts about its inputs, not from trust in the file.</li>
+</ul>
+<h3 id="3-what-is-proved-and-what-is-not">3. What is proved, and what is not<a class="headerlink" href="#3-what-is-proved-and-what-is-not" title="Permanent link">&para;</a></h3>
+<p>Each property names the layer that proves it. "Every input" means every token sequence and every weight file that passes the load checks.</p>
+<table>
+<thead>
+<tr>
+<th>Property</th>
+<th>Proved how</th>
+<th>Status of the claim</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Shapes.</strong> Every matmul, slice and cache access agrees with the config</td>
+<td>Types and <code>requires</code>: the config is a record of constants, and each kernel takes slices whose lengths are stated in terms of it</td>
+<td>Proved</td>
+</tr>
+<tr>
+<td><strong>Bounds.</strong> No out-of-bounds read or write, including the KV cache at position <code>pos &lt; seq_len</code> and GQA's head mapping <code>h / (n_heads / n_kv_heads)</code></td>
+<td>Index goals, int-blasted (ADR 0066), with one bounds lemma per indexing map (ADR 0065's prototype finding)</td>
+<td>Proved</td>
+</tr>
+<tr>
+<td><strong>No NaN, no infinity, no overflow</strong> anywhere in a forward pass</td>
+<td>Float intervals (ADR 0038, layer 1) from the load-time weight bound: RMSNorm's output is bounded by <code>sqrt dim * max |g|</code>; softmax subtracts the row maximum, so every <code>exp</code> argument is <code>&lt;= 0</code> and every probability is in <code>[0, 1]</code>; the residual stream's bound grows by a computed amount per layer; logits are finite</td>
+<td>Proved, for the loaded weights' bound</td>
+</tr>
+<tr>
+<td><strong>Termination and memory.</strong> Generation stops after <code>steps &lt;= seq_len</code> tokens; every allocation is fallible and handled</td>
+<td>Ordinary measures and ADR 0026</td>
+<td>Proved</td>
+</tr>
+<tr>
+<td><strong>Kernels equal their specification.</strong> The SIMD, tiled and GPU kernels compute what the scalar Pia kernel says, up to a stated tolerance</td>
+<td>ADR 0065's refinement goal for each <code>@lower</code>; under <code>@fp(reassoc)</code> the tolerance is the order-free γₙ bound (ADR 0038, section on reassociation)</td>
+<td>Proved on CPU; on the GPU, proved against the device float model, which is trusted (section 4)</td>
+</tr>
+<tr>
+<td><strong>Per-kernel float error.</strong> Each of <code>matvec</code>, <code>rmsnorm</code>, <code>softmax</code>, <code>silu</code>, <code>rope</code> and <code>exp</code> is within a bound of its real-valued specification</td>
+<td>ADR 0038 layers 2 and 3: per-operation δ with nlsat for straight-line code, Higham's γₙ lemmas for reductions, <code>~=</code> with derived bounds published in interfaces</td>
+<td>Proved</td>
+</tr>
+<tr>
+<td><strong><code>exp</code>, <code>sin</code>, <code>cos</code> against the real functions</strong></td>
+<td>Range reduction proved in Z3; the polynomial's distance from the real function proved in Lean with Mathlib (ADR 0061), because Z3 has no <code>exp</code></td>
+<td>Proved, with Lean lemmas listed by hash</td>
+</tr>
+<tr>
+<td><strong>End-to-end error of the logits</strong> against the real-valued model</td>
+<td>Composed from the per-kernel bounds by ADR 0038's <code>lip</code>/<code>err</code> pair</td>
+<td>Derived and reported, not claimed useful: through 5 layers of attention a worst-case bound is likely far looser than the observed error, so the release reports both</td>
+</tr>
+<tr>
+<td><strong>Agreement with PyTorch</strong></td>
+<td>Differential test against <code>run.c</code> and <code>model.py</code>: identical greedy tokens for a fixed prompt set, and the maximum absolute logit difference</td>
+<td>Tested, not proved: reductions sum in a different order, so bit-equality is not the goal</td>
+</tr>
+<tr>
+<td><strong>Tokenizer.</strong> Encoding terminates, every emitted id is <code>&lt; vocab_size</code>, and decoding an encoding gives back the input bytes</td>
+<td>BPE merges as a loop with a decreasing measure; byte fallback makes the round trip total</td>
+<td>Proved</td>
+</tr>
+<tr>
+<td><strong>Sampling.</strong> The sampled id is <code>&lt; vocab_size</code>; temperature and top-p keep the distribution's support; the PRNG is the integer xorshift <code>run.c</code> uses</td>
+<td>Contracts on <code>sample</code>; the PRNG is integer code</td>
+<td>Proved; the randomness of the PRNG is not</td>
+</tr>
+<tr>
+<td><strong>Model quality</strong>: that the stories are coherent, that the weights mean anything</td>
+<td>Nothing</td>
+<td>Not provable. The demo says so on its first page</td>
+</tr>
+</tbody>
+</table>
+<h3 id="4-execution-on-the-m3-in-three-stages">4. Execution on the M3, in three stages<a class="headerlink" href="#4-execution-on-the-m3-in-three-stages" title="Permanent link">&para;</a></h3>
+<p>The same Pia functions are the specification at every stage. A later stage replaces a body's code, never its contract.</p>
+<ol>
+<li><strong>Scalar CPU.</strong> The plain Pia port, compiled by today's codegen (with f32 added) and run by the REPL's JIT. This is the stage that first matches <code>run.c</code> token for token. <code>stories260K</code> runs interactively at this stage.</li>
+<li><strong>CPU SIMD.</strong> <code>matvec</code>, <code>rmsnorm</code>, <code>softmax</code> and the attention dot products vectorised for NEON: first by LLVM's vectoriser under <code>@fp(reassoc)</code> (ADR 0012), then with ADR 0065's <code>@schedule</code> (tile and vectorise, step 5) where the vectoriser does not. Benchmarked in tokens per second against <code>run.c</code> built with <code>-O3 -ffast-math</code>.</li>
+<li><strong>GPU.</strong> The matmuls (the Q, K, V, O, gate, up, down and classifier projections) lower with <code>@lower</code> to <code>linalg.matvec</code>/<code>linalg.matmul</code> on <code>memref</code>, are scheduled with <code>tile_using_forall</code> and mapped to threads, go through <code>convert-gpu-to-spirv</code>, and SPIRV-Cross writes MSL, which a trusted Metal shim compiles and launches (ADR 0065, section 6). The device's float model (ADR 0038, "Mixed precision and devices") is a trusted theory: it states, for each operation, the precision the Metal Shading Language specification gives with fast math off (compiled with fast math off), and treats subnormals as possibly flushed, so the tolerance contracts account for both. Softmax, RMSNorm and sampling stay on the CPU for 0.1.0. For <code>stories260K</code> the GPU will be slower than the CPU, since each matmul is tiny; the GPU stage is measured on <code>stories15M</code>, where it can win.</li>
+</ol>
+<p>Prompt processing runs the same per-token path as generation in 0.1.0 (batched prefill with <code>linalg.matmul</code> is a later step).</p>
+<h3 id="5-dependency-prs">5. Dependency PRs<a class="headerlink" href="#5-dependency-prs" title="Permanent link">&para;</a></h3>
+<p>Sizes: <strong>S</strong> is about a day of work and one PR, <strong>M</strong> two to three days, <strong>L</strong> a week or more, possibly split. Owners are the threads already working in the area.</p>
+<p><strong>Floats (M11, ADR 0012, ADR 0038)</strong></p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>PR</th>
+<th>Size</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>F1</td>
+<td><code>f32</code> and <code>f64</code> types: suffixed literals, arithmetic, comparisons, conversions to and from integers, <code>to_bits</code>/<code>from_bits</code>, strict IEEE codegen (no flush-to-zero)</td>
+<td>L</td>
+<td>not started</td>
+</tr>
+<tr>
+<td>F2</td>
+<td>The verifier's float encoding, step 1 of ADR 0038: <code>to_real</code>, <code>finite</code>, <code>eps</code>, <code>tiny</code>, the <code>Float</code> concept with builtin adapters, float intervals in the interval stage; bit-precise FP behind <code>@solver(fp_exact)</code></td>
+<td>L</td>
+<td>not started</td>
+</tr>
+<tr>
+<td>F3</td>
+<td>Step 2: the <code>round</code> encoding with per-operation δ, nlsat for straight-line error goals</td>
+<td>M</td>
+<td>not started</td>
+</tr>
+<tr>
+<td>F4</td>
+<td>Step 3: <code>Pia.Float.Error</code> with γₙ, and the summation, dot product and matrix-vector lemmas</td>
+<td>M</td>
+<td>not started</td>
+</tr>
+<tr>
+<td>F5</td>
+<td>Step 4 plus ADR 0012's licence: <code>@fp(reassoc)</code> and <code>contract</code> in codegen, order-free bounds</td>
+<td>M</td>
+<td>not started</td>
+</tr>
+<tr>
+<td>F6</td>
+<td>Step 6: <code>a ~= e within b</code>, derived bounds published in interfaces</td>
+<td>M</td>
+<td>not started</td>
+</tr>
+<tr>
+<td>F7</td>
+<td>Step 5: device float models in placement, with the Apple GPU's model</td>
+<td>S</td>
+<td>not started; needed only for stage 3</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Maths without libm (<code>Pia.Math</code>)</strong></p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>PR</th>
+<th>Size</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>X1</td>
+<td><code>sqrt</code> as a builtin IEEE operation, and <code>rsqrt</code> as <code>1 / sqrt</code> with its error</td>
+<td>S</td>
+<td>needs F1, F3</td>
+</tr>
+<tr>
+<td>X2</td>
+<td><code>exp</code> for f32: reduction by <code>ln 2</code>, a degree-6 polynomial, scaling through the exponent bits; finite on <code>x &lt;= 88.7</code>, error bound against a real <code>exp</code> theory whose model and polynomial lemma are proved in Lean</td>
+<td>M</td>
+<td>needs F1-F4 and ADR 0061's runner</td>
+</tr>
+<tr>
+<td>X3</td>
+<td><code>sin</code> and <code>cos</code> for f32 on the range RoPE uses (<code>|x| &lt;= seq_len</code>), the same way</td>
+<td>M</td>
+<td>needs X2's machinery</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Kernels (<code>Pia.Nn</code>) and the model (<code>Pia.Llm</code>)</strong></p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>PR</th>
+<th>Size</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>K1</td>
+<td><code>matvec</code> with its γₙ tolerance and bounds lemmas</td>
+<td>S</td>
+<td>needs F4</td>
+</tr>
+<tr>
+<td>K2</td>
+<td><code>rmsnorm</code>, <code>softmax</code> (max-subtracted, probabilities in <code>[0, 1]</code>, sum within tolerance of 1), <code>silu</code>/SwiGLU, residual add</td>
+<td>M</td>
+<td>needs X1, X2</td>
+</tr>
+<tr>
+<td>K3</td>
+<td><code>rope</code> and grouped-query attention over a KV cache</td>
+<td>M</td>
+<td>needs X3, K1, K2</td>
+</tr>
+<tr>
+<td>M1</td>
+<td><code>Pia.Format.Safetensors</code>, proved total, and <code>tools/llm/export.py</code></td>
+<td>M</td>
+<td>integer-only, can start now</td>
+</tr>
+<tr>
+<td>M2</td>
+<td>Tokenizer: <code>tok512</code> vocabulary loader, BPE encode, decode, the round trip</td>
+<td>M</td>
+<td>integer-only, can start now</td>
+</tr>
+<tr>
+<td>M3</td>
+<td>Sampling: argmax, temperature, top-p, xorshift</td>
+<td>S</td>
+<td>needs F1 for the probabilities</td>
+</tr>
+<tr>
+<td>M4</td>
+<td><code>Pia.Llm.Llama</code>: config, weights, load checks, <code>forward</code>, <code>generate</code>; <code>examples/llm/stories.pia</code> as a command; the differential test against <code>run.c</code></td>
+<td>L</td>
+<td>needs K1-K3, M1-M3</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Execution</strong></p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>PR</th>
+<th>Size</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>E1</td>
+<td>CPU SIMD: <code>@fp(reassoc)</code> kernels vectorised to NEON, tokens-per-second benchmark against <code>run.c</code></td>
+<td>M</td>
+<td>needs F5, M4</td>
+</tr>
+<tr>
+<td>E2</td>
+<td>ADR 0065 steps 1-4 with float <code>linalg.generic</code> meanings (<code>arith.addf</code>/<code>mulf</code> under the <code>round</code> encoding), <code>Pia.Linalg.matvec</code> and <code>matmul</code></td>
+<td>L</td>
+<td>ADR 0065 thread; needs F3 for the float meaning</td>
+</tr>
+<tr>
+<td>E3</td>
+<td>ADR 0065 step 5: <code>@schedule</code> on CPU</td>
+<td>M</td>
+<td>ADR 0065 thread</td>
+</tr>
+<tr>
+<td>E4</td>
+<td>The GPU ADR, then ADR 0065 step 7: SPIR-V, SPIRV-Cross, the Metal shim, <code>@place(gpu)</code> for the projections</td>
+<td>L</td>
+<td>GPU demo thread and ADR 0065 thread</td>
+</tr>
+<tr>
+<td>E5</td>
+<td>The literate walkthrough, <code>docs/llm.pia.md</code>: the port beside <code>model.py</code>, the proof report, the trust report, the benchmark</td>
+<td>M</td>
+<td>last</td>
+</tr>
+</tbody>
+</table>
+<p>The critical path is F1, F2, F3, F4, X2, K2, K3, M4, then E1 and E4 in parallel. M1 and M2 run alongside floats from day one; E2 and E3 run alongside the kernels.</p>
+<h3 id="6-the-010-release-checklist">6. The 0.1.0 release checklist<a class="headerlink" href="#6-the-010-release-checklist" title="Permanent link">&para;</a></h3>
+<p>0.1.0 is tagged when all of these hold:</p>
+<ul>
+<li>[ ] <code>stories260K</code> generates a story on Dean's M3 with the <code>stories</code> command built from <code>examples/llm/stories.pia</code>, matching <code>run.c</code>'s greedy tokens for the fixed prompt set, on the scalar, SIMD and GPU paths.</li>
+<li>[ ] <code>stories15M</code> runs on the GPU path, with its tokens per second reported against <code>run.c</code>.</li>
+<li>[ ] Every goal in <code>lib/Pia/Math</code>, <code>lib/Pia/Nn</code>, <code>lib/Pia/Llm</code> and <code>lib/Pia/Format</code> is proved, with no <code>--allow</code> flags; the report gives goals per file, wall-clock time, the costliest goals, and the split between Z3, intervals and Lean.</li>
+<li>[ ] <code>piac --trust-report</code> for the demo lists exactly: the IEEE <code>round</code> encoding, the Apple GPU float model, the Metal shim's <code>extern</code> contracts, the GPU lowering and schedule items, and nothing else.</li>
+<li>[ ] The proof benchmark (ADR 0032) includes the float kernels, and the gate passes on CI.</li>
+<li>[ ] M11 (<a href="https://github.com/deanberris/pia-lang/issues/12">#12</a>) is closed; ADR 0065 is Accepted and its steps 1 to 5 and 7 are merged.</li>
+<li>[ ] <code>docs/llm.pia.md</code> is on the site and doc-tested, and the status page and the skill pack list floats, <code>Pia.Math</code>, <code>Pia.Nn</code> and <code>Pia.Llm</code>.</li>
+<li>[ ] Licences audited: no GPL in the build, the release or the fetched model; <code>stories15M</code>'s vocabulary licence stated where it is fetched.</li>
+<li>[ ] <code>piac --version</code> prints 0.1.0; release notes say what 0.1.0 proves and what it does not (section 3's last rows); macOS arm64 binaries attached to the GitHub release.</li>
+</ul>
+<h2 id="consequences">Consequences<a class="headerlink" href="#consequences" title="Permanent link">&para;</a></h2>
+<ul>
+<li>0.1.0 is gated on floats, which are the largest missing piece: F1 to F4 are about three weeks of PRs before the first float kernel proves. The integer parts of the model (safetensors, tokenizer) start now, so they are ready when the kernels are.</li>
+<li>The demo turns ADR 0038 and ADR 0065 from designs into code with a user, and the kernels it needs (<code>matvec</code>, <code>softmax</code>, <code>rmsnorm</code>, <code>exp</code>) are the start of a reusable <code>Pia.Nn</code>.</li>
+<li>The claims are bounded and stated: safety, shapes, finiteness and per-kernel error are proved; agreement with PyTorch is tested; quality is not addressed. The end-to-end bound is reported even when it is loose, because hiding it would overclaim.</li>
+<li>The trusted base grows by the GPU's float model and the Metal shim, both named in the trust report, as ADR 0038 and ADR 0065 already require.</li>
+<li>Lean becomes part of the release path for <code>exp</code>, <code>sin</code> and <code>cos</code>, so ADR 0061's runner must work on the iMac and in CI by then.</li>
+</ul>
+<h2 id="answers-to-the-review-questions">Answers to the review questions<a class="headerlink" href="#answers-to-the-review-questions" title="Permanent link">&para;</a></h2>
+<p>Dean accepted this ADR on 2026-11-24 and answered both questions. These answers are part of the decision.</p>
+<ol>
+<li><strong>The headline is <code>stories260K</code>, with <code>stories15M</code> on the GPU.</strong> Every test, proof report and CI run uses <code>stories260K</code>. <code>stories15M</code> is fetched, not committed, for the GPU benchmark, and the place that fetches it states its vocabulary's licence.</li>
+<li><strong>The GPU path gates 0.1.0, for the matmuls.</strong> The projections run on Metal through <code>@lower</code>, linalg, SPIR-V and SPIRV-Cross before the tag. ADR 0065 step 7 and the GPU ADR are on the critical path; softmax, RMSNorm and sampling stay on the CPU.</li>
+</ol>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../0066-int-blasting-for-nonlinear-goals/" class="md-footer__link md-footer__link--prev" aria-label="Previous: 66. Nonlinear goals are tried first with Z3&#39;s int-blasting solver, and other solvers are kept out of the pipeline for now">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                66. Nonlinear goals are tried first with Z3's int-blasting solver, and other solvers are kept out of the pipeline for now
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../0068-gpu-compute-through-spirv-and-metal/" class="md-footer__link md-footer__link--next" aria-label="Next: 68. GPU compute: a proved spread placed on the GPU, lowered through SPIR-V and SPIRV-Cross to Metal, launched by a small trusted shim">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                68. GPU compute: a proved spread placed on the GPU, lowered through SPIR-V and SPIRV-Cross to Metal, launched by a small trusted shim
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.top", "navigation.footer", "content.code.copy", "search.highlight"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+    
+  </body>
+</html>

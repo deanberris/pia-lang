@@ -1,0 +1,5094 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="A programming language whose compiler proves your code correct before it runs.">
+      
+      
+      
+        <link rel="canonical" href="https://pia-lang.dev/cpp-std/">
+      
+      
+        <link rel="prev" href="../stdlib/">
+      
+      
+        <link rel="next" href="../abi/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
+    
+    
+      
+        <title>The C++23 standard library in Pia - Pia</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="teal">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#the-c23-standard-library-in-pia" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Pia" class="md-header__button md-logo" aria-label="Pia" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Pia
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              The C++23 standard library in Pia
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="teal"  aria-label="Dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="teal"  aria-label="Light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/deanberris/pia-lang" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    deanberris/pia-lang
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Pia" class="md-nav__button md-logo" aria-label="Pia" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Pia
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/deanberris/pia-lang" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    deanberris/pia-lang
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../repl/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The REPL
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent skills and MCP
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pia and other verified languages
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../demo/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: edge detection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../streams.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: stream delineation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../sediment.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: sediment transport
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../basins.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: sediment by basin, in parallel
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../pull.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: sediment in pull form
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../placed.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: D8 directions and the picture on the GPU
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../pull_gpu.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: the sediment pull step on the GPU
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gpu-demo/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: CPU and GPU, side by side
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tour/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    A tour of Pia
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../features/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Feature index
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../library/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The standard library today
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../idioms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Idiomatic Pia
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../json/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    JSON
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../verification/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How verification works
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../theories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Theories: teaching the verifier a domain
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../repl-debugging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Debugging C++ with the REPL
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_22" >
+        
+          
+          <label class="md-nav__link" for="__nav_22" id="__nav_22_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Case studies
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_22">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Case studies
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cases/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Famous bugs, proved away
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cases/heartbleed.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Heartbleed
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cases/binary-search.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Binary search
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cases/cloudbleed.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cloudbleed
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cases/crowdstrike.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CrowdStrike Channel File 291
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cases/rust-str-repeat.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust str::repeat
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cases/rust-vecdeque.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust VecDeque::reserve
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cases/libwebp.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    libwebp Huffman tables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cases/bun-readfile.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bun readFile on Windows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cases/zlib-gzip-extra.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    zlib gzip extra field
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cases/giflib-background.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    giflib background colour
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Status and roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_24" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_24" id="__nav_24_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_24_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_24">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Design
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Language design
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../grammar/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Grammar
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../meta/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Metaprograms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Standard library (proposal)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The C++23 standard library in Pia
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The C++23 standard library in Pia
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#language-support-and-utilities" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Language support and utilities
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#memory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#strings-and-text" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Strings and text
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#containers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Containers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#iterators-ranges-and-algorithms" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Iterators, ranges and algorithms
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#numerics-and-time" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Numerics and time
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#input-and-output" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Input and output
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#concurrency" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Concurrency
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pia-only-modules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pia-only modules
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../abi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Shared libraries and certificates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../advisories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advisories
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../init/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Module initialisation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../concurrency/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Coroutines, races and deadlocks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_25" >
+        
+          
+          <label class="md-nav__link" for="__nav_25" id="__nav_25_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compiler internals
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_25_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_25">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Compiler internals
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../irgen/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    IRGen
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../verifier/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Verifier
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../codegen/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Codegen
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../style/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Style guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_26" >
+        
+          
+          <label class="md-nav__link" for="__nav_26" id="__nav_26_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Decision records
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_26_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_26">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Decision records
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Index
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0001-record-architecture-decisions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1. Record architecture decisions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0002-single-let-binding-form/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2. let is the only binding form
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0003-static-typing-with-tagged-dyn/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    3. Strong static typing; dynamic typing only through tagged values
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0004-strongest-guarantee-by-default/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    4. The strongest guarantee is always the default
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0005-parameter-modifiers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    5. Parameters carry ownership, access and modifiability modifiers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0006-contracts-and-module-state/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    6. Contracts, refinement types, and module state as exported symbols
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0007-metaprogramming-fixed-point-expansion/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    7. Metaprogramming from day one, expanded to a fixed point
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0008-operators-via-metaprograms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    8. Operators are defined only through metaprograms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0009-generics-concepts-adapters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    9. User-defined generics, checked concepts with laws, and adapters
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0010-modules-interfaces-and-proof-certificates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    10. Modules export interfaces; imports name them; proofs carry certificates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0011-mlir-and-z3-implementation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    11. Compiler in C++ on MLIR, verifying with interval analysis then Z3
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0012-floating-point-reassociation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    12. Three ways to license float reassociation and FMA
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0013-auto-vectorisation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    13. Auto-vectorise as much as possible; keep vec&lt;T, k&gt; for explicit control
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0014-concurrency-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    14. Concurrent by default: collectives, task graphs, futures; collectives proved to match
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0015-device-placement/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    15. Device placement: compiler cost model, explicit, or overridable
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0016-stream-delineation-flagship-demo/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    16. Stream delineation on Apple Silicon is the flagship demo
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0017-bazel-build/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    17. Build with Bazel; depend on LLVM/MLIR and Z3 as Bazel modules
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0018-dialect-layering/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    18. Three Pia dialects over upstream MLIR, with smt for solving
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0019-grammar-disambiguation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    19. Grammar disambiguation rules
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0020-presburger-for-affine-goals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    20. Decide affine aliasing and dependence goals with MLIR's Presburger library
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0021-language-server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    21. A language server, pia-lsp, with a VS Code client first
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0022-metaprogram-hygiene/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    22. Hygiene and name lookup: no shadowing, renamed quote binders, qualified names, ADL
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0023-minimal-core-self-hosted-stdlib/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    23. A minimal core, with the standard library written and proved in Pia
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0024-published-proof-certificates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    24. Shared libraries publish interfaces and proof certificates; loaders check them
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0025-sanitizers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    25. Sanitizers check the edges of the proof
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0026-memory-manager/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    26. A memory manager of explicit allocators, with no garbage collection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0027-coroutines-and-race-freedom/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    27. Stackless coroutines, structured tasks, and race freedom proved from permissions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0028-error-propagation-and-cleanup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    28. Errors propagate with ? to a scope's handler; cleanup runs at scope end
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0029-comments-as-syntax-and-literate-pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    29. Comments are syntax: \ line comments, doc comments, and literate .pia.md files
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0030-published-object-layouts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    30. Optimised object layouts are published, and a changed layout fails to load until relinked
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0031-verified-repl-and-live-environment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    31. A verified REPL over a reusable session, with proved live redefinition
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0032-parallel-sliced-cached-proving/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    32. Proofs run in parallel, one goal per solver, sliced, cached and selectable
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0033-module-initialisation-and-registries/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    33. Module initialisation: registries, proved @init hooks, and opt-in dynamic registration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0034-concepts-and-overload-resolution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    34. Concepts as checked signatures, and concept-based overload resolution
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0035-substitution-failure-and-total-constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    35. Substitution failure removes a candidate, and constraints are proved to terminate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0036-library-theories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    36. Libraries extend the solver with theories: sorts, functions and axioms, proved consistent by a model or listed as trusted
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0037-idiomatic-pia-and-lints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    37. Idiomatic Pia: facts in types first, written as opinions and checked by lints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0038-float-kernels-against-real-theories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    38. Float kernels are proved against real-valued specifications by rounding-error bounds
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0039-module-and-interface-syntax/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    39. Modules are private by default: one module per file, interfaces list every export, imports name interfaces
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0040-cpp23-standard-library-in-pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    40. The C++23 standard library, mapped onto Pia and proved
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0041-allocator-semantics-as-a-theory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    41. Allocator semantics are a theory, and allocators prove they refine it through spec-only state
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0042-lifetimes-liveness-and-escape-analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    42. Lifetimes are checked by liveness, marked where values cross boundaries, and escape analysis places memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0043-generic-definitions-proved-once/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    43. Generic definitions are proved once, against their concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0044-function-values-and-lambdas/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    44. Function values: typed and generic lambdas, a Function concept, and proofs through function arguments
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0045-json-derived-codecs-and-conforming-dom/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    45. JSON: derived streaming codecs, typed construction, and a DOM proved to conform to a type
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0046-box-over-a-type-or-a-concept/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    46. A box holds a type or any type meeting a concept, and what it holds is proved to have the concept's shape
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0047-recursive-sum-types-and-shared-references/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    47. Recursive sum types are explicit, recurse through an owning indirection, and share through strong and weak references
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0048-buffers-whose-elements-hold-slices/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    48. Buffers may hold slices: owned slices are written through, shared ones only read
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0049-targets-are-theories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    49. Linux x86_64 is a second target, tested in Linux CI, and each target is a model of a built-in Pia.Target theory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0050-senders-and-receivers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    50. Asynchronous work is senders and receivers whose completion rules are proved, over io_uring on Linux and a kqueue completion adapter on macOS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0051-variadic-generics-and-foreign-varargs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    51. Variadic functions and types take a pack that is called like any argument list, walked by metaprograms and proved once; foreign bindings are generated from tables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0052-atomics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    52. Atomics are a core cell type with checked orders and stated overflow, modelled by RC11 with a litmus battery before tasks exist, and lowered per target by a table proved against each hardware model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0053-protocols-checked-by-z3/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    53. Protocols and deadlock are checked in Z3, as transition systems proved by constrained Horn clauses; explicit search stays for atomics, and TLA+ is an export format
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0054-proved-gif-and-inflate-codecs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    54. GIF and inflate are proved total on every input, decode to a written specification, and GIF round-trips exactly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0055-sediment-transport-in-fixed-point/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    55. Sediment transport is integer mass moved downhill in height order, with conservation proved exactly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0056-tests-generated-from-contracts-and-theories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    56. Tests are generated by metaprograms from contracts, types and theories; a case the verifier can decide is proved, and only the rest is run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0057-posix-module-per-target-behind-one-interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    57. Pia.Sys.Posix is one generated module per target behind one hand-written interface, and the generator joins the contract overlay
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0058-spec-buffers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    58. Spec buffers: spec-only arrays that code writes, contracts read and codegen erases
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0059-digit-separators-and-type-bounds/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    59. Digits group with ' or _; min t and max t are an integer type's bounds, folded to literals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0060-spread-v0-ownership-and-runtime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    60. spread v0: iterations own the cells they write, proved one iteration at a time; MLIR's async runtime runs them
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0061-lean-proved-facts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    61. Lean proves the facts Z3 cannot: lemmas and theory models are proved in Lean against statements piac generates, recorded in certificates by statement hash, and checked outside the edit loop; cost bounds are proved by Z3, and their asymptotics in Lean
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0062-cost-bounds-in-contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    62. Cost bounds are contracts: costs c &lt;= e bounds what a function spends on a named counter, tracked by a spec-only spent c and proved by Z3
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0063-opaque-spec-functions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    63. Opaque spec functions: a spec function marked @opaque keeps its definition out of every goal until a proof reveals it
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0064-distinct-types/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    64. type always makes a new type: let length = type u32 is distinct from u32, converts only by applying a type to a value, and inherits only what it derives
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0065-lowerings-written-in-pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    65. Pia code extends the compiler's lowering: @lower gives a function an MLIR form and a type an MLIR type, the Pia definition stays the specification, and each lowering is proved to refine it or is listed as trusted
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0066-int-blasting-for-nonlinear-goals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    66. Nonlinear goals are tried first with Z3's int-blasting solver, and other solvers are kept out of the pipeline for now
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0067-release-0-1-0-a-proved-small-llm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    67. Release 0.1.0 is a small Llama-architecture LLM ported from PyTorch to Pia, proved where a proof means something, running inference on an M3 Mac on CPU SIMD and on the GPU through linalg
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0068-gpu-compute-through-spirv-and-metal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    68. GPU compute: a proved spread placed on the GPU, lowered through SPIR-V and SPIRV-Cross to Metal, launched by a small trusted shim
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0069-pure-and-impure-functions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    69. Pure and impure functions: computed purity, @pure assertions, and @impure interface boundaries
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0070-raw-binary-embedding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    70. Raw binary embedding: @embed for compile-time fixed byte blobs, hermetic roots, opaque verification and direct LLVM emission
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0071-function-references/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    71. Function references: a function is a value that travels by reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0072-drops-run-in-constant-stack/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    72. A drop never grows the stack: every drop is one walk, proved against the recursive drop, with a fixed stack bound per type
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0073-prover-identity-abi-version-and-advisories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    73. Certificates record who proved a module and with what, advisories revoke trust in faulty provers, and every breaking change ships a migration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0074-library-types-tensors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    74. Library types: a type written in Pia gets an MLIR type, ops and proofs from its library, and Pia.Tensor over MLIR tensor is the proof point
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0075-codegen-benchmarks-against-c-cpp-rust-zig/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    75. Codegen is benchmarked against C, C++, Rust and Zig on public problems, same algorithm first, counted in instructions on Linux and timed on Apple Silicon
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0076-transparent-exports/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    76. Transparent exports: an importer proves against an exported function's body, as a caller in its own module does
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0077-definitions-inherit-interface-contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    77. A definition that states no contract takes the contract of the interface that lists it
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0078-pia-lib-ops-with-proved-substitutions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    78. Library functions lower to pia_lib.call, a Pia-owned op whose meaning is its Pia body, and a late pass either expands it into the body or substitutes an upstream op through a rule proved against the body
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0079-pia-module-format/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    79. Pia IR: a versioned op schema Pia controls, in lock-step with piac, with deprecations and migrations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0080-protocol-buffers-in-pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    80. Protocol Buffers in Pia: a metaprogram that turns .proto into proved types and codecs, and Pia IR as a protobuf schema
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#language-support-and-utilities" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Language support and utilities
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#memory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#strings-and-text" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Strings and text
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#containers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Containers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#iterators-ranges-and-algorithms" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Iterators, ranges and algorithms
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#numerics-and-time" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Numerics and time
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#input-and-output" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Input and output
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#concurrency" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Concurrency
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pia-only-modules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pia-only modules
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="the-c23-standard-library-in-pia">The C++23 standard library in Pia<a class="headerlink" href="#the-c23-standard-library-in-pia" title="Permanent link">&para;</a></h1>
+<p>Status: proposed design (<a href="../adr/0040-cpp23-standard-library-in-pia/">ADR 0040</a>). This page maps every C++23 standard header onto the Pia module that provides it, and is updated by each library pull request, so it is also the library's status page. The first pieces are in the core, and <code>lib/</code> has its first modules, <code>Pia.Core.Bit</code>, <code>Pia.Core.Int</code>, <code>Pia.Core.Order</code>, <code>Pia.Core.Option</code> and <code>Pia.Core.Result</code> (<code>lib/Pia/Core/</code>, tested in <code>tests/std/</code>).</p>
+<p>Pia gives what the C++ library lets a program do, in Pia's idioms: slices instead of iterator pairs, <code>result</code> and <code>?</code> instead of exceptions, explicit allocators instead of <code>std::allocator</code>, concepts instead of comparator objects, and metaprograms instead of type traits. Every function has a contract that the compiler proves, so what is undefined behaviour in C++ is a proof goal at the call in Pia.</p>
+<p><strong>Kinds.</strong> <em>Direct</em>: the same capability under a Pia name. <em>Idiom</em>: replaced by a different Pia mechanism, named in the row. <em>Core</em>: already part of the language. <em>Deferred</em>: waits on the named language or library work. <em>Out</em>: not provided, for the reason given.</p>
+<p><strong>Status.</strong> <em>planned</em> (phase number from the ADR), <em>done</em> (with the pull request), or <em>n/a</em>.</p>
+<h2 id="language-support-and-utilities">Language support and utilities<a class="headerlink" href="#language-support-and-utilities" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Header</th>
+<th>Pia</th>
+<th>Kind</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>&lt;concepts&gt;</code></td>
+<td><code>Pia.Core.Order</code>'s <code>Eq</code> (<code>same</code>: reflexive, symmetric, transitive) and <code>Ord</code> (<code>less</code>: a strict weak order, asymmetric by contract), with instances for every integer type and <code>bool</code>; <code>Pia.Core.Int</code> (<code>Integral</code>); the rest are concepts written where needed</td>
+<td>Idiom: concepts with laws (ADR 0034)</td>
+<td><code>Eq</code>, <code>Ord</code> done, used inside <code>Pia.Core.Order</code>; importing a concept waits for ADR 0039 step 3</td>
+</tr>
+<tr>
+<td><code>&lt;coroutine&gt;</code></td>
+<td>the core's <code>wait</code>, <code>yield</code> and <code>@suspends</code></td>
+<td>Core (ADR 0027)</td>
+<td>deferred: M12</td>
+</tr>
+<tr>
+<td><code>&lt;compare&gt;</code></td>
+<td><code>Pia.Core.Order</code>: <code>ordering</code> (<code>strong_ordering</code>: <code>Less</code>, <code>Equal</code>, <code>Greater</code>) and <code>compare</code>, generic over <code>Ord</code> and for each integer type; <code>partial_ordering</code> and <code>weak_ordering</code> wait for floats and for types with equivalent but distinct values; <code>@derive(ord)</code> waits for exported metaprograms</td>
+<td>Direct</td>
+<td><code>ordering</code>, <code>compare</code> done, exported with the generic <code>compare</code>, <code>min</code>, <code>max</code>, <code>clamp</code>, <code>swap</code>, <code>exchange</code>, <code>lex_compare</code>, <code>lex_compare_three_way</code> and the spec function <code>lex_from</code> (ADR 0039 step 3); <code>lexicographical_compare</code> is stated exactly as <code>lex_from</code></td>
+</tr>
+<tr>
+<td><code>&lt;utility&gt;</code></td>
+<td><code>swap</code>, <code>exchange</code> in <code>Pia.Core.Order</code>, of a slice's elements, since Pia has no references to scalars; <code>cmp_equal</code>, <code>cmp_less</code> and the other safe comparisons are Pia's own <code>=</code>, <code>&lt;</code> and so on, which compare integers of any two types exactly (an <code>i32</code> below a <code>u32</code> is <code>a &lt; b</code>), so <code>Pia.Core.Int</code> does not repeat them; <code>in_range</code> is a narrowing goal (<code>let y : u8 = x</code> proves <code>x</code> fits) until a type's bounds can be values in generic code; <code>pair</code> is a two-element tuple (core tuples, ADR 0040 section 9); <code>move</code>, <code>forward</code> are the <code>moved</code> modifier; <code>to_underlying</code> is <code>widen</code>; <code>unreachable</code> is a proof goal (<code>assert false</code>)</td>
+<td>Direct and Core</td>
+<td>safe comparisons done (core); <code>swap</code>, <code>exchange</code> done (an interface cannot state their postconditions yet)</td>
+</tr>
+<tr>
+<td><code>&lt;optional&gt;</code></td>
+<td><code>Pia.Core.Option</code>: the generic <code>option t</code> (<code>None</code>, <code>Some</code>), <code>has_value</code>, <code>is_none</code>, <code>value_or</code>, and <code>==</code> and <code>&lt;</code> as <code>same</code> and <code>less</code> over <code>Eq</code> and <code>Ord</code> (nullopt first); the core has no <code>option</code>, so the module defines it</td>
+<td>Direct; monadic <code>and_then</code>, <code>transform</code>, <code>or_else</code> deferred</td>
+<td>done, and exported as a generic type and functions (interface <code>Optional</code>), proved at each instance (ADR 0043); <code>value</code> waits for <code>abort</code> at a type parameter; monadic operations phase 6</td>
+</tr>
+<tr>
+<td><code>&lt;expected&gt;</code></td>
+<td><code>Pia.Core.Result</code> over the core <code>result t e</code> and <code>?</code>: <code>has_value</code>, <code>value</code> and <code>error</code> (C++'s undefined behaviour and exceptions as preconditions), <code>value_or</code>, <code>error_or</code>, and <code>==</code> as <code>same</code>; exported for <code>result t u32</code> with <code>t</code> one of <code>u8</code>, <code>u32</code>, <code>u64</code>, <code>i32</code>, <code>i64</code></td>
+<td>Direct; monadic operations deferred</td>
+<td>done; <code>has_value</code>, <code>value_or</code>, <code>error_or</code> and <code>same</code> (over <code>Eq</code>) are also exported generic over <code>t</code> and <code>e</code>, so a module uses them with its own error types; <code>value</code> and <code>error</code> stay per instance until <code>abort</code> works at a type parameter; monadic operations phase 6</td>
+</tr>
+<tr>
+<td><code>&lt;variant&gt;</code></td>
+<td>sum types and <code>match</code></td>
+<td>Core; <code>variant&lt;Ts...&gt;</code> and <code>visit</code> need anonymous sum types</td>
+<td>n/a</td>
+</tr>
+<tr>
+<td><code>&lt;tuple&gt;</code></td>
+<td>core tuple types <code>(u8, str)</code>, values <code>(a, b)</code>, <code>t.0</code> and tuple patterns; <code>apply</code>, <code>tuple_cat</code>, <code>tuple_size</code>, <code>tuple_element</code> as metaprograms over tuple types; structural <code>Eq</code>, <code>Ord</code>, <code>Hash</code></td>
+<td>Core (ADR 0040 section 9)</td>
+<td>deferred: core tuples need their own ADR</td>
+</tr>
+<tr>
+<td><code>&lt;any&gt;</code></td>
+<td><code>dyn</code></td>
+<td>Out: no run-time type information (ADR 0003)</td>
+<td>n/a</td>
+</tr>
+<tr>
+<td><code>&lt;bitset&gt;</code></td>
+<td><code>Pia.Core.Bit</code> over <code>[u64; n]</code></td>
+<td>Direct</td>
+<td>deferred: value parameters in generic types</td>
+</tr>
+<tr>
+<td><code>&lt;functional&gt;</code></td>
+<td><code>Pia.Fn</code>: the laws of function arguments (<code>strict_weak_order</code>, <code>equivalence</code>, <code>associative</code>, <code>commutative</code>, <code>identity</code>, <code>sorted</code>, ...), generic spec functions exported with their definitions (ADR 0044, step 5)</td>
+<td>Laws done; the rest of <functional> waits for the library</td>
+<td>phase 6</td>
+</tr>
+<tr>
+<td><code>std::hash</code> (<code>&lt;functional&gt;</code>)</td>
+<td><code>Pia.Core.Hash</code>: the <code>Hash</code> concept over <code>Eq</code>, whose law <code>agrees</code> says <code>same a b ==&gt; hash a = hash b</code>; <code>hash</code> for the eight integer types, <code>bytes</code> (FNV-1a, 64 bits), <code>combine</code> and <code>hash_all</code> over any Hash type</td>
+<td>Direct; the function is fixed, so a hash is the same on every target and every run, where C++ leaves it unspecified</td>
+<td>done: integers hash their 64-bit two's complement encoding with SplitMix64's finaliser, and each instance's law is proved where a generic function uses it, as for <code>Eq</code> and <code>Ord</code> (81 goals); tuples and records wait for structural instances (ADR 0040 section 9)</td>
+</tr>
+<tr>
+<td><code>&lt;type_traits&gt;</code></td>
+<td>type-level metaprograms and type <code>match</code>; <code>Pia.Core.Traits</code> as needed</td>
+<td>Idiom (ADR 0035)</td>
+<td>phase 1 as needed</td>
+</tr>
+<tr>
+<td><code>&lt;typeinfo&gt;</code>, <code>&lt;typeindex&gt;</code></td>
+<td>metaprogram builtins (<code>name</code>, <code>type_kind</code>)</td>
+<td>Out: no RTTI</td>
+<td>n/a</td>
+</tr>
+<tr>
+<td><code>&lt;source_location&gt;</code></td>
+<td>the core's source locations in diagnostics; a metaprogram builtin if a program needs one</td>
+<td>Core</td>
+<td>n/a</td>
+</tr>
+<tr>
+<td><code>&lt;initializer_list&gt;</code></td>
+<td>array literals</td>
+<td>Core</td>
+<td>n/a</td>
+</tr>
+<tr>
+<td><code>&lt;version&gt;</code></td>
+<td>none</td>
+<td>Out</td>
+<td>n/a</td>
+</tr>
+<tr>
+<td><code>&lt;stacktrace&gt;</code></td>
+<td><code>Pia.Rt</code></td>
+<td>Direct (#58)</td>
+<td>phase 3</td>
+</tr>
+<tr>
+<td><code>&lt;exception&gt;</code>, <code>&lt;stdexcept&gt;</code></td>
+<td>closed error variants in <code>result</code> (ADR 0028); an exception of any dynamic type is one case carrying a box over a concept, <code>Cxx of box exception</code> (ADR 0046, 2026-11-27 note)</td>
+<td>Out: no exceptions; <code>std::exception_ptr</code> becomes a boxed error payload</td>
+<td>a boxed error payload within a module done (tests/verify/box_error_payload.pia); across modules with ADR 0071's tables; the <code>exception</code> concept and catching at bound C++ calls with the C++ FFI (0.5)</td>
+</tr>
+<tr>
+<td><code>&lt;system_error&gt;</code>, <code>&lt;cerrno&gt;</code></td>
+<td>each module's error variants; <code>Pia.Sys</code> decodes <code>errno</code></td>
+<td>Idiom</td>
+<td><code>Pia.Sys.Fs.errno</code> done: <code>Pia.Sys.Posix.errno</code> reads the thread's errno through <code>@deref</code>, and Fs decodes it into a variant; the other <code>Pia.Sys</code> modules phase 3</td>
+</tr>
+<tr>
+<td><code>&lt;cassert&gt;</code></td>
+<td><code>assert</code> (proved, never checked at run time)</td>
+<td>Core</td>
+<td>n/a</td>
+</tr>
+<tr>
+<td><code>&lt;limits&gt;</code>, <code>&lt;climits&gt;</code>, <code>&lt;cstdint&gt;</code>, <code>&lt;cstddef&gt;</code>, <code>&lt;cinttypes&gt;</code></td>
+<td>the integer and range types, which state their bounds: <code>u8</code> is <code>int{0..255}</code>, and a range type is its own <code>numeric_limits</code>. Functions returning them per type wait for a type's bounds to be values in generic code</td>
+<td>Core</td>
+<td>core types done; generic limits wait</td>
+</tr>
+<tr>
+<td><code>&lt;cfloat&gt;</code>, <code>&lt;stdfloat&gt;</code></td>
+<td><code>Pia.Math</code></td>
+<td>Deferred: floats (M11)</td>
+<td>phase 4</td>
+</tr>
+<tr>
+<td><code>&lt;cstdlib&gt;</code></td>
+<td><code>abs</code> (its result is unsigned, so <code>abs</code> of the minimum is defined) and <code>div</code> (as <code>quot_rem</code>, since <code>div</code> is the core builtin, with a <code>quot_rem_i32</code> record per type) in <code>Pia.Core.Int</code>; <code>exit</code>, <code>getenv</code> in <code>Pia.Sys</code>; <code>malloc</code> is <code>Pia.Mem</code>; <code>qsort</code>, <code>bsearch</code> are <code>Pia.Core.Algo</code></td>
+<td>Direct</td>
+<td><code>abs</code>, <code>div</code> done; the rest phase 1, phase 3</td>
+</tr>
+<tr>
+<td><code>&lt;csignal&gt;</code></td>
+<td><code>Pia.Rt</code></td>
+<td>Direct (#58)</td>
+<td>phase 3</td>
+</tr>
+<tr>
+<td><code>&lt;csetjmp&gt;</code></td>
+<td>none</td>
+<td>Out</td>
+<td>n/a</td>
+</tr>
+<tr>
+<td><code>&lt;cstdarg&gt;</code></td>
+<td>none</td>
+<td>Out: no C variadics</td>
+<td>n/a</td>
+</tr>
+</tbody>
+</table>
+<h2 id="memory">Memory<a class="headerlink" href="#memory" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Header</th>
+<th>Pia</th>
+<th>Kind</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>&lt;memory&gt;</code></td>
+<td><code>Pia.Mem</code>: allocators (ADR 0026); no <code>unique_ptr</code>: one non-null <code>box t</code> or <code>box c</code> over a concept <code>c</code> (type-erased, contents proved to meet <code>c</code>; ADR 0040 section 4), freed through its stored allocator, <code>option (box t)</code> when it may be empty; <code>uninitialized_*</code> are <code>out</code> slices</td>
+<td>Idiom</td>
+<td><code>box t</code> (ADR 0046 step 1) and <code>box c</code> for the verifier (steps 2 to 4: <code>widen</code> with the use check, calls through a box proved from the concept's contracts and one-value laws, <code>box c</code> meeting <code>c</code> by forwarding) done; code generation for <code>box c</code> within a module (a tagged union of the widened types, a switch on the tag, direct calls where it is known; step 5) done; function-pointer tables across modules (step 6), <code>remove</code>/<code>fill</code> on it phase 2; <code>Pia.Mem.Alloc</code> (<code>oom</code>, the <code>Allocator</code> concept, a bump allocator) and <code>Pia.Mem.Box</code> (<code>box t r</code> over any allocator, with <code>remove</code>, <code>free</code> and a <code>drop</code> at scope end) done; pools and pages phase 2</td>
+</tr>
+<tr>
+<td><code>shared_ptr</code>, <code>weak_ptr</code></td>
+<td><code>Pia.Mem.Ref</code>: <code>ref</code>, <code>weak</code> (<a href="../adr/0047-recursive-sum-types-and-shared-references/">ADR 0047</a>)</td>
+<td>Deferred: recursive types (ADR 0047); atomic <code>shared_ref</code> with M12</td>
+<td>later</td>
+</tr>
+<tr>
+<td><code>&lt;memory_resource&gt;</code></td>
+<td><code>arena</code> (<code>monotonic_buffer_resource</code>), <code>pool</code> (<code>unsynchronized_pool_resource</code>), <code>shared</code> (<code>synchronized_pool_resource</code>)</td>
+<td>Direct: every Pia container is a <code>pmr</code> container</td>
+<td>#59, #71</td>
+</tr>
+<tr>
+<td><code>&lt;new&gt;</code></td>
+<td>allocation is a <code>Pia.Mem</code> call returning <code>result</code>; there is no <code>new</code>, no placement <code>new</code> (<code>out</code> memory is written instead) and no <code>bad_alloc</code> (<code>OutOfMemory</code>)</td>
+<td>Idiom (ADR 0026)</td>
+<td>n/a</td>
+</tr>
+<tr>
+<td><code>&lt;scoped_allocator&gt;</code></td>
+<td>nothing to do: allocators are passed explicitly</td>
+<td>Out</td>
+<td>n/a</td>
+</tr>
+</tbody>
+</table>
+<h2 id="strings-and-text">Strings and text<a class="headerlink" href="#strings-and-text" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Header</th>
+<th>Pia</th>
+<th>Kind</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>&lt;string_view&gt;</code></td>
+<td><code>str</code>, a <code>[u8]</code> slice refined to valid UTF-8, with <code>Pia.Core.Utf8</code></td>
+<td>Idiom</td>
+<td>phase 1</td>
+</tr>
+<tr>
+<td><code>&lt;string&gt;</code></td>
+<td><code>Pia.Text.String</code> over <code>Pia.Mem.Vec</code></td>
+<td>Direct; every string takes an allocator</td>
+<td>phase 2</td>
+</tr>
+<tr>
+<td><code>&lt;cstring&gt;</code></td>
+<td>slice algorithms (<code>copy</code> for <code>memcpy</code>, <code>equal</code> and <code>lexicographical_compare</code> for <code>memcmp</code>, <code>find</code> for <code>memchr</code>); no NUL-terminated strings</td>
+<td>Idiom</td>
+<td>phase 1</td>
+</tr>
+<tr>
+<td><code>&lt;charconv&gt;</code></td>
+<td><code>Pia.Core.Charconv</code>: <code>to_chars</code>, <code>from_chars</code> for integers in bases 2 to 36, with round trips proved</td>
+<td>Direct; floats deferred (M11)</td>
+<td><code>from_chars</code> done for <code>u8</code>, <code>u16</code>, <code>u32</code>, <code>i8</code>, <code>i16</code> and <code>i32</code> in any base 2 to 36: the value exact as the spec <code>num</code>, saturated at one past the largest; on an error <code>value</code> is kept, <code>Invalid</code> when there are no digits and <code>OutOfRange</code> when they do not fit, as C++'s; one proof, <code>parse_digits</code>, scans for every type, and a signed type's contract is the one spec <code>signed_parse</code>. <code>to_chars</code> done for all eight integer types, lower-case, with a <code>-</code> for a negative value: ok exactly when the digits fit (<code>ndig</code>, how many v has), each byte a digit of the base, nothing written otherwise (C++'s <code>value_too_large</code>), and their value (<code>digits_value</code>, left-fold accumulator with opaque <code>digit_step</code> and <code>dig_count</code>) proved equal to <code>v</code> (or <code>0 - v</code> after <code>-</code>) so that <code>from_chars</code> reads <code>v</code> back via the exported lemmas <code>digits_frame</code>, <code>digits_value_eq_num</code> and <code>run_digits</code> (#306). Both 657 goals. <code>Pia.Core.Digits</code> (83 goals) also provides <code>dval</code>, <code>pow</code>, <code>divmod32</code>/<code>divmod64</code>, <code>prepend</code>, <code>frame</code>, <code>shift</code>, <code>step</code>, and <code>put</code>. Waiting: <code>from_chars</code> for <code>u64</code> and <code>i64</code>, whose overflow check divides by the base; phase 4 for floats</td>
+</tr>
+<tr>
+<td><code>&lt;format&gt;</code>, <code>&lt;print&gt;</code></td>
+<td><code>Pia.Text.Format</code>: format strings checked at compile time by a metaprogram; <code>Format</code> concept instead of <code>formatter</code></td>
+<td>Direct</td>
+<td>phase 3</td>
+</tr>
+<tr>
+<td><code>&lt;cctype&gt;</code></td>
+<td><code>Pia.Core.Ascii</code>: <code>is_digit</code>, <code>is_upper</code>, <code>is_lower</code>, <code>is_alpha</code>, <code>is_alnum</code>, <code>is_xdigit</code>, <code>is_space</code>, <code>is_blank</code>, <code>is_cntrl</code>, <code>is_print</code>, <code>is_graph</code>, <code>is_punct</code>, <code>to_upper</code>, <code>to_lower</code>, and <code>digit_value</code>/<code>digit</code>, <code>hex_value</code>/<code>hex_digit</code></td>
+<td>Direct, ASCII only</td>
+<td>done: each classifier says exactly which bytes it holds for, as C++'s do in the "C" locale, bytes above 127 are in no class, and each digit pair is a round trip (66 goals); no locales</td>
+</tr>
+<tr>
+<td><code>&lt;cuchar&gt;</code></td>
+<td><code>Pia.Core.Utf8</code>: <code>sequence_length</code>, <code>decode</code>, <code>encode</code>, <code>valid</code></td>
+<td>Direct</td>
+<td>done, by the Unicode standard's table 3-7 (no overlong forms, no surrogates, nothing above U+10FFFF), with both round trips proved: decoding what <code>encode</code> wrote gives the scalar back, and a valid sequence's bytes are what <code>encode</code> writes for the value <code>decode</code> reads (<code>bytes_of</code>) (294 goals); <code>Pia.Text.Json.Spec</code>'s own <code>utf8_len</code> can move here next</td>
+</tr>
+<tr>
+<td><code>&lt;cwctype&gt;</code>, <code>&lt;cwchar&gt;</code></td>
+<td>none</td>
+<td>Out: UTF-8 only</td>
+<td>n/a</td>
+</tr>
+<tr>
+<td><code>&lt;locale&gt;</code>, <code>&lt;clocale&gt;</code>, <code>&lt;codecvt&gt;</code></td>
+<td>none</td>
+<td>Out: no locales</td>
+<td>n/a</td>
+</tr>
+<tr>
+<td><code>&lt;regex&gt;</code></td>
+<td><code>Pia.Text.Regex</code>, a linear-time automaton engine</td>
+<td>Deferred</td>
+<td>later</td>
+</tr>
+</tbody>
+</table>
+<h2 id="containers">Containers<a class="headerlink" href="#containers" title="Permanent link">&para;</a></h2>
+<p>All containers are in <code>Pia.Mem</code> (#72) and take an allocator. Element access is <code>c.[i]</code> with the bound proved; lookups by key return <code>option</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Header</th>
+<th>Pia</th>
+<th>Kind</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>&lt;array&gt;</code></td>
+<td><code>[T; N]</code> and slice algorithms</td>
+<td>Core</td>
+<td>n/a</td>
+</tr>
+<tr>
+<td><code>&lt;span&gt;</code></td>
+<td><code>[T]</code> slices and <code>xs.[a .. b]</code></td>
+<td>Core</td>
+<td>n/a</td>
+</tr>
+<tr>
+<td><code>&lt;mdspan&gt;</code></td>
+<td>strided views over slices</td>
+<td>Deferred: value parameters in generic types</td>
+<td>later</td>
+</tr>
+<tr>
+<td><code>&lt;vector&gt;</code></td>
+<td><code>Pia.Mem.Vec</code>: <code>vec t a r</code> holds its allocator <code>a</code> (any <code>Pia.Mem.Alloc.Allocator</code>) and a buffer from the region <code>r</code>; <code>with_capacity</code>, <code>push</code> (fallible, doubling plus one), <code>get</code>, <code>set</code>, <code>pop</code></td>
+<td>Direct (#86)</td>
+<td><code>vec t a r</code> done (lib/Pia/Mem/Vec.pia); <code>vec (box t)</code> proved as a prototype (tests/verify/vec_boxes.pia), moving in with box drop; insert, erase, iterators phase 2</td>
+</tr>
+<tr>
+<td><code>&lt;deque&gt;</code></td>
+<td><code>Pia.Mem.Deque</code>, a ring of blocks</td>
+<td>Direct</td>
+<td>phase 2</td>
+</tr>
+<tr>
+<td><code>&lt;list&gt;</code>, <code>&lt;forward_list&gt;</code></td>
+<td><code>Pia.Mem.List</code>, nodes in a pool linked by index</td>
+<td>Direct</td>
+<td>phase 2</td>
+</tr>
+<tr>
+<td><code>&lt;map&gt;</code>, <code>&lt;set&gt;</code></td>
+<td><code>Pia.Mem.Map</code>, <code>Pia.Mem.Set</code>: B-trees with nodes in a pool; the order is the key's <code>Ord</code></td>
+<td>Direct</td>
+<td>phase 2</td>
+</tr>
+<tr>
+<td><code>&lt;unordered_map&gt;</code>, <code>&lt;unordered_set&gt;</code></td>
+<td><code>Pia.Mem.HashMap</code>, <code>Pia.Mem.HashSet</code>: open addressing over <code>Hash</code> and <code>Eq</code></td>
+<td>Direct</td>
+<td>phase 2</td>
+</tr>
+<tr>
+<td><code>&lt;flat_map&gt;</code>, <code>&lt;flat_set&gt;</code></td>
+<td>sorted <code>Vec</code>s with the binary search family</td>
+<td>Direct</td>
+<td>phase 2</td>
+</tr>
+<tr>
+<td><code>&lt;stack&gt;</code>, <code>&lt;queue&gt;</code></td>
+<td>functions over <code>Vec</code> and <code>Deque</code>; <code>priority_queue</code> is <code>Pia.Mem.Heap</code> over the heap algorithms</td>
+<td>Direct</td>
+<td>phase 2</td>
+</tr>
+<tr>
+<td>C++26 <code>inplace_vector</code>, rings</td>
+<td><code>Pia.Core.Fixed</code></td>
+<td>Direct</td>
+<td>deferred: value parameters in generic types</td>
+</tr>
+</tbody>
+</table>
+<h2 id="iterators-ranges-and-algorithms">Iterators, ranges and algorithms<a class="headerlink" href="#iterators-ranges-and-algorithms" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Header</th>
+<th>Pia</th>
+<th>Kind</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>&lt;iterator&gt;</code></td>
+<td>slices, <code>usize</code> indices (with <code>len xs</code> for "not found"), and container cursors</td>
+<td>Idiom</td>
+<td>n/a</td>
+</tr>
+<tr>
+<td><code>&lt;ranges&gt;</code></td>
+<td>eager algorithms over slices; views such as <code>filter</code>, <code>transform</code>, <code>zip</code></td>
+<td>Deferred: function values</td>
+<td>phase 6</td>
+</tr>
+<tr>
+<td><code>&lt;algorithm&gt;</code> non-modifying</td>
+<td><code>Pia.Core.Algo.Search</code>: <code>find</code>, <code>count</code>, <code>contains</code>, <code>mismatch</code>, <code>equal</code>, <code>starts_with</code>, <code>ends_with</code>, <code>search</code>, <code>adjacent_find</code>, <code>min_element</code>, <code>max_element</code>, <code>minmax_element</code> (first smallest, last largest), <code>is_sorted_until</code>, <code>is_sorted</code>, exported as generic functions over <code>Pia.Core.Order</code>'s <code>Eq</code> and <code>Ord</code> and proved once (ADR 0043); a position is a <code>usize</code>, <code>len xs</code> when there is none. <code>Pia.Core.Order</code> has <code>min</code>, <code>max</code>, <code>clamp</code> (C++'s ties: the first argument when equivalent), <code>lexicographical_compare</code> (generic over <code>Ord</code>, proved once, exported for every integer type) and <code>lexicographical_compare_three_way</code> (for <code>u8</code>). Overloads taking a predicate or comparator wait for function values (section 6)</td>
+<td>Direct</td>
+<td><code>Pia.Core.Algo.Search</code>, <code>Pia.Core.Order</code>'s done</td>
+</tr>
+<tr>
+<td><code>&lt;algorithm&gt;</code> modifying</td>
+<td><code>Pia.Core.Algo.Modify</code>: <code>fill</code>, <code>copy</code> and <code>copy_backward</code> into an <code>out</code> slice of the source's length, <code>swap_ranges</code>, <code>reverse</code>, <code>replace</code> (by value over <code>Eq</code>, or by a predicate as C++'s <code>replace_if</code>), <code>shift_left</code>, <code>shift_right</code> (the new end or start, as C++20), <code>remove</code> (in <code>Pia.Core.Algo.Remove</code>, so its proof runs in parallel: each kept element at its rank among them, a spec over <code>old xs</code>), each generic and proved once (ADR 0043) with every element of the result in its contract; <code>Pia.Core.Algo.Permutation</code>'s <code>occurrences</code> and <code>permutation</code> specs, for sorts</td>
+<td>Direct</td>
+<td>those done; <code>rotate</code> (three reversals proved at 280M) and <code>unique</code> (120M) wait for cheaper proofs, and <code>remove</code> and <code>unique</code> with a predicate with them</td>
+</tr>
+<tr>
+<td><code>&lt;algorithm&gt;</code> sorting, binary search, heap</td>
+<td><code>Pia.Core.Algo.Sort</code>, <code>Pia.Core.Algo.Heap</code>; stable forms need an allocator</td>
+<td>Direct</td>
+<td><code>insertion_sort</code> and <code>exchange</code> (C++'s <code>iter_swap</code>) done, with a comparator that must be <code>Pia.Fn.strict_weak_order</code>, proved once, ensuring <code>Pia.Fn.sorted less xs</code> and <code>Pia.Core.Algo.Permutation.permutation xs (old xs)</code>; <code>Pia.Core.Algo.Heap</code>'s <code>is_heap_until</code>, <code>is_heap</code>, <code>push_heap</code>, <code>pop_heap</code>, <code>make_heap</code>, <code>sort_heap</code> and <code>sort xs less</code> (a heap sort), with the same comparator law, proved once (185 goals): the heap is stated parent to child, <code>(k - 1) &gt;&gt; 1</code>, <code>sort</code> ensures <code>Pia.Fn.sorted less xs</code> and <code>permutation xs (old xs)</code>; <code>sort xs</code> by <code>Ord</code>'s <code>less</code> waits for its proof from the comparator form; <code>Pia.Core.Algo.BinarySearch</code>'s <code>lower_bound</code>, <code>upper_bound</code>, <code>equal_range</code> and <code>binary_search</code>, by a comparator and by <code>Ord</code>, proved once (99 goals), with C++'s precondition: the range partitioned with respect to the value (<code>below</code>, <code>above</code>), which a sorted range meets; <code>equal_range</code> returns a <code>span</code> and is proved at its instances; <code>Pia.Core.Algo.Partition</code>'s <code>is_partitioned</code>, <code>partition_point</code> (by binary search) and <code>partition</code> (a permutation of the input), each with a predicate and proved once (57 goals); <code>Pia.Core.Algo.PartialSort</code>'s <code>partial_sort</code> (the first m sorted, none after them less, a permutation) and <code>nth_element</code> (as <code>partial_sort</code> of the first n + 1, O(n log n), with the stronger contract), proved once (82 goals); <code>Pia.Core.Algo.Merge</code>'s <code>merge</code> of two sorted ranges into an <code>out</code> slice (sorted, each value as often as in both, stable), proved once (57 goals); <code>next_permutation</code> and <code>prev_permutation</code> parked: their scans are cheap since #282 (a helper spec <code>rise</code> brought one from 232M to 3.5M), but reversing the suffix costs 482M on one invariant and the generic proof does not yet hold; stable forms phase 2</td>
+</tr>
+<tr>
+<td><code>&lt;algorithm&gt;</code> set operations</td>
+<td><code>Pia.Core.Algo.Set</code> (<code>includes</code>, <code>set_intersection</code>, <code>set_difference</code>) <code>Pia.Core.Algo.SetUnion</code> (<code>set_union</code>) and <code>Pia.Core.Algo.SetSymmetric</code> (<code>set_symmetric_difference</code>), by a strict weak order, into the first <code>result</code> places of a destination at least as long as the output can be</td>
+<td>Direct</td>
+<td>done, proved once (75, 65 and 66 goals), on sets: ranges strictly increasing by <code>less</code>, where C++'s multiset semantics and membership (<code>member</code>, some element equivalent) agree; <code>includes</code> uses <code>binary_search</code>, O(m log n); each operation counts what it writes (<code>members</code>) and writes it strictly increasing; <code>set_union</code> (129M) and <code>set_symmetric_difference</code> (137M) cost most of the set operations to prove, so each is its own module and they prove in parallel; each operation's count is a spec of its own (<code>members</code>, <code>nonmembers</code>), which keeps the proofs cheap; multisets with duplicate elements wait</td>
+</tr>
+<tr>
+<td><code>&lt;algorithm&gt;</code> permutations</td>
+<td><code>Pia.Core.Algo.Perm</code></td>
+<td>Direct</td>
+<td>phase 1</td>
+</tr>
+<tr>
+<td><code>&lt;algorithm&gt;</code> <code>_if</code> forms, <code>all_of</code>/<code>any_of</code>/<code>none_of</code>, <code>transform</code>, comparator and operation forms</td>
+<td>no <code>_if</code> names: overloads of <code>find</code>, <code>count</code>, <code>remove</code>, <code>replace</code>, <code>copy</code>, <code>sort</code>, <code>accumulate</code> and the rest that take a predicate, comparator or operation (<code>find xs p</code>, <code>sort xs less</code>); <code>all</code>, <code>any</code>, <code>none</code></td>
+<td>Idiom: overloads (ADR 0040 section 6)</td>
+<td><code>Pia.Core.Algo.Search</code>'s <code>find</code>, <code>count</code>, <code>all</code>, <code>any</code>, <code>none</code> with a predicate (proved once, over a <code>Function</code> object) and <code>mismatch</code>, <code>equal</code> with a binary predicate (proved at each call) done; <code>adjacent_find</code> with a predicate and the comparator forms of <code>min_element</code>, <code>max_element</code>, <code>minmax_element</code>, <code>is_sorted_until</code>, <code>is_sorted</code>, which require <code>Pia.Fn.strict_weak_order less</code> and are proved once (<code>is_sorted</code> says <code>Pia.Fn.sorted less xs</code>), done; the rest phase 6</td>
+</tr>
+<tr>
+<td><code>&lt;numeric&gt;</code></td>
+<td><code>Pia.Core.Int</code> (<code>gcd</code>, <code>midpoint</code>), <code>Pia.Core.Algo.Numeric</code> (<code>iota</code>, <code>accumulate</code>, <code>reduce</code>, <code>inner_product</code>, <code>transform_reduce</code>, <code>partial_sum</code>, <code>inclusive_scan</code>, <code>exclusive_scan</code>, <code>adjacent_difference</code>)</td>
+<td>Direct</td>
+<td><code>gcd</code> (of signed values, unsigned), <code>midpoint</code> done; <code>gcd</code>'s contract states its exact value, the exported spec function <code>euclid</code>, and <code>divides</code> is exported with <code>quot_rem</code>; that <code>gcd</code> divides both, and <code>lcm</code>, wait for nonlinear facts the verifier cannot prove yet. <code>Pia.Core.Algo.Numeric</code>'s algorithms done, each with its operation as a function value and proved once (165 goals): the contract states the result as a left fold (<code>fold</code>, <code>fold2</code>, <code>scan1</code>, <code>iterate</code>), so overflow is the operation's, one written <code>@overflow(wrap)</code>, saturating, or with a <code>requires</code>; <code>reduce</code> and <code>transform_reduce</code> fold in order. <code>iota</code> counting by one also for each integer type but <code>i64</code>, requiring that the last value fits. Exact integer sums by <code>+</code> (an <code>int</code> spec against a fixed-width accumulator) and <code>iota</code> at <code>i64</code> wait for cheaper proofs</td>
+</tr>
+<tr>
+<td>C++26 saturation (<code>add_sat</code>, <code>sub_sat</code>, <code>mul_sat</code>, <code>div_sat</code>, <code>saturate_cast</code>)</td>
+<td><code>add_sat</code>, <code>sub_sat</code> are the core builtins (<code>+|</code>, <code>-|</code>); <code>mul_sat</code>, <code>div_sat</code> and <code>saturate_cast_&lt;t&gt;</code> (from <code>i64</code> and <code>u64</code>, since the target cannot be a type argument yet) in <code>Pia.Core.Int</code></td>
+<td>Direct</td>
+<td>done</td>
+</tr>
+<tr>
+<td><code>&lt;execution&gt;</code></td>
+<td><code>spread</code> and <code>Pia.Par</code></td>
+<td>Idiom (ADR 0014)</td>
+<td>deferred: M12</td>
+</tr>
+<tr>
+<td><code>&lt;generator&gt;</code></td>
+<td>coroutines</td>
+<td>Deferred (ADR 0027)</td>
+<td>phase 5</td>
+</tr>
+</tbody>
+</table>
+<h2 id="numerics-and-time">Numerics and time<a class="headerlink" href="#numerics-and-time" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Header</th>
+<th>Pia</th>
+<th>Kind</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>&lt;bit&gt;</code></td>
+<td>core builtins <code>popcount</code>, <code>clz</code> (<code>countl_zero</code>), <code>ctz</code> (<code>countr_zero</code>), <code>rotl</code>, <code>rotr</code> (amount proved below the width) and <code>bswap</code> (<code>byteswap</code>); the rest (<code>bit_width</code>, <code>bit_floor</code>, <code>bit_ceil</code>, <code>has_single_bit</code>, <code>countl_one</code>, <code>countr_one</code>, <code>endian</code>) in <code>Pia.Core.Bit</code></td>
+<td>Direct</td>
+<td>builtins done; <code>Pia.Core.Bit</code> done, with <code>native</code> shown as <code>Little</code> in the interface, except <code>bit_cast</code> (needs a byte view of any type)</td>
+</tr>
+<tr>
+<td><code>&lt;cmath&gt;</code>, <code>&lt;numbers&gt;</code>, <code>&lt;complex&gt;</code>, <code>&lt;cfenv&gt;</code></td>
+<td><code>Pia.Math</code>, proved in Pia, never libm</td>
+<td>Direct</td>
+<td>deferred: floats (M11)</td>
+</tr>
+<tr>
+<td><code>&lt;valarray&gt;</code></td>
+<td><code>vec&lt;T, k&gt;</code> and <code>spread</code></td>
+<td>Out</td>
+<td>n/a</td>
+</tr>
+<tr>
+<td><code>&lt;random&gt;</code></td>
+<td><code>Pia.Core.Rand</code>: integer engines and integer distributions; floating-point distributions later</td>
+<td>Direct</td>
+<td>phase 1, phase 4</td>
+</tr>
+<tr>
+<td><code>&lt;ratio&gt;</code></td>
+<td><code>Pia.Core.Ratio</code>: <code>reduce</code>, <code>add</code>, <code>subtract</code>, <code>multiply</code>, <code>divide</code>, <code>equal</code>, <code>less</code>, <code>less_equal</code> and the SI prefixes (<code>si "milli"</code>), metaprograms that fold ratios at compile time; <code>define</code> makes one a function whose contract gives its exact parts, and <code>check</code> is <code>static_assert</code></td>
+<td>Direct: C++ folds in its types, Pia in exported metaprograms (ADR 0039)</td>
+<td>done: exact 128-bit arithmetic, always in lowest terms with a positive denominator; a zero denominator, division by zero or a part outside i64 is a compile-time error, as in C++; no proof obligations beyond <code>value</code>'s (1 goal)</td>
+</tr>
+<tr>
+<td><code>&lt;chrono&gt;</code>, <code>&lt;ctime&gt;</code></td>
+<td><code>Pia.Time</code>: <code>standard ()</code> makes C++'s <code>nanoseconds</code> to <code>weeks</code>, each with <code>plus</code>, <code>minus</code>, <code>times</code>, <code>less</code>, <code>same</code> and a <code>to_&lt;unit&gt;</code> cast from every other; <code>duration x p</code> and <code>cast</code> make more, with any <code>Pia.Core.Ratio</code> period; time points and the civil calendar; clocks over <code>Pia.Sys.Clock</code>; time zones later</td>
+<td>Direct: a duration's period is a ratio folded at compile time, not a template argument</td>
+<td>durations done: a widening cast is exact, with a precondition that the count fits i64, and a narrowing one truncates toward zero, as <code>duration_cast</code> does; a cast between periods that do not divide each other is an error for now; what the metaprograms make is proved in the importer (239 goals for the standard set in <code>time_edges.pia</code>); civil calendar done: <code>ymd</code> (year_month_day) for years -1000000 to 1000000, <code>is_leap</code>, <code>last_day</code>, <code>days_from_civil</code> (sys_days of a date, Howard Hinnant's algorithm, with its exact value as the contract) and <code>civil_from_days</code>, with both round trips proved: a day number gives a valid date that maps back to it, and the lemma <code>unique</code> says a valid date with a date's day number is that date (232 goals); time points done: <code>time_point x d</code> (time_point<Clock, d>) with <code>plus</code>, <code>minus</code> and order, <code>point_cast</code> (time_point_cast), and <code>sys_days ()</code>, which makes <code>sys_days</code> and <code>sys_seconds</code> with <code>to_sys_days</code> and <code>to_ymd</code> over the calendar; clocks phase 3, time zones later</td>
+</tr>
+</tbody>
+</table>
+<h2 id="input-and-output">Input and output<a class="headerlink" href="#input-and-output" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Header</th>
+<th>Pia</th>
+<th>Kind</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>&lt;iostream&gt;</code>, <code>&lt;istream&gt;</code>, <code>&lt;ostream&gt;</code>, <code>&lt;ios&gt;</code>, <code>&lt;iomanip&gt;</code></td>
+<td><code>Pia.Io</code>'s <code>reader</code> and <code>writer</code> concepts, and <code>Pia.Text.Format</code></td>
+<td>Idiom</td>
+<td>phase 3</td>
+</tr>
+<tr>
+<td><code>&lt;fstream&gt;</code></td>
+<td><code>Pia.Io</code> over <code>Pia.Sys.Fs</code></td>
+<td>Direct</td>
+<td>phase 3</td>
+</tr>
+<tr>
+<td><code>&lt;sstream&gt;</code>, <code>&lt;spanstream&gt;</code></td>
+<td>writers into a <code>Pia.Text.String</code> or an <code>out</code> slice</td>
+<td>Direct</td>
+<td>phase 3</td>
+</tr>
+<tr>
+<td><code>&lt;iosfwd&gt;</code>, <code>&lt;streambuf&gt;</code>, <code>&lt;syncstream&gt;</code></td>
+<td>none</td>
+<td>Out: no stream class hierarchy</td>
+<td>n/a</td>
+</tr>
+<tr>
+<td><code>&lt;cstdio&gt;</code></td>
+<td><code>Pia.Io</code></td>
+<td>Idiom</td>
+<td>phase 3</td>
+</tr>
+<tr>
+<td><code>&lt;filesystem&gt;</code></td>
+<td><code>Pia.Sys.Fs</code></td>
+<td>Direct (#57)</td>
+<td>files done, for both targets: a <code>@linear</code> <code>file</code> with <code>open_read</code>, <code>create</code>, <code>read_some</code>, <code>write_all</code> and <code>close</code>, each failure an <code>Err</code> of a decoded errno (27 goals); directories, <code>fstat</code> and seeking phase 3</td>
+</tr>
+</tbody>
+</table>
+<h2 id="concurrency">Concurrency<a class="headerlink" href="#concurrency" title="Permanent link">&para;</a></h2>
+<p>All of these are designed in <a href="../adr/0027-coroutines-and-race-freedom/">ADR 0027</a> and wait for M12.</p>
+<table>
+<thead>
+<tr>
+<th>Header</th>
+<th>Pia</th>
+<th>Kind</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>&lt;atomic&gt;</code></td>
+<td>core atomic builtins on <code>atomic&lt;T&gt;</code></td>
+<td>Core</td>
+<td>phase 5</td>
+</tr>
+<tr>
+<td><code>&lt;thread&gt;</code>, <code>&lt;stop_token&gt;</code></td>
+<td><code>Pia.Task</code>: structured scopes and cancellation tokens</td>
+<td>Idiom</td>
+<td>phase 5</td>
+</tr>
+<tr>
+<td><code>&lt;mutex&gt;</code>, <code>&lt;shared_mutex&gt;</code>, <code>&lt;condition_variable&gt;</code>, <code>&lt;semaphore&gt;</code>, <code>&lt;latch&gt;</code>, <code>&lt;barrier&gt;</code></td>
+<td><code>Pia.Sync</code>: locks that own their data, with lock levels</td>
+<td>Idiom</td>
+<td>phase 5</td>
+</tr>
+<tr>
+<td><code>&lt;future&gt;</code></td>
+<td><code>Pia.Task</code>'s <code>join</code>, and <code>Pia.Chan</code></td>
+<td>Idiom</td>
+<td>phase 5</td>
+</tr>
+</tbody>
+</table>
+<h2 id="pia-only-modules">Pia-only modules<a class="headerlink" href="#pia-only-modules" title="Permanent link">&para;</a></h2>
+<p>These have no C++ standard header. They are listed here because they are library modules with the same three tests each in <code>tests/std</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Module</th>
+<th>What</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Pia.Image.Bits</code></td>
+<td>LSB-first bit fields over a byte slice, as GIF's LZW and deflate read them: <code>read_bits</code> and <code>write_bits</code> for fields of up to 16 bits, proved against <code>bits_at</code>, the field as its bits, with the write's frame proved (<a href="../adr/0054-proved-gif-and-inflate-codecs/">ADR 0054</a>)</td>
+<td>done (173 goals)</td>
+</tr>
+<tr>
+<td><code>Pia.Image.Raster</code></td>
+<td>image dimensions (<code>dims</code>), the index of a sample and the rows of a rectangle, each proved to lie below <code>size w h c</code> (ADR 0054)</td>
+<td>done (50 goals)</td>
+</tr>
+<tr>
+<td><code>Pia.Image.Gif.Spec</code>, <code>Pia.Image.Gif.Lzw</code></td>
+<td>GIF's LZW decoder, codes of 3 to 12 bits with the deferred clear, into a caller's buffer with a 12288-byte dictionary table the caller lends; total on every input, each code's string proved to be the spec's (<code>sym</code>), every index proved below 2^m, and checked against giflib on five streams (ADR 0054)</td>
+<td>done</td>
+</tr>
+<tr>
+<td><code>Pia.Image.Gif.Decode</code></td>
+<td>the GIF container: <code>info</code> (screen, frame count, NETSCAPE2.0 loop count) proved to return <code>Ok</code> exactly when <code>Gif.Spec</code>'s block grammar accepts the input, and <code>decode_frame</code>, which composites frames 0 to k into a caller's RGBA buffer with local or global palettes padded to 256 colours, interlacing (its row order proved a permutation), transparency, disposal and clipping to the screen; checked against giflib on three files, every truncation and every one-byte corruption (ADR 0054)</td>
+<td>done</td>
+</tr>
+<tr>
+<td><code>Pia.Image.Gif.LzwEncode</code>, <code>Pia.Image.Gif.Encode</code></td>
+<td>animated GIF encoding: <code>encode_animation</code> writes a global palette, the NETSCAPE2.0 loop count, and per frame a Graphic Control Extension and only the rectangle that changed, LZW-coded over a hash in a caller's table with a clear when the dictionary fills; every code proved below 2^width at width at most 12, the output proved to fit in <code>size_bound</code> bytes, and Ok proved to be a GIF by <code>Gif.Spec</code>'s grammar with the frames and screen asked for; checked with giflib and <code>Gif.Decode</code> on two animations (ADR 0054)</td>
+<td>done; the round trip waits on ADR 0058</td>
+</tr>
+<tr>
+<td><code>Pia.Image.Gif.Quantise</code></td>
+<td>RGB to a palette of at most 256 colours and an index raster: the input's own colours when there are few enough (each pixel then proved to map to its exact colour), else median cut over caller-lent boxes and a histogram; every index proved below the palette size; and <code>encode_rgb_animation</code>, one shared palette for every frame; no claim about visual quality; checked with giflib on a 6-colour animation (exact) and a gradient (ADR 0054)</td>
+<td>done</td>
+</tr>
+<tr>
+<td><code>Pia.Compress.Huffman</code>, <code>Pia.Compress.Inflate.Spec</code>, <code>Pia.Compress.Inflate</code>, <code>Pia.Compress.Zlib</code></td>
+<td>deflate and zlib decoding into a caller's buffer: canonical Huffman tables whose completeness is the Kraft sum, stored, fixed and dynamic blocks with every distance proved at most the bytes written, lengths and distances proved to be RFC 1951's base plus extra bits, and Adler-32 proved equal to RFC 1950's definition; checked against zlib on 13 streams, every truncation and every one-byte corruption (ADR 0054)</td>
+<td>done; whole-stream conformance waits on ADR 0058</td>
+</tr>
+</tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../stdlib/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Standard library (proposal)">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Standard library (proposal)
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../abi/" class="md-footer__link md-footer__link--next" aria-label="Next: Shared libraries and certificates">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Shared libraries and certificates
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.top", "navigation.footer", "content.code.copy", "search.highlight"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+    
+  </body>
+</html>

@@ -2,7 +2,7 @@
 
 Date: 2026-11-28
 
-Status: Proposed
+Status: Proposed. Amended by [ADR 0080](0080-protocol-buffers-in-pia.md) (Proposed, 2026-11-28): the schema becomes `lib/Pia/Ir/ir.proto` and the encoding becomes protobuf's wire format in a canonical form, with strict must-understand fields; versions, migrations and the proof table stay.
 
 ## Context
 

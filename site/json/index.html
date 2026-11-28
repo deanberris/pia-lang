@@ -1,0 +1,4526 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="A programming language whose compiler proves your code correct before it runs.">
+      
+      
+      
+        <link rel="canonical" href="https://pia-lang.dev/json/">
+      
+      
+        <link rel="prev" href="../idioms/">
+      
+      
+        <link rel="next" href="../verification/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
+    
+    
+      
+        <title>JSON - Pia</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="teal">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#json" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Pia" class="md-header__button md-logo" aria-label="Pia" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Pia
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              JSON
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="teal"  aria-label="Dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="teal"  aria-label="Light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/deanberris/pia-lang" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    deanberris/pia-lang
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Pia" class="md-nav__button md-logo" aria-label="Pia" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Pia
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/deanberris/pia-lang" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    deanberris/pia-lang
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../repl/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The REPL
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent skills and MCP
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pia and other verified languages
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../demo/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: edge detection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../streams.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: stream delineation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../sediment.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: sediment transport
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../basins.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: sediment by basin, in parallel
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../pull.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: sediment in pull form
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../placed.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: D8 directions and the picture on the GPU
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../pull_gpu.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: the sediment pull step on the GPU
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gpu-demo/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: CPU and GPU, side by side
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tour/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    A tour of Pia
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../features/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Feature index
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../library/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The standard library today
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../idioms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Idiomatic Pia
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    JSON
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    JSON
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#building-against-the-library" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Building against the library
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#derivejson-a-types-own-codec" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        @derive(json): a type's own codec
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-document-piatextjsondom" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The document: Pia.Text.Json.Dom
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#a-documents-shape-derivejson-json_dom" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A document's shape: @derive(json, json_dom)
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../verification/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How verification works
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../theories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Theories: teaching the verifier a domain
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../repl-debugging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Debugging C++ with the REPL
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_22" >
+        
+          
+          <label class="md-nav__link" for="__nav_22" id="__nav_22_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Case studies
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_22">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Case studies
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cases/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Famous bugs, proved away
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cases/heartbleed.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Heartbleed
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cases/binary-search.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Binary search
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cases/cloudbleed.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cloudbleed
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cases/crowdstrike.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CrowdStrike Channel File 291
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cases/rust-str-repeat.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust str::repeat
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cases/rust-vecdeque.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust VecDeque::reserve
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cases/libwebp.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    libwebp Huffman tables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cases/bun-readfile.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bun readFile on Windows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cases/zlib-gzip-extra.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    zlib gzip extra field
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cases/giflib-background.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    giflib background colour
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Status and roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_24" >
+        
+          
+          <label class="md-nav__link" for="__nav_24" id="__nav_24_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_24_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_24">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Design
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Language design
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../grammar/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Grammar
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../meta/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Metaprograms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Standard library (proposal)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cpp-std/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The C++23 standard library in Pia
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../abi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Shared libraries and certificates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../advisories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advisories
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../init/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Module initialisation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../concurrency/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Coroutines, races and deadlocks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_25" >
+        
+          
+          <label class="md-nav__link" for="__nav_25" id="__nav_25_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compiler internals
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_25_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_25">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Compiler internals
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../irgen/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    IRGen
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../verifier/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Verifier
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../codegen/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Codegen
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../style/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Style guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_26" >
+        
+          
+          <label class="md-nav__link" for="__nav_26" id="__nav_26_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Decision records
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_26_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_26">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Decision records
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Index
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0001-record-architecture-decisions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1. Record architecture decisions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0002-single-let-binding-form/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2. let is the only binding form
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0003-static-typing-with-tagged-dyn/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    3. Strong static typing; dynamic typing only through tagged values
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0004-strongest-guarantee-by-default/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    4. The strongest guarantee is always the default
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0005-parameter-modifiers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    5. Parameters carry ownership, access and modifiability modifiers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0006-contracts-and-module-state/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    6. Contracts, refinement types, and module state as exported symbols
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0007-metaprogramming-fixed-point-expansion/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    7. Metaprogramming from day one, expanded to a fixed point
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0008-operators-via-metaprograms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    8. Operators are defined only through metaprograms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0009-generics-concepts-adapters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    9. User-defined generics, checked concepts with laws, and adapters
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0010-modules-interfaces-and-proof-certificates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    10. Modules export interfaces; imports name them; proofs carry certificates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0011-mlir-and-z3-implementation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    11. Compiler in C++ on MLIR, verifying with interval analysis then Z3
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0012-floating-point-reassociation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    12. Three ways to license float reassociation and FMA
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0013-auto-vectorisation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    13. Auto-vectorise as much as possible; keep vec&lt;T, k&gt; for explicit control
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0014-concurrency-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    14. Concurrent by default: collectives, task graphs, futures; collectives proved to match
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0015-device-placement/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    15. Device placement: compiler cost model, explicit, or overridable
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0016-stream-delineation-flagship-demo/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    16. Stream delineation on Apple Silicon is the flagship demo
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0017-bazel-build/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    17. Build with Bazel; depend on LLVM/MLIR and Z3 as Bazel modules
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0018-dialect-layering/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    18. Three Pia dialects over upstream MLIR, with smt for solving
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0019-grammar-disambiguation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    19. Grammar disambiguation rules
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0020-presburger-for-affine-goals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    20. Decide affine aliasing and dependence goals with MLIR's Presburger library
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0021-language-server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    21. A language server, pia-lsp, with a VS Code client first
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0022-metaprogram-hygiene/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    22. Hygiene and name lookup: no shadowing, renamed quote binders, qualified names, ADL
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0023-minimal-core-self-hosted-stdlib/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    23. A minimal core, with the standard library written and proved in Pia
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0024-published-proof-certificates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    24. Shared libraries publish interfaces and proof certificates; loaders check them
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0025-sanitizers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    25. Sanitizers check the edges of the proof
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0026-memory-manager/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    26. A memory manager of explicit allocators, with no garbage collection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0027-coroutines-and-race-freedom/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    27. Stackless coroutines, structured tasks, and race freedom proved from permissions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0028-error-propagation-and-cleanup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    28. Errors propagate with ? to a scope's handler; cleanup runs at scope end
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0029-comments-as-syntax-and-literate-pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    29. Comments are syntax: \ line comments, doc comments, and literate .pia.md files
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0030-published-object-layouts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    30. Optimised object layouts are published, and a changed layout fails to load until relinked
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0031-verified-repl-and-live-environment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    31. A verified REPL over a reusable session, with proved live redefinition
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0032-parallel-sliced-cached-proving/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    32. Proofs run in parallel, one goal per solver, sliced, cached and selectable
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0033-module-initialisation-and-registries/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    33. Module initialisation: registries, proved @init hooks, and opt-in dynamic registration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0034-concepts-and-overload-resolution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    34. Concepts as checked signatures, and concept-based overload resolution
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0035-substitution-failure-and-total-constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    35. Substitution failure removes a candidate, and constraints are proved to terminate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0036-library-theories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    36. Libraries extend the solver with theories: sorts, functions and axioms, proved consistent by a model or listed as trusted
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0037-idiomatic-pia-and-lints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    37. Idiomatic Pia: facts in types first, written as opinions and checked by lints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0038-float-kernels-against-real-theories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    38. Float kernels are proved against real-valued specifications by rounding-error bounds
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0039-module-and-interface-syntax/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    39. Modules are private by default: one module per file, interfaces list every export, imports name interfaces
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0040-cpp23-standard-library-in-pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    40. The C++23 standard library, mapped onto Pia and proved
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0041-allocator-semantics-as-a-theory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    41. Allocator semantics are a theory, and allocators prove they refine it through spec-only state
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0042-lifetimes-liveness-and-escape-analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    42. Lifetimes are checked by liveness, marked where values cross boundaries, and escape analysis places memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0043-generic-definitions-proved-once/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    43. Generic definitions are proved once, against their concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0044-function-values-and-lambdas/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    44. Function values: typed and generic lambdas, a Function concept, and proofs through function arguments
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0045-json-derived-codecs-and-conforming-dom/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    45. JSON: derived streaming codecs, typed construction, and a DOM proved to conform to a type
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0046-box-over-a-type-or-a-concept/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    46. A box holds a type or any type meeting a concept, and what it holds is proved to have the concept's shape
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0047-recursive-sum-types-and-shared-references/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    47. Recursive sum types are explicit, recurse through an owning indirection, and share through strong and weak references
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0048-buffers-whose-elements-hold-slices/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    48. Buffers may hold slices: owned slices are written through, shared ones only read
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0049-targets-are-theories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    49. Linux x86_64 is a second target, tested in Linux CI, and each target is a model of a built-in Pia.Target theory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0050-senders-and-receivers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    50. Asynchronous work is senders and receivers whose completion rules are proved, over io_uring on Linux and a kqueue completion adapter on macOS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0051-variadic-generics-and-foreign-varargs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    51. Variadic functions and types take a pack that is called like any argument list, walked by metaprograms and proved once; foreign bindings are generated from tables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0052-atomics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    52. Atomics are a core cell type with checked orders and stated overflow, modelled by RC11 with a litmus battery before tasks exist, and lowered per target by a table proved against each hardware model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0053-protocols-checked-by-z3/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    53. Protocols and deadlock are checked in Z3, as transition systems proved by constrained Horn clauses; explicit search stays for atomics, and TLA+ is an export format
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0054-proved-gif-and-inflate-codecs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    54. GIF and inflate are proved total on every input, decode to a written specification, and GIF round-trips exactly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0055-sediment-transport-in-fixed-point/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    55. Sediment transport is integer mass moved downhill in height order, with conservation proved exactly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0056-tests-generated-from-contracts-and-theories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    56. Tests are generated by metaprograms from contracts, types and theories; a case the verifier can decide is proved, and only the rest is run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0057-posix-module-per-target-behind-one-interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    57. Pia.Sys.Posix is one generated module per target behind one hand-written interface, and the generator joins the contract overlay
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0058-spec-buffers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    58. Spec buffers: spec-only arrays that code writes, contracts read and codegen erases
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0059-digit-separators-and-type-bounds/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    59. Digits group with ' or _; min t and max t are an integer type's bounds, folded to literals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0060-spread-v0-ownership-and-runtime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    60. spread v0: iterations own the cells they write, proved one iteration at a time; MLIR's async runtime runs them
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0061-lean-proved-facts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    61. Lean proves the facts Z3 cannot: lemmas and theory models are proved in Lean against statements piac generates, recorded in certificates by statement hash, and checked outside the edit loop; cost bounds are proved by Z3, and their asymptotics in Lean
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0062-cost-bounds-in-contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    62. Cost bounds are contracts: costs c &lt;= e bounds what a function spends on a named counter, tracked by a spec-only spent c and proved by Z3
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0063-opaque-spec-functions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    63. Opaque spec functions: a spec function marked @opaque keeps its definition out of every goal until a proof reveals it
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0064-distinct-types/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    64. type always makes a new type: let length = type u32 is distinct from u32, converts only by applying a type to a value, and inherits only what it derives
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0065-lowerings-written-in-pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    65. Pia code extends the compiler's lowering: @lower gives a function an MLIR form and a type an MLIR type, the Pia definition stays the specification, and each lowering is proved to refine it or is listed as trusted
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0066-int-blasting-for-nonlinear-goals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    66. Nonlinear goals are tried first with Z3's int-blasting solver, and other solvers are kept out of the pipeline for now
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0067-release-0-1-0-a-proved-small-llm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    67. Release 0.1.0 is a small Llama-architecture LLM ported from PyTorch to Pia, proved where a proof means something, running inference on an M3 Mac on CPU SIMD and on the GPU through linalg
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0068-gpu-compute-through-spirv-and-metal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    68. GPU compute: a proved spread placed on the GPU, lowered through SPIR-V and SPIRV-Cross to Metal, launched by a small trusted shim
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0069-pure-and-impure-functions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    69. Pure and impure functions: computed purity, @pure assertions, and @impure interface boundaries
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0070-raw-binary-embedding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    70. Raw binary embedding: @embed for compile-time fixed byte blobs, hermetic roots, opaque verification and direct LLVM emission
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0071-function-references/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    71. Function references: a function is a value that travels by reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0072-drops-run-in-constant-stack/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    72. A drop never grows the stack: every drop is one walk, proved against the recursive drop, with a fixed stack bound per type
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0073-prover-identity-abi-version-and-advisories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    73. Certificates record who proved a module and with what, advisories revoke trust in faulty provers, and every breaking change ships a migration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0074-library-types-tensors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    74. Library types: a type written in Pia gets an MLIR type, ops and proofs from its library, and Pia.Tensor over MLIR tensor is the proof point
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0075-codegen-benchmarks-against-c-cpp-rust-zig/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    75. Codegen is benchmarked against C, C++, Rust and Zig on public problems, same algorithm first, counted in instructions on Linux and timed on Apple Silicon
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0076-transparent-exports/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    76. Transparent exports: an importer proves against an exported function's body, as a caller in its own module does
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0077-definitions-inherit-interface-contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    77. A definition that states no contract takes the contract of the interface that lists it
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0078-pia-lib-ops-with-proved-substitutions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    78. Library functions lower to pia_lib.call, a Pia-owned op whose meaning is its Pia body, and a late pass either expands it into the body or substitutes an upstream op through a rule proved against the body
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0079-pia-module-format/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    79. Pia IR: a versioned op schema Pia controls, in lock-step with piac, with deprecations and migrations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0080-protocol-buffers-in-pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    80. Protocol Buffers in Pia: a metaprogram that turns .proto into proved types and codecs, and Pia IR as a protobuf schema
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#building-against-the-library" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Building against the library
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#derivejson-a-types-own-codec" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        @derive(json): a type's own codec
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-document-piatextjsondom" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The document: Pia.Text.Json.Dom
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#a-documents-shape-derivejson-json_dom" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A document's shape: @derive(json, json_dom)
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="json">JSON<a class="headerlink" href="#json" title="Permanent link">&para;</a></h1>
+<p><code>Pia.Text.Json</code> reads and writes JSON with every step proved against one grammar, RFC 8259's, stated as spec functions in <code>Pia.Text.Json.Spec</code> (<a href="../adr/0045-json-derived-codecs-and-conforming-dom/">ADR 0045</a>). There are two ways in:</p>
+<ul>
+<li><strong>Straight into a type.</strong> <code>@derive(json)</code> writes a reader and a writer for a record or a variant, and <code>Json.read&lt;t&gt;</code> reads a whole text as a <code>t</code>, with an error type that has exactly the errors <code>t</code> can raise.</li>
+<li><strong>Through a document.</strong> <code>Pia.Text.Json.Dom.parse</code> reads any JSON text into a <code>json</code> value, a recursive type over the text, proved <code>valid_dom</code>. <code>@derive(json, json_dom)</code> then says when a document has a type's shape, and converts it, with no failure path left once it does.</li>
+</ul>
+<p>Every example on this page is proved by <code>piac</code>.</p>
+<h2 id="building-against-the-library">Building against the library<a class="headerlink" href="#building-against-the-library" title="Permanent link">&para;</a></h2>
+<p>A program that uses the library imports its modules' interfaces, so it is proved against their contracts alone. <code>piac --emit=interface</code> writes each one as an artifact, here into the current directory:</p>
+<div class="highlight"><pre><span></span><code><span class="gp">$ </span>piac<span class="w"> </span>--emit<span class="o">=</span>interface<span class="w"> </span>-o<span class="w"> </span>.<span class="w"> </span>lib/Pia/Text/Json/Spec.pia
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="gp">$ </span>piac<span class="w"> </span>--emit<span class="o">=</span>interface<span class="w"> </span>-o<span class="w"> </span>.<span class="w"> </span>lib/Pia/Text/Json/Lex.pia
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="gp">$ </span>piac<span class="w"> </span>--emit<span class="o">=</span>interface<span class="w"> </span>-o<span class="w"> </span>.<span class="w"> </span>lib/Pia/Text/Json/Read.pia
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="gp">$ </span>piac<span class="w"> </span>--emit<span class="o">=</span>interface<span class="w"> </span>-o<span class="w"> </span>.<span class="w"> </span>lib/Pia/Text/Json/Write.pia
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="gp">$ </span>piac<span class="w"> </span>--emit<span class="o">=</span>interface<span class="w"> </span>-o<span class="w"> </span>.<span class="w"> </span>lib/Pia/Text/Json/Derive.pia
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="gp">$ </span>piac<span class="w"> </span>--emit<span class="o">=</span>interface<span class="w"> </span>-o<span class="w"> </span>.<span class="w"> </span>lib/Pia/Mem/Alloc.pia
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="gp">$ </span>piac<span class="w"> </span>--emit<span class="o">=</span>interface<span class="w"> </span>-o<span class="w"> </span>.<span class="w"> </span>lib/Pia/Text/Json/Dom.pia
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="gp">$ </span>piac<span class="w"> </span>--emit<span class="o">=</span>interface<span class="w"> </span>-o<span class="w"> </span>.<span class="w"> </span>lib/Pia/Text/Json/Shape.pia
+</code></pre></div>
+<p>and <code>--iface-path=.</code> finds them.</p>
+<h2 id="derivejson-a-types-own-codec"><code>@derive(json)</code>: a type's own codec<a class="headerlink" href="#derivejson-a-types-own-codec" title="Permanent link">&para;</a></h2>
+<p><code>@derive(json)</code> on a record of integers, range types and bools writes <code>write_json_&lt;t&gt;</code>, which writes a value into a buffer with the room its precondition states, and <code>read_json_&lt;t&gt;</code>, which reads one. A member's name is its field's, or <code>@json(name = "...")</code>. <code>Json.read&lt;t&gt;</code> reads a whole text, and its errors are <code>Json.json_errors t</code>: for <code>point</code> below, a syntax error, an unknown, duplicate or missing member, or a number out of its field's range, each at the position it was found.</p>
+<!-- example: point.pia -->
+<!-- flags: --iface-path=. -->
+<div class="highlight"><pre><span></span><code><span class="n">import</span> <span class="nn">Pia</span><span class="p">.</span><span class="nn">Text</span><span class="p">.</span><span class="nn">Json</span><span class="p">.</span><span class="nn">Spec</span><span class="p">.</span><span class="nc">Grammar</span>
+<span class="n">import</span> <span class="nn">Pia</span><span class="p">.</span><span class="nn">Text</span><span class="p">.</span><span class="nn">Json</span><span class="p">.</span><span class="nn">Lex</span><span class="p">.</span><span class="nc">Lexer</span>
+<span class="n">import</span> <span class="nn">Pia</span><span class="p">.</span><span class="nn">Text</span><span class="p">.</span><span class="nn">Json</span><span class="p">.</span><span class="nn">Read</span><span class="p">.</span><span class="nc">Reader</span>
+<span class="n">import</span> <span class="nn">Pia</span><span class="p">.</span><span class="nn">Text</span><span class="p">.</span><span class="nn">Json</span><span class="p">.</span><span class="nn">Write</span><span class="p">.</span><span class="nc">Writer</span>
+<span class="n">import</span> <span class="nn">Pia</span><span class="p">.</span><span class="nn">Text</span><span class="p">.</span><span class="nn">Json</span><span class="p">.</span><span class="nn">Derive</span><span class="p">.</span><span class="nc">Derive</span> <span class="k">as</span> <span class="nc">Json</span>
+
+<span class="k">let</span> <span class="n">point</span> <span class="o">=</span> <span class="k">type</span> <span class="o">{</span> <span class="n">x</span> <span class="o">:</span> <span class="n">i32</span> <span class="o">@</span><span class="n">json</span><span class="o">(</span><span class="n">name</span> <span class="o">=</span> <span class="s2">"xx"</span><span class="o">);</span> <span class="n">y</span> <span class="o">:</span> <span class="n">u8</span><span class="o">;</span> <span class="n">ok</span> <span class="o">:</span> <span class="kt">bool</span> <span class="o">}</span> <span class="o">@</span><span class="n">derive</span><span class="o">(</span><span class="n">json</span><span class="o">)</span>
+
+<span class="c">(* The y of the point the text is, or 0. *)</span>
+<span class="k">let</span> <span class="n">y_of</span> <span class="o">(</span><span class="n">s</span> <span class="o">:</span> <span class="o">[</span><span class="n">u8</span><span class="o">])</span> <span class="o">:</span> <span class="n">u8</span> <span class="o">=</span>
+  <span class="k">match</span> <span class="nn">Json</span><span class="p">.</span><span class="n">read</span><span class="o">&lt;</span><span class="n">point</span><span class="o">&gt;</span> <span class="n">s</span> <span class="k">with</span>
+  <span class="o">|</span> <span class="nc">Ok</span> <span class="n">p</span> <span class="o">-&gt;</span> <span class="n">p</span><span class="o">.</span><span class="n">y</span>
+  <span class="o">|</span> <span class="nc">Err</span> <span class="o">_</span> <span class="o">-&gt;</span> <span class="mi">0</span>
+
+<span class="c">(* Why a text is not a point. *)</span>
+<span class="k">let</span> <span class="n">why</span> <span class="o">(</span><span class="n">e</span> <span class="o">:</span> <span class="nn">Json</span><span class="p">.</span><span class="n">json_errors</span> <span class="n">point</span><span class="o">)</span> <span class="o">:</span> <span class="n">u8</span> <span class="o">=</span>
+  <span class="k">match</span> <span class="n">e</span> <span class="k">with</span>
+  <span class="o">|</span> <span class="nc">Syntax_point</span> <span class="o">_</span> <span class="o">-&gt;</span> <span class="mi">1</span> <span class="o">|</span> <span class="nc">Unknown_point</span> <span class="o">_</span> <span class="o">-&gt;</span> <span class="mi">2</span> <span class="o">|</span> <span class="nc">Duplicate_point</span> <span class="o">_</span> <span class="o">-&gt;</span> <span class="mi">3</span>
+  <span class="o">|</span> <span class="nc">Missing_point</span> <span class="o">_</span> <span class="o">-&gt;</span> <span class="mi">4</span> <span class="o">|</span> <span class="nc">Range_point</span> <span class="o">_</span> <span class="o">-&gt;</span> <span class="mi">5</span>
+</code></pre></div>
+<p>The reader checks each integer's range as it reads its digits, so <code>"y": 256</code> stops at the third digit, and it never reads outside the text. Every goal of the derived code is proved where it is derived:</p>
+<div class="highlight"><pre><span></span><code><span class="gp">$ </span>piac<span class="w"> </span>--verify<span class="w"> </span>--iface-path<span class="o">=</span>.<span class="w"> </span>point.pia
+<span class="go">...</span>
+<span class="go">65 proved, 0 failed, 0 skipped</span>
+</code></pre></div>
+<p>A field of another record with <code>@derive(json)</code> is a nested object, which that record's own reader and writer read and write. Its errors stay exact: the record's error set is the union of its own errors and the nested record's, <code>(line_json_own_error | point_json_error)</code>, each once however many fields share the type, and each error says where in the text it is (<a href="../stdlib/#errors-and-scope-cleanup">error sets</a>). Each derive also writes <code>json_room_&lt;t&gt;</code>, the room its writer needs, which counts a nested record's:</p>
+<!-- example: line.pia -->
+<!-- flags: --iface-path=. -->
+<div class="highlight"><pre><span></span><code><span class="n">import</span> <span class="nn">Pia</span><span class="p">.</span><span class="nn">Text</span><span class="p">.</span><span class="nn">Json</span><span class="p">.</span><span class="nn">Spec</span><span class="p">.</span><span class="nc">Grammar</span>
+<span class="n">import</span> <span class="nn">Pia</span><span class="p">.</span><span class="nn">Text</span><span class="p">.</span><span class="nn">Json</span><span class="p">.</span><span class="nn">Lex</span><span class="p">.</span><span class="nc">Lexer</span>
+<span class="n">import</span> <span class="nn">Pia</span><span class="p">.</span><span class="nn">Text</span><span class="p">.</span><span class="nn">Json</span><span class="p">.</span><span class="nn">Read</span><span class="p">.</span><span class="nc">Reader</span>
+<span class="n">import</span> <span class="nn">Pia</span><span class="p">.</span><span class="nn">Text</span><span class="p">.</span><span class="nn">Json</span><span class="p">.</span><span class="nn">Write</span><span class="p">.</span><span class="nc">Writer</span>
+<span class="n">import</span> <span class="nn">Pia</span><span class="p">.</span><span class="nn">Text</span><span class="p">.</span><span class="nn">Json</span><span class="p">.</span><span class="nn">Derive</span><span class="p">.</span><span class="nc">Derive</span> <span class="k">as</span> <span class="nc">Json</span>
+
+<span class="k">let</span> <span class="n">point</span> <span class="o">=</span> <span class="k">type</span> <span class="o">{</span> <span class="n">x</span> <span class="o">:</span> <span class="n">i32</span><span class="o">;</span> <span class="n">y</span> <span class="o">:</span> <span class="n">u8</span> <span class="o">}</span> <span class="o">@</span><span class="n">derive</span><span class="o">(</span><span class="n">json</span><span class="o">)</span>
+<span class="k">let</span> <span class="n">line</span> <span class="o">=</span> <span class="k">type</span> <span class="o">{</span> <span class="n">a</span> <span class="o">:</span> <span class="n">point</span><span class="o">;</span> <span class="n">b</span> <span class="o">:</span> <span class="n">point</span> <span class="o">}</span> <span class="o">@</span><span class="n">derive</span><span class="o">(</span><span class="n">json</span><span class="o">)</span>
+
+<span class="c">(* Why a text is not a line: 1 when a point's number is out of range,</span>
+<span class="c">   2 when a point is not an object. *)</span>
+<span class="k">let</span> <span class="n">why</span> <span class="o">(</span><span class="n">e</span> <span class="o">:</span> <span class="nn">Json</span><span class="p">.</span><span class="n">json_errors</span> <span class="n">line</span><span class="o">)</span> <span class="o">:</span> <span class="n">u8</span> <span class="o">=</span>
+  <span class="k">match</span> <span class="n">e</span> <span class="k">with</span>
+  <span class="o">|</span> <span class="nc">Range_point</span> <span class="o">_</span> <span class="o">-&gt;</span> <span class="mi">1</span>
+  <span class="o">|</span> <span class="nc">Syntax_point</span> <span class="o">_</span> <span class="o">-&gt;</span> <span class="mi">2</span>
+  <span class="o">|</span> <span class="o">_</span> <span class="o">-&gt;</span> <span class="mi">3</span>
+
+<span class="c">(* A line's text, in a buffer with its room. *)</span>
+<span class="k">let</span> <span class="n">write</span> <span class="o">(</span><span class="n">l</span> <span class="o">:</span> <span class="n">line</span><span class="o">)</span> <span class="o">(</span><span class="n">dst</span> <span class="o">:</span> <span class="n">borrowed</span> <span class="n">inout</span> <span class="k">mutable</span> <span class="o">[</span><span class="n">u8</span><span class="o">])</span> <span class="o">:</span> <span class="n">usize</span>
+  <span class="n">requires</span> <span class="n">len</span> <span class="n">dst</span> <span class="o">&gt;=</span> <span class="n">json_room_line</span>
+<span class="o">=</span> <span class="n">write_json_line</span> <span class="n">dst</span> <span class="mi">0</span> <span class="n">l</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="gp">$ </span>piac<span class="w"> </span>--verify<span class="w"> </span>--iface-path<span class="o">=</span>.<span class="w"> </span>line.pia
+<span class="go">...</span>
+<span class="go">99 proved, 0 failed, 0 skipped</span>
+</code></pre></div>
+<p>An option of a record works the same way: <code>null</code> or a missing member is None, and <code>json_room_&lt;t&gt;</code> counts the record's room for it. <code>@derive(json_dom)</code> takes one too. An array of records is not supported yet (<a href="https://github.com/deanberris/pia-lang/issues/528">#528</a>).</p>
+<h2 id="the-document-piatextjsondom">The document: <code>Pia.Text.Json.Dom</code><a class="headerlink" href="#the-document-piatextjsondom" title="Permanent link">&para;</a></h2>
+<p><code>json</code> is a recursive type (<a href="../tour/#recursive-types">recursive types</a>) whose numbers and strings are spans of the text they were read from, so parsing copies nothing:</p>
+<!-- untested: an excerpt of lib/Pia/Text/Json/Dom.pia, which tests/std/json_dom.pia proves -->
+<div class="highlight"><pre><span></span><code><span class="k">let</span> <span class="k">rec</span> <span class="n">json</span> <span class="o">=</span> <span class="k">let</span> <span class="o">(</span><span class="n">r</span> <span class="o">:</span> <span class="n">region</span><span class="o">)</span> <span class="o">=&gt;</span> <span class="k">type</span>
+  <span class="o">|</span> <span class="nc">JNull</span>
+  <span class="o">|</span> <span class="nc">Bool</span> <span class="k">of</span> <span class="kt">bool</span>
+  <span class="o">|</span> <span class="nc">Num</span> <span class="k">of</span> <span class="n">span</span>
+  <span class="o">|</span> <span class="nc">Str</span> <span class="k">of</span> <span class="n">span</span>
+  <span class="o">|</span> <span class="nc">Arr</span> <span class="k">of</span> <span class="n">vec</span> <span class="o">(</span><span class="n">json</span> <span class="n">r</span><span class="o">)</span> <span class="n">r</span>
+  <span class="o">|</span> <span class="nc">Obj</span> <span class="k">of</span> <span class="n">vec</span> <span class="o">(</span><span class="n">member</span> <span class="n">r</span><span class="o">)</span> <span class="n">r</span>
+<span class="k">let</span> <span class="k">rec</span> <span class="n">member</span> <span class="o">=</span> <span class="k">let</span> <span class="o">(</span><span class="n">r</span> <span class="o">:</span> <span class="n">region</span><span class="o">)</span> <span class="o">=&gt;</span> <span class="k">type</span> <span class="o">{</span> <span class="n">key</span> <span class="o">:</span> <span class="n">span</span><span class="o">;</span> <span class="n">value</span> <span class="o">:</span> <span class="n">json</span> <span class="n">r</span> <span class="o">}</span>
+</code></pre></div>
+<p><code>Dom.parse s max_depth values members</code> reads all of <code>s</code> as one document, nested at most <code>max_depth</code> deep, taking each array from <code>values</code> and each object from <code>members</code>: two bump allocators over memory the caller lends. Each container is counted before it is read, so it takes one allocation of exactly its length. Its errors are a lex error, a misplaced token, too deep, trailing input and no memory, each with its position; a document it returns is <code>valid_dom s v</code>, every number, string and key a token of its kind.</p>
+<p>A walk over a document is structural recursion, which needs no measure:</p>
+<!-- example: count.pia -->
+<!-- flags: --iface-path=. -->
+<div class="highlight"><pre><span></span><code><span class="n">import</span> <span class="nn">Pia</span><span class="p">.</span><span class="nn">Text</span><span class="p">.</span><span class="nn">Json</span><span class="p">.</span><span class="nn">Spec</span><span class="p">.</span><span class="nc">Grammar</span>
+<span class="n">import</span> <span class="nn">Pia</span><span class="p">.</span><span class="nn">Text</span><span class="p">.</span><span class="nn">Json</span><span class="p">.</span><span class="nn">Lex</span><span class="p">.</span><span class="nc">Lexer</span>
+<span class="n">import</span> <span class="nn">Pia</span><span class="p">.</span><span class="nn">Mem</span><span class="p">.</span><span class="nn">Alloc</span><span class="p">.</span><span class="nc">Allocators</span>
+<span class="n">import</span> <span class="nn">Pia</span><span class="p">.</span><span class="nn">Text</span><span class="p">.</span><span class="nn">Json</span><span class="p">.</span><span class="nn">Dom</span><span class="p">.</span><span class="nc">Document</span>
+
+<span class="c">(* The values in v, itself included, capped at a million. *)</span>
+<span class="k">let</span> <span class="k">rec</span> <span class="n">nodes</span> <span class="o">(</span><span class="n">r</span> <span class="o">:</span> <span class="n">region</span><span class="o">)</span> <span class="o">(</span><span class="n">v</span> <span class="o">:</span> <span class="nn">Pia</span><span class="p">.</span><span class="nn">Text</span><span class="p">.</span><span class="nn">Json</span><span class="p">.</span><span class="nn">Dom</span><span class="p">.</span><span class="n">json</span> <span class="n">r</span><span class="o">)</span> <span class="o">:</span> <span class="kt">int</span><span class="o">{</span><span class="mi">0</span><span class="o">..</span><span class="mi">1000000</span><span class="o">}</span> <span class="o">=</span>
+  <span class="k">match</span> <span class="n">v</span> <span class="k">with</span>
+  <span class="o">|</span> <span class="nc">Arr</span> <span class="n">a</span> <span class="o">-&gt;</span>
+    <span class="k">let</span> <span class="n">total</span> <span class="o">:</span> <span class="k">mutable</span> <span class="kt">int</span><span class="o">{</span><span class="mi">0</span><span class="o">..</span><span class="mi">1000000</span><span class="o">}</span> <span class="o">=</span> <span class="mi">1</span> <span class="k">in</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="k">in</span> <span class="mi">0</span> <span class="o">..</span> <span class="n">len</span> <span class="n">a</span><span class="o">.</span><span class="n">items</span> <span class="k">do</span>
+      <span class="o">(</span><span class="k">let</span> <span class="n">n</span> <span class="o">=</span> <span class="n">nodes</span> <span class="n">a</span><span class="o">.</span><span class="n">items</span><span class="o">.[</span><span class="n">i</span><span class="o">]</span> <span class="k">in</span>
+       <span class="n">total</span> <span class="o">&lt;-</span> <span class="k">if</span> <span class="n">n</span> <span class="o">&lt;=</span> <span class="mi">1000000</span> <span class="o">-</span> <span class="n">total</span> <span class="k">then</span> <span class="n">total</span> <span class="o">+</span> <span class="n">n</span> <span class="k">else</span> <span class="mi">1000000</span><span class="o">)</span>
+    <span class="k">done</span><span class="o">;</span>
+    <span class="n">total</span>
+  <span class="o">|</span> <span class="nc">Obj</span> <span class="n">o</span> <span class="o">-&gt;</span>
+    <span class="k">let</span> <span class="n">total</span> <span class="o">:</span> <span class="k">mutable</span> <span class="kt">int</span><span class="o">{</span><span class="mi">0</span><span class="o">..</span><span class="mi">1000000</span><span class="o">}</span> <span class="o">=</span> <span class="mi">1</span> <span class="k">in</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="k">in</span> <span class="mi">0</span> <span class="o">..</span> <span class="n">len</span> <span class="n">o</span><span class="o">.</span><span class="n">items</span> <span class="k">do</span>
+      <span class="o">(</span><span class="k">let</span> <span class="n">n</span> <span class="o">=</span> <span class="n">nodes</span> <span class="n">o</span><span class="o">.</span><span class="n">items</span><span class="o">.[</span><span class="n">i</span><span class="o">].</span><span class="n">value</span> <span class="k">in</span>
+       <span class="n">total</span> <span class="o">&lt;-</span> <span class="k">if</span> <span class="n">n</span> <span class="o">&lt;=</span> <span class="mi">1000000</span> <span class="o">-</span> <span class="n">total</span> <span class="k">then</span> <span class="n">total</span> <span class="o">+</span> <span class="n">n</span> <span class="k">else</span> <span class="mi">1000000</span><span class="o">)</span>
+    <span class="k">done</span><span class="o">;</span>
+    <span class="n">total</span>
+  <span class="o">|</span> <span class="o">_</span> <span class="o">-&gt;</span> <span class="mi">1</span>
+
+<span class="c">(* The values in the text, or 0 if it is not one document. *)</span>
+<span class="k">let</span> <span class="n">count</span> <span class="o">(</span><span class="n">s</span> <span class="o">:</span> <span class="o">[</span><span class="n">u8</span><span class="o">])</span> <span class="o">(</span><span class="n">cells</span> <span class="o">:</span> <span class="n">borrowed</span> <span class="k">mutable</span> <span class="o">[</span><span class="nn">Pia</span><span class="p">.</span><span class="nn">Text</span><span class="p">.</span><span class="nn">Json</span><span class="p">.</span><span class="nn">Dom</span><span class="p">.</span><span class="n">json</span><span class="o">])</span> <span class="o">(</span><span class="n">mems</span> <span class="o">:</span> <span class="n">borrowed</span> <span class="k">mutable</span> <span class="o">[</span><span class="nn">Pia</span><span class="p">.</span><span class="nn">Text</span><span class="p">.</span><span class="nn">Json</span><span class="p">.</span><span class="nn">Dom</span><span class="p">.</span><span class="n">member</span><span class="o">])</span> <span class="o">:</span> <span class="kt">int</span><span class="o">{</span><span class="mi">0</span><span class="o">..</span><span class="mi">1000000</span><span class="o">}</span> <span class="o">=</span>
+  <span class="k">let</span> <span class="n">vs</span> <span class="o">:</span> <span class="k">mutable</span> <span class="nn">Pia</span><span class="p">.</span><span class="nn">Mem</span><span class="p">.</span><span class="nn">Alloc</span><span class="p">.</span><span class="n">bump</span> <span class="nn">Pia</span><span class="p">.</span><span class="nn">Text</span><span class="p">.</span><span class="nn">Json</span><span class="p">.</span><span class="nn">Dom</span><span class="p">.</span><span class="n">json</span> <span class="o">=</span> <span class="o">{</span> <span class="n">mem</span> <span class="o">=</span> <span class="n">cells</span><span class="o">;</span> <span class="n">used</span> <span class="o">=</span> <span class="mi">0</span> <span class="o">}</span> <span class="k">in</span>
+  <span class="k">let</span> <span class="n">ms</span> <span class="o">:</span> <span class="k">mutable</span> <span class="nn">Pia</span><span class="p">.</span><span class="nn">Mem</span><span class="p">.</span><span class="nn">Alloc</span><span class="p">.</span><span class="n">bump</span> <span class="nn">Pia</span><span class="p">.</span><span class="nn">Text</span><span class="p">.</span><span class="nn">Json</span><span class="p">.</span><span class="nn">Dom</span><span class="p">.</span><span class="n">member</span> <span class="o">=</span> <span class="o">{</span> <span class="n">mem</span> <span class="o">=</span> <span class="n">mems</span><span class="o">;</span> <span class="n">used</span> <span class="o">=</span> <span class="mi">0</span> <span class="o">}</span> <span class="k">in</span>
+  <span class="k">match</span> <span class="nn">Pia</span><span class="p">.</span><span class="nn">Text</span><span class="p">.</span><span class="nn">Json</span><span class="p">.</span><span class="nn">Dom</span><span class="p">.</span><span class="n">parse</span> <span class="n">s</span> <span class="mi">16</span> <span class="n">vs</span> <span class="n">ms</span> <span class="k">with</span>
+  <span class="o">|</span> <span class="nc">Ok</span> <span class="n">v</span> <span class="o">-&gt;</span> <span class="n">nodes</span> <span class="n">v</span>
+  <span class="o">|</span> <span class="nc">Err</span> <span class="o">_</span> <span class="o">-&gt;</span> <span class="mi">0</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="gp">$ </span>piac<span class="w"> </span>--verify<span class="w"> </span>--iface-path<span class="o">=</span>.<span class="w"> </span>count.pia
+<span class="go">...</span>
+<span class="go">8 proved, 0 failed, 0 skipped</span>
+</code></pre></div>
+<h2 id="a-documents-shape-derivejson-json_dom">A document's shape: <code>@derive(json, json_dom)</code><a class="headerlink" href="#a-documents-shape-derivejson-json_dom" title="Permanent link">&para;</a></h2>
+<p><code>@derive(json_dom)</code>, from <code>Pia.Text.Json.Shape</code>, says when a document has a record's shape, and converts it. It sits beside <code>@derive(json)</code>, whose member names it shares and whose writer <code>to_dom</code> uses, so that <code>@derive(json)</code> alone needs no document. For a record <code>t</code> of integers, range types and bools, options and fixed arrays of them, and other records with <code>@derive(json, json_dom)</code> and options of them, it writes:</p>
+<table>
+<thead>
+<tr>
+<th>Function</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>conforms_json_&lt;t&gt; s v</code></td>
+<td>a spec function: v is an object with exactly one member for each field, each called its name, each value a number in its field's range or a bool as its field is, and no other member. An option field's member may be missing or <code>null</code>, both None, an <code>[e; n]</code> field's is an array of exactly n values of e, and a record field's conforms to that record</td>
+</tr>
+<tr>
+<td><code>check_json_&lt;t&gt; s v</code></td>
+<td>decides it: <code>ensures result = conforms_json_&lt;t&gt; s v</code></td>
+</tr>
+<tr>
+<td><code>from_dom_json_&lt;t&gt; s v</code></td>
+<td><code>requires conforms_json_&lt;t&gt; s v</code>: the record, with no failure path, each field its member's value</td>
+</tr>
+<tr>
+<td><code>to_dom_json_&lt;t&gt; x text values members</code></td>
+<td>the document of x, written into text: <code>Ok v</code> is valid and conforms</td>
+</tr>
+</tbody>
+</table>
+<p>A number conforms to an integer field when it has only digits after an optional minus, and its value is in the field's range: <code>1.5</code> and <code>1e2</code> are not integers, as for the streaming reader. So reading a point from a document is a check and a conversion, and the conversion cannot fail:</p>
+<!-- example: shape.pia -->
+<!-- flags: --iface-path=. -->
+<div class="highlight"><pre><span></span><code><span class="n">import</span> <span class="nn">Pia</span><span class="p">.</span><span class="nn">Text</span><span class="p">.</span><span class="nn">Json</span><span class="p">.</span><span class="nn">Spec</span><span class="p">.</span><span class="nc">Grammar</span>
+<span class="n">import</span> <span class="nn">Pia</span><span class="p">.</span><span class="nn">Text</span><span class="p">.</span><span class="nn">Json</span><span class="p">.</span><span class="nn">Lex</span><span class="p">.</span><span class="nc">Lexer</span>
+<span class="n">import</span> <span class="nn">Pia</span><span class="p">.</span><span class="nn">Text</span><span class="p">.</span><span class="nn">Json</span><span class="p">.</span><span class="nn">Read</span><span class="p">.</span><span class="nc">Reader</span>
+<span class="n">import</span> <span class="nn">Pia</span><span class="p">.</span><span class="nn">Text</span><span class="p">.</span><span class="nn">Json</span><span class="p">.</span><span class="nn">Write</span><span class="p">.</span><span class="nc">Writer</span>
+<span class="n">import</span> <span class="nn">Pia</span><span class="p">.</span><span class="nn">Text</span><span class="p">.</span><span class="nn">Json</span><span class="p">.</span><span class="nn">Derive</span><span class="p">.</span><span class="nc">Derive</span> <span class="k">as</span> <span class="nc">Json</span>
+<span class="n">import</span> <span class="nn">Pia</span><span class="p">.</span><span class="nn">Mem</span><span class="p">.</span><span class="nn">Alloc</span><span class="p">.</span><span class="nc">Allocators</span>
+<span class="n">import</span> <span class="nn">Pia</span><span class="p">.</span><span class="nn">Text</span><span class="p">.</span><span class="nn">Json</span><span class="p">.</span><span class="nn">Dom</span><span class="p">.</span><span class="nc">Document</span>
+<span class="n">import</span> <span class="nn">Pia</span><span class="p">.</span><span class="nn">Text</span><span class="p">.</span><span class="nn">Json</span><span class="p">.</span><span class="nn">Shape</span><span class="p">.</span><span class="nc">Shapes</span>
+
+<span class="k">let</span> <span class="n">point</span> <span class="o">=</span> <span class="k">type</span> <span class="o">{</span> <span class="n">x</span> <span class="o">:</span> <span class="n">i32</span> <span class="o">@</span><span class="n">json</span><span class="o">(</span><span class="n">name</span> <span class="o">=</span> <span class="s2">"xx"</span><span class="o">);</span> <span class="n">y</span> <span class="o">:</span> <span class="n">u8</span><span class="o">;</span> <span class="n">ok</span> <span class="o">:</span> <span class="kt">bool</span> <span class="o">}</span> <span class="o">@</span><span class="n">derive</span><span class="o">(</span><span class="n">json</span><span class="o">,</span> <span class="n">json_dom</span><span class="o">)</span>
+
+<span class="c">(* The point a document is, or that it is not one. *)</span>
+<span class="k">let</span> <span class="n">get</span> <span class="o">(</span><span class="n">s</span> <span class="o">:</span> <span class="o">[</span><span class="n">u8</span><span class="o">])</span> <span class="o">(</span><span class="n">v</span> <span class="o">:</span> <span class="nn">Pia</span><span class="p">.</span><span class="nn">Text</span><span class="p">.</span><span class="nn">Json</span><span class="p">.</span><span class="nn">Dom</span><span class="p">.</span><span class="n">json</span><span class="o">)</span> <span class="o">:</span> <span class="n">result</span> <span class="n">point</span> <span class="nn">Pia</span><span class="p">.</span><span class="nn">Text</span><span class="p">.</span><span class="nn">Json</span><span class="p">.</span><span class="nn">Shape</span><span class="p">.</span><span class="n">nonconforming</span> <span class="o">=</span>
+  <span class="k">if</span> <span class="n">check_json_point</span> <span class="n">s</span> <span class="n">v</span> <span class="k">then</span> <span class="nc">Ok</span> <span class="o">(</span><span class="n">from_dom_json_point</span> <span class="n">s</span> <span class="n">v</span><span class="o">)</span> <span class="k">else</span> <span class="nc">Err</span> <span class="nc">Nonconforming</span>
+</code></pre></div>
+<p>Every goal of the derived checks and conversions is proved where they are derived:</p>
+<div class="highlight"><pre><span></span><code><span class="gp">$ </span>piac<span class="w"> </span>--verify<span class="w"> </span>--iface-path<span class="o">=</span>.<span class="w"> </span>shape.pia
+<span class="go">...</span>
+<span class="go">102 proved, 0 failed, 0 skipped</span>
+</code></pre></div>
+<p><code>to_dom</code> writes its value with <code>@derive(json)</code>'s writer, parses the text back and checks it, so the document it returns is proved valid and conforming. That the writer's text always parses and conforms, so that its <code>Unparsed</code> and <code>Unconforming</code> errors never happen, is not proved yet. Variants and recursive user types come next (<a href="../adr/0045-json-derived-codecs-and-conforming-dom/">ADR 0045</a>, steps 5, 7 and 8).</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../idioms/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Idiomatic Pia">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Idiomatic Pia
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../verification/" class="md-footer__link md-footer__link--next" aria-label="Next: How verification works">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                How verification works
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.top", "navigation.footer", "content.code.copy", "search.highlight"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+    
+  </body>
+</html>

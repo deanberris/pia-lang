@@ -1,0 +1,4778 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="A programming language whose compiler proves your code correct before it runs.">
+      
+      
+      
+        <link rel="canonical" href="https://pia-lang.dev/irgen/">
+      
+      
+        <link rel="prev" href="../architecture/">
+      
+      
+        <link rel="next" href="../verifier/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
+    
+    
+      
+        <title>IRGen - Pia</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="teal">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#irgen-the-scalar-subset" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Pia" class="md-header__button md-logo" aria-label="Pia" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Pia
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              IRGen
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="teal"  aria-label="Dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="teal"  aria-label="Light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/deanberris/pia-lang" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    deanberris/pia-lang
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Pia" class="md-nav__button md-logo" aria-label="Pia" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Pia
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/deanberris/pia-lang" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    deanberris/pia-lang
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../repl/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The REPL
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent skills and MCP
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pia and other verified languages
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../demo/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: edge detection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../streams.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: stream delineation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../sediment.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: sediment transport
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../basins.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: sediment by basin, in parallel
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../pull.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: sediment in pull form
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../placed.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: D8 directions and the picture on the GPU
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../pull_gpu.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: the sediment pull step on the GPU
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gpu-demo/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: CPU and GPU, side by side
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tour/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    A tour of Pia
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../features/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Feature index
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../library/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The standard library today
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../idioms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Idiomatic Pia
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../json/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    JSON
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../verification/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How verification works
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../theories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Theories: teaching the verifier a domain
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../repl-debugging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Debugging C++ with the REPL
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_22" >
+        
+          
+          <label class="md-nav__link" for="__nav_22" id="__nav_22_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Case studies
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_22">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Case studies
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cases/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Famous bugs, proved away
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cases/heartbleed.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Heartbleed
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cases/binary-search.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Binary search
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cases/cloudbleed.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cloudbleed
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cases/crowdstrike.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CrowdStrike Channel File 291
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cases/rust-str-repeat.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust str::repeat
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cases/rust-vecdeque.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust VecDeque::reserve
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cases/libwebp.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    libwebp Huffman tables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cases/bun-readfile.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bun readFile on Windows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cases/zlib-gzip-extra.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    zlib gzip extra field
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cases/giflib-background.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    giflib background colour
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Status and roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_24" >
+        
+          
+          <label class="md-nav__link" for="__nav_24" id="__nav_24_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_24_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_24">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Design
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Language design
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../grammar/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Grammar
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../meta/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Metaprograms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Standard library (proposal)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cpp-std/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The C++23 standard library in Pia
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../abi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Shared libraries and certificates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../advisories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advisories
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../init/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Module initialisation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../concurrency/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Coroutines, races and deadlocks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_25" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_25" id="__nav_25_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compiler internals
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_25_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_25">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Compiler internals
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    IRGen
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    IRGen
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The pipeline
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Types
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#integers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Integers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#buffers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Buffers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#variants" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Variants
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bindings-and-mutation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bindings and mutation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#control-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Control flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Errors
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#contracts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Contracts
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#records" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Records
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Functions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#atomics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Atomics
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#not-yet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Not yet
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../verifier/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Verifier
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../codegen/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Codegen
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../style/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Style guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_26" >
+        
+          
+          <label class="md-nav__link" for="__nav_26" id="__nav_26_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Decision records
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_26_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_26">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Decision records
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Index
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0001-record-architecture-decisions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1. Record architecture decisions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0002-single-let-binding-form/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2. let is the only binding form
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0003-static-typing-with-tagged-dyn/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    3. Strong static typing; dynamic typing only through tagged values
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0004-strongest-guarantee-by-default/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    4. The strongest guarantee is always the default
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0005-parameter-modifiers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    5. Parameters carry ownership, access and modifiability modifiers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0006-contracts-and-module-state/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    6. Contracts, refinement types, and module state as exported symbols
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0007-metaprogramming-fixed-point-expansion/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    7. Metaprogramming from day one, expanded to a fixed point
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0008-operators-via-metaprograms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    8. Operators are defined only through metaprograms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0009-generics-concepts-adapters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    9. User-defined generics, checked concepts with laws, and adapters
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0010-modules-interfaces-and-proof-certificates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    10. Modules export interfaces; imports name them; proofs carry certificates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0011-mlir-and-z3-implementation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    11. Compiler in C++ on MLIR, verifying with interval analysis then Z3
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0012-floating-point-reassociation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    12. Three ways to license float reassociation and FMA
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0013-auto-vectorisation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    13. Auto-vectorise as much as possible; keep vec&lt;T, k&gt; for explicit control
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0014-concurrency-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    14. Concurrent by default: collectives, task graphs, futures; collectives proved to match
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0015-device-placement/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    15. Device placement: compiler cost model, explicit, or overridable
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0016-stream-delineation-flagship-demo/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    16. Stream delineation on Apple Silicon is the flagship demo
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0017-bazel-build/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    17. Build with Bazel; depend on LLVM/MLIR and Z3 as Bazel modules
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0018-dialect-layering/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    18. Three Pia dialects over upstream MLIR, with smt for solving
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0019-grammar-disambiguation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    19. Grammar disambiguation rules
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0020-presburger-for-affine-goals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    20. Decide affine aliasing and dependence goals with MLIR's Presburger library
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0021-language-server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    21. A language server, pia-lsp, with a VS Code client first
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0022-metaprogram-hygiene/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    22. Hygiene and name lookup: no shadowing, renamed quote binders, qualified names, ADL
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0023-minimal-core-self-hosted-stdlib/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    23. A minimal core, with the standard library written and proved in Pia
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0024-published-proof-certificates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    24. Shared libraries publish interfaces and proof certificates; loaders check them
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0025-sanitizers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    25. Sanitizers check the edges of the proof
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0026-memory-manager/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    26. A memory manager of explicit allocators, with no garbage collection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0027-coroutines-and-race-freedom/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    27. Stackless coroutines, structured tasks, and race freedom proved from permissions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0028-error-propagation-and-cleanup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    28. Errors propagate with ? to a scope's handler; cleanup runs at scope end
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0029-comments-as-syntax-and-literate-pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    29. Comments are syntax: \ line comments, doc comments, and literate .pia.md files
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0030-published-object-layouts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    30. Optimised object layouts are published, and a changed layout fails to load until relinked
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0031-verified-repl-and-live-environment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    31. A verified REPL over a reusable session, with proved live redefinition
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0032-parallel-sliced-cached-proving/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    32. Proofs run in parallel, one goal per solver, sliced, cached and selectable
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0033-module-initialisation-and-registries/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    33. Module initialisation: registries, proved @init hooks, and opt-in dynamic registration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0034-concepts-and-overload-resolution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    34. Concepts as checked signatures, and concept-based overload resolution
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0035-substitution-failure-and-total-constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    35. Substitution failure removes a candidate, and constraints are proved to terminate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0036-library-theories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    36. Libraries extend the solver with theories: sorts, functions and axioms, proved consistent by a model or listed as trusted
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0037-idiomatic-pia-and-lints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    37. Idiomatic Pia: facts in types first, written as opinions and checked by lints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0038-float-kernels-against-real-theories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    38. Float kernels are proved against real-valued specifications by rounding-error bounds
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0039-module-and-interface-syntax/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    39. Modules are private by default: one module per file, interfaces list every export, imports name interfaces
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0040-cpp23-standard-library-in-pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    40. The C++23 standard library, mapped onto Pia and proved
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0041-allocator-semantics-as-a-theory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    41. Allocator semantics are a theory, and allocators prove they refine it through spec-only state
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0042-lifetimes-liveness-and-escape-analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    42. Lifetimes are checked by liveness, marked where values cross boundaries, and escape analysis places memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0043-generic-definitions-proved-once/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    43. Generic definitions are proved once, against their concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0044-function-values-and-lambdas/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    44. Function values: typed and generic lambdas, a Function concept, and proofs through function arguments
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0045-json-derived-codecs-and-conforming-dom/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    45. JSON: derived streaming codecs, typed construction, and a DOM proved to conform to a type
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0046-box-over-a-type-or-a-concept/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    46. A box holds a type or any type meeting a concept, and what it holds is proved to have the concept's shape
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0047-recursive-sum-types-and-shared-references/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    47. Recursive sum types are explicit, recurse through an owning indirection, and share through strong and weak references
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0048-buffers-whose-elements-hold-slices/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    48. Buffers may hold slices: owned slices are written through, shared ones only read
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0049-targets-are-theories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    49. Linux x86_64 is a second target, tested in Linux CI, and each target is a model of a built-in Pia.Target theory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0050-senders-and-receivers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    50. Asynchronous work is senders and receivers whose completion rules are proved, over io_uring on Linux and a kqueue completion adapter on macOS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0051-variadic-generics-and-foreign-varargs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    51. Variadic functions and types take a pack that is called like any argument list, walked by metaprograms and proved once; foreign bindings are generated from tables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0052-atomics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    52. Atomics are a core cell type with checked orders and stated overflow, modelled by RC11 with a litmus battery before tasks exist, and lowered per target by a table proved against each hardware model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0053-protocols-checked-by-z3/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    53. Protocols and deadlock are checked in Z3, as transition systems proved by constrained Horn clauses; explicit search stays for atomics, and TLA+ is an export format
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0054-proved-gif-and-inflate-codecs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    54. GIF and inflate are proved total on every input, decode to a written specification, and GIF round-trips exactly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0055-sediment-transport-in-fixed-point/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    55. Sediment transport is integer mass moved downhill in height order, with conservation proved exactly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0056-tests-generated-from-contracts-and-theories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    56. Tests are generated by metaprograms from contracts, types and theories; a case the verifier can decide is proved, and only the rest is run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0057-posix-module-per-target-behind-one-interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    57. Pia.Sys.Posix is one generated module per target behind one hand-written interface, and the generator joins the contract overlay
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0058-spec-buffers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    58. Spec buffers: spec-only arrays that code writes, contracts read and codegen erases
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0059-digit-separators-and-type-bounds/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    59. Digits group with ' or _; min t and max t are an integer type's bounds, folded to literals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0060-spread-v0-ownership-and-runtime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    60. spread v0: iterations own the cells they write, proved one iteration at a time; MLIR's async runtime runs them
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0061-lean-proved-facts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    61. Lean proves the facts Z3 cannot: lemmas and theory models are proved in Lean against statements piac generates, recorded in certificates by statement hash, and checked outside the edit loop; cost bounds are proved by Z3, and their asymptotics in Lean
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0062-cost-bounds-in-contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    62. Cost bounds are contracts: costs c &lt;= e bounds what a function spends on a named counter, tracked by a spec-only spent c and proved by Z3
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0063-opaque-spec-functions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    63. Opaque spec functions: a spec function marked @opaque keeps its definition out of every goal until a proof reveals it
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0064-distinct-types/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    64. type always makes a new type: let length = type u32 is distinct from u32, converts only by applying a type to a value, and inherits only what it derives
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0065-lowerings-written-in-pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    65. Pia code extends the compiler's lowering: @lower gives a function an MLIR form and a type an MLIR type, the Pia definition stays the specification, and each lowering is proved to refine it or is listed as trusted
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0066-int-blasting-for-nonlinear-goals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    66. Nonlinear goals are tried first with Z3's int-blasting solver, and other solvers are kept out of the pipeline for now
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0067-release-0-1-0-a-proved-small-llm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    67. Release 0.1.0 is a small Llama-architecture LLM ported from PyTorch to Pia, proved where a proof means something, running inference on an M3 Mac on CPU SIMD and on the GPU through linalg
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0068-gpu-compute-through-spirv-and-metal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    68. GPU compute: a proved spread placed on the GPU, lowered through SPIR-V and SPIRV-Cross to Metal, launched by a small trusted shim
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0069-pure-and-impure-functions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    69. Pure and impure functions: computed purity, @pure assertions, and @impure interface boundaries
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0070-raw-binary-embedding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    70. Raw binary embedding: @embed for compile-time fixed byte blobs, hermetic roots, opaque verification and direct LLVM emission
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0071-function-references/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    71. Function references: a function is a value that travels by reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0072-drops-run-in-constant-stack/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    72. A drop never grows the stack: every drop is one walk, proved against the recursive drop, with a fixed stack bound per type
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0073-prover-identity-abi-version-and-advisories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    73. Certificates record who proved a module and with what, advisories revoke trust in faulty provers, and every breaking change ships a migration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0074-library-types-tensors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    74. Library types: a type written in Pia gets an MLIR type, ops and proofs from its library, and Pia.Tensor over MLIR tensor is the proof point
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0075-codegen-benchmarks-against-c-cpp-rust-zig/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    75. Codegen is benchmarked against C, C++, Rust and Zig on public problems, same algorithm first, counted in instructions on Linux and timed on Apple Silicon
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0076-transparent-exports/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    76. Transparent exports: an importer proves against an exported function's body, as a caller in its own module does
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0077-definitions-inherit-interface-contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    77. A definition that states no contract takes the contract of the interface that lists it
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0078-pia-lib-ops-with-proved-substitutions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    78. Library functions lower to pia_lib.call, a Pia-owned op whose meaning is its Pia body, and a late pass either expands it into the body or substitutes an upstream op through a rule proved against the body
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0079-pia-module-format/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    79. Pia IR: a versioned op schema Pia controls, in lock-step with piac, with deprecations and migrations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0080-protocol-buffers-in-pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    80. Protocol Buffers in Pia: a metaprogram that turns .proto into proved types and codecs, and Pia IR as a protobuf schema
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The pipeline
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Types
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#integers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Integers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#buffers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Buffers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#variants" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Variants
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bindings-and-mutation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bindings and mutation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#control-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Control flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Errors
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#contracts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Contracts
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#records" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Records
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Functions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#atomics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Atomics
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#not-yet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Not yet
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="irgen-the-scalar-subset">IRGen: the scalar subset<a class="headerlink" href="#irgen-the-scalar-subset" title="Permanent link">&para;</a></h1>
+<p>Status: implemented in M4 (<a href="https://github.com/deanberris/pia-lang/issues/5">#5</a>).</p>
+<p><code>piac --emit=mlir file.pia</code> lowers a program to the <code>pia</code> and <code>pia_contract</code> dialects (<a href="../adr/0018-dialect-layering/">ADR 0018</a>), with control flow in upstream <code>scf</code> and functions in <code>func</code>. This page describes the subset it accepts and how each construct lowers. Anything outside the subset is reported as "not supported yet" at its source location.</p>
+<h2 id="the-pipeline">The pipeline<a class="headerlink" href="#the-pipeline" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>Parse</strong> (<code>src/syntax</code>) to the uniform syntax tree.</li>
+<li><strong>Expand metaprograms</strong> (<code>src/meta</code>, <a href="../meta/">meta.md</a>). Binary operators become calls of core builtins, <code>@derive</code> runs, and the <code>let meta</code> items are removed.</li>
+<li><strong>Sema</strong> (<code>src/sema</code>) resolves written types and collects the signature of every top-level <code>let</code>, so a function can be called before its definition. It reports items outside the subset (types, modules, metaprograms) before any code is generated.</li>
+<li><strong>IRGen</strong> (<code>src/irgen</code>) type checks expressions as it lowers them. A separate typed AST comes when the language outgrows the scalar subset.</li>
+<li>The module is run through the MLIR verifier.</li>
+</ol>
+<h2 id="types">Types<a class="headerlink" href="#types" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Pia</th>
+<th>IR</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>u8</code> <code>u16</code> <code>u32</code> <code>u64</code>, <code>i8</code> ... <code>i64</code></td>
+<td><code>!pia.int&lt;lo, hi&gt;</code> with the machine range</td>
+</tr>
+<tr>
+<td><code>usize</code>, <code>isize</code></td>
+<td>the 64-bit ranges, printed as the aliases <code>!usize</code> and <code>!isize</code></td>
+</tr>
+<tr>
+<td><code>int{lo..hi}</code></td>
+<td><code>!pia.int&lt;lo, hi&gt;</code> (bounds are integer literals for now)</td>
+</tr>
+<tr>
+<td><code>bool</code></td>
+<td><code>i1</code></td>
+</tr>
+<tr>
+<td><code>[T; n]</code></td>
+<td><code>!pia.array&lt;n x T&gt;</code> (n is a literal for now)</td>
+</tr>
+<tr>
+<td><code>[T]</code></td>
+<td><code>!pia.slice&lt;T&gt;</code></td>
+</tr>
+<tr>
+<td><code>atomic T</code></td>
+<td><code>!pia.atomic&lt;T&gt;</code>, for an integer type or <code>bool</code> (<a href="../adr/0052-atomics/">ADR 0052</a>)</td>
+</tr>
+<tr>
+<td><code>unit</code></td>
+<td>no value; a function returning unit has no results</td>
+</tr>
+<tr>
+<td><code>let pixel = type { r : u8; ... }</code></td>
+<td><code>!pia.record&lt;"pixel", r : !pia.int&lt;0, 255&gt;, ...&gt;</code>, printed as <code>!pixel</code></td>
+</tr>
+</tbody>
+</table>
+<p>Types are structural: <code>u64</code> and <code>usize</code> are the same type. <code>int{0..255}</code> is <code>u8</code>. Records are the exception: they are named, so two record types with the same fields are different types. <code>let byte = u8</code> is another name for <code>u8</code>, and <code>let percent = int{0..100}</code> for that range: a <code>let</code> whose value is a type names it (ADR 0064). <code>type</code> makes a new type: <code>let length = type u32</code> is a distinct type (ADR 0064, step 2). The expander (<code>makeDistinct</code> in <code>src/meta/Expand.cpp</code>) makes it a record of one field, <code>raw#length</code>, which no source can name, flagged <code>distinct</code>, and two conversions, <code>length#of (x : u32) : length</code> and <code>u32#of (x : length) : u32</code>. A type applied to one value, <code>length 5</code> or <code>u32 l</code>, is a call of <code>&lt;type&gt;#of</code>, so the overloads are told apart by the argument's type. Since records are scalarized before the verifier and codegen, a length proves and runs as a <code>u32</code>. Not yet: importing a distinct type, a distinct type with a <code>where</code>, derives other than <code>eq</code>, and returning one as its scalar in the C ABI.</p>
+<h2 id="integers">Integers<a class="headerlink" href="#integers" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Literals</strong> take the type the context expects. With no context they are <code>i32</code>, or <code>i64</code> or <code>u64</code> if the value does not fit. A suffix (<code>42u8</code>) fixes the type. A literal that does not fit its type is an error.</li>
+<li><strong>Binary operators</strong> arrive from expansion as calls of core builtins (<code>a + b</code> is <code>add a b</code>, <a href="../meta/#operators">meta.md</a>). IRGen lowers a builtin call as the operator it stands for. They compute at the join of the operand types, the smallest range holding both. When the context expects a wider integer, they compute at that type, so <code>dst.[i] &lt;- src.[i] * 3</code> with <code>u8</code> source and <code>u16</code> destination multiplies at <code>u16</code>. The other operand is widened with <code>pia.convert</code>. A literal takes the other operand's type, whichever side it is on.</li>
+<li><strong>Conversions</strong>: wherever a value meets a declared type (a parameter, a return type, an annotated <code>let</code>, an assignment, an element store), IRGen inserts <code>pia.convert</code>. Widening always holds. Narrowing is a proof obligation for the verifier (M5).</li>
+<li><strong>Overflow</strong>: <code>+ - * / %</code> lower to <code>pia.add</code>, <code>sub</code>, <code>mul</code>, <code>div</code>, <code>rem</code> with the function's overflow mode. The default is <code>proof</code>. <code>@overflow(wrap | saturate | trap)</code> on the return annotation sets another mode, <code>@wrap e</code> (and <code>@trap</code>, <code>@saturate</code>, <code>@proof</code>) sets it for one expression, and <code>+|</code> <code>-|</code> always saturate. The parser writes <code>@wrap e</code> as the prelude builtin <code>#overflow wrap e</code>, as it writes <code>~x</code> as <code>bnot x</code>. <code>mod</code> is <code>%</code>.</li>
+<li><strong>Type bounds</strong> <code>min t</code> and <code>max t</code>, for an integer type <code>t</code>, are folded to the bound as a literal before overload resolution (<a href="../adr/0059-digit-separators-and-type-bounds/">ADR 0059</a>), so they take their context's type and read in contracts as the numbers did: <code>ensures a * b &gt; max u16 ==&gt; result = max u16</code>. A call of <code>min</code> or <code>max</code> whose one argument names an integer type is a bound; every other call, such as <code>Pia.Core.Order</code>'s <code>max a b</code>, resolves as before. Where a local called <code>max</code> is in scope, <code>max u8</code> is that local applied. <code>max usize</code> is the bound of the target's <code>usize</code>. A generic body's type parameter has no known bounds yet.</li>
+<li><strong>Negation</strong> <code>-x</code> is <code>0 - x</code> at x's type, so it is an obligation for unsigned and minimum values. <code>-5</code> is a literal.</li>
+<li><strong>Comparisons</strong> lower to <code>pia.cmp</code> at the joined type. <code>=</code> and <code>&lt;&gt;</code> on bools lower to <code>arith.cmpi</code>.</li>
+</ul>
+<h2 id="buffers">Buffers<a class="headerlink" href="#buffers" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Indexing</strong> <code>xs.[i]</code> is <code>pia.load</code>, and <code>xs.[i] &lt;- v</code> on an <code>out</code> or <code>inout</code> parameter is <code>pia.store</code>.</li>
+<li><strong>Slicing</strong> <code>xs.[a .. b]</code> is <code>pia.slice</code>, a view of the same storage. An array passed where a slice is expected becomes a <code>pia.slice</code> of all of it.</li>
+<li><strong>Array literals</strong> <code>[1; 2; 3]</code> where an array type is expected, and top-level <code>let t : [T; n] = [...]</code>, are <code>pia.const_array</code>. A top-level constant is not a function: each use is a <code>pia.const_array</code> with the constant's name as its <code>label</code>. Passing constant data, or a slice of it, to an <code>out</code> or <code>inout</code> parameter is an error.</li>
+<li><strong>Local arrays</strong> are values with storage of their own. A <code>let</code> of an array that is <code>mutable</code>, or whose literal computes its elements, as in <code>let a : mutable [u8; 3] = [x; y; z]</code>, is a fresh <code>pia.region</code> on the stack: the literal's elements are stored into it one by one, and any other array is copied in with <code>pia.copy</code>, which the verifier reads as the array taking the other's elements. So <code>let b : mutable [u8; 3] = a in b.[0] &lt;- 0</code> leaves <code>a</code> as it was. A <code>mutable</code> one can be written, <code>a.[i] &lt;- v</code>, and a whole array assigned to it, <code>a &lt;- b</code>, is copied in. A literal of computed elements anywhere is one too. Arrays stay values wherever they go: a <code>let</code> of a name or field holding an array copies it, a record literal copies an array it reads from a <code>mutable</code> local, and assigning a record to a <code>mutable</code> local copies the arrays it holds into storage of that assignment's own, since an array a call returns in a loop lives in storage the next iteration's call reuses. A function may return a local array, or a record holding one: codegen passes it a buffer its caller makes (<a href="../codegen/">codegen.md</a>), and the verifier sees the result as a value (tests/verify/local_arrays.pia, tests/verify/array_results.pia, tests/irgen/local_array_errors.pia, tests/codegen/local_arrays.pia).</li>
+<li><strong><code>abort ()</code></strong> is <code>pia.abort</code>, with a result of the type the context expects.</li>
+</ul>
+<h2 id="variants">Variants<a class="headerlink" href="#variants" title="Permanent link">&para;</a></h2>
+<p>A variant <code>let shape = type | Circle of u16 | Empty</code> is a record named <code>shape</code> with a field <code>tag</code>, <code>int{0..n-1}</code>, and one field per constructor that has a payload, named after the constructor. A constructor's tag is its position. <code>Circle r</code> is a <code>pia.record</code> with tag 0, <code>r</code> in <code>Circle</code>, and a fixed value in every other payload field. Only constructors and <code>match</code> see these fields: <code>.tag</code> and record literals are errors on a variant. Records then scalarize as usual, so the verifier and codegen need nothing new, and a variant crosses the C boundary as its fields. A payload written as a record in place, <code>| Rect of { w : u16; h : u16 }</code>, is a record type of its own, <code>shape_Rect</code>, which expansion defines just before the variant; the payload names it, its fields keep their attributes for the variant's derives, and it derives what the variant derives (tests/verify/record_payloads.pia). A generic variant cannot have one yet.
+- <strong>Recursive types</strong> (<a href="../adr/0047-recursive-sum-types-and-shared-references/">ADR 0047</a>, step 1). A type that refers to itself, directly or through others, is declared <code>let rec</code>, every type in the cycle so, or it is an error that suggests <code>let rec</code>; a <code>let rec</code> type in no cycle is the lint <code>needless_rec</code>. Every cycle must pass through an indirection, <code>box</code>, <code>vec</code>, <code>ref</code> or <code>weak</code>, so each type has a size: a type that holds itself, or two that hold each other, directly is an error that suggests <code>box</code>. A generic recursive type applies itself to its own parameters, in order (regular recursion), and every recursive type must have a value that can be built without one already, so <code>let rec l = type | Cons of { h : u8; t : box l }</code> is an error. A payload record of a recursive variant is in its cycle. The <code>Indirect</code> concept over type constructors waits for concepts on them, so the indirections are those four names for now (tests/irgen/rec_type_errors.pia, tests/lint/needless_rec.pia).
+- <strong>Recursive values</strong> (ADR 0047, step 2). Records are structural, so a recursive type cannot be one: it would contain itself. Each variant of a recursive group that passes is instead the leaf type <code>!pia.rec&lt;"tree"&gt;</code>, and the module's <code>pia.datatype @tree ctors ["Leaf", "Node"] payloads [none, !tree_Node]</code> lists its constructors in tag order with their payload types. A generic recursive variant has a leaf per instance, <code>!pia.rec&lt;"list&lt;u8&gt;"&gt;</code>. The group's records, such as lifted payloads, stay records, holding the leaf inside a <code>box</code> or <code>vec</code>, so none contains itself. A constructor is <code>pia.rec_make "Node"(%payload)</code>, and <code>match</code> tests <code>pia.rec_tag</code> and takes <code>pia.rec_payload %t, "Node"</code>; ScalarizeRecords passes a record payload as its fields and takes it out as them, and leaves the leaf alone. A group of records with no variant is not built yet: a use of one says to make it a variant. Equality, error sets and <code>@derive</code> on recursive types come later (step 4). The verifier proves them as datatypes (<a href="../verifier/#recursive-types">verifier.md</a>); codegen lays them out as structs of their tag and payload (<a href="../codegen/#types">codegen.md</a>, step 3) (tests/irgen/rec_types.pia, tests/verify/rec_types.pia, tests/codegen/rec_types.pia, tests/codegen/rec_run.pia, tests/std/rec_mem.pia, tests/dialect/rec_types.mlir).</p>
+<p><code>match</code> checks its arms first: they must cover every constructor or end with a catch-all, and an arm after a catch-all, a constructor matched twice, or a catch-all after every constructor is an error. It then becomes a chain of <code>if</code>s on the tag, the last arm untested, with each arm's payload bound by a <code>let</code>. So arms carry mutable locals and join their result types exactly as <code>if</code> does.</p>
+<p>An arm may carry contracts between its pattern and <code>-&gt;</code> (<a href="../adr/0035-substitution-failure-and-total-constraints/">ADR 0035</a>): <code>| Some i requires i &lt; len xs ensures result = xs.[i] -&gt; xs.[i]</code>. A <code>requires</code> is not a guard. It becomes an assertion at the start of the arm, so it is proved for every value that reaches the arm, from what is known at the <code>match</code>. An <code>ensures</code> becomes an assertion on the arm's value, <code>result</code>. Handler arms are arms of a <code>match</code>, so they take contracts too, proved at each <code>?</code> that reaches them.</p>
+<h2 id="bindings-and-mutation">Bindings and mutation<a class="headerlink" href="#bindings-and-mutation" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>let x = e in body</code> binds an SSA value. An annotation converts <code>e</code> to the declared type.</li>
+<li>There is no shadowing (<a href="../adr/0022-metaprogram-hygiene/">ADR 0022</a>). A <code>let</code>, parameter, loop variable or quantifier binder may not reuse the name of a local in scope, a function, a type or a core builtin. Assigning to a mutable local is not shadowing. The error suggests a primed name instead: <code>x'</code>, or <code>x''</code> if that is taken. A prime is an ordinary identifier character, so <code>let x' = x + 1 in ...</code> names a value related to <code>x</code>.</li>
+<li><code>let x : mutable T = e in ...</code> makes <code>x</code> assignable. There is no memory: each <code>x &lt;- v</code> rebinds the SSA value, and structured control flow threads it through. A mutable local assigned inside <code>if</code> becomes an extra <code>scf.if</code> result, and one assigned inside a loop becomes a loop-carried value (<code>iter_args</code> for <code>for</code>, <code>scf.while</code> operands).</li>
+<li>Parameters are mutable only with <code>mutable</code>. Their modifiers are kept as the <code>pia.modifiers</code> argument attribute.</li>
+<li><strong><code>inout</code> and <code>out</code> scalars and records.</strong> A buffer is written in place, but a scalar or a record is an SSA value, so a function hands back the final value of each <code>inout</code> or <code>out</code> parameter that is not a buffer, as extra results after its own. The caller passes a mutable variable there, and the call rebinds it, so the caller sees the write and the callee's postcondition about it. A variable passed that way inside an <code>if</code> or loop is carried like one assigned there.</li>
+<li><code>old e</code> reads the parameters as they were on entry, including a mutable scalar or record parameter the body has assigned. <code>old</code> of a local declared in the body is its current value.</li>
+<li><strong><code>moved</code>.</strong> A local or a <code>moved</code> parameter passed as a <code>moved</code> parameter is dead after the call: using it again is an error that says where it was moved. A local moved on only one branch of an <code>if</code> or <code>match</code> is maybe moved after it, which is an error too. A borrowed parameter (the default) cannot be moved, and a local bound outside a loop cannot be moved inside it. Values of scalar types (integers, <code>bool</code>, unit) are copied, so moving one leaves the caller's copy. Assigning a mutable local gives it a value again. Contracts may still name a moved value, since they describe values rather than use them. Moving a field or an element out of a value is not checked yet.</li>
+<li><strong><code>@linear</code></strong> (#56). A value of a type marked <code>@linear</code> (<code>let file = type { fd : i32 } @linear</code>), of an instance of a generic type marked so (<code>let box = let (t : type) (r : region) =&gt; type { ... } @linear</code>), or of a record, variant or instance holding one, must be consumed on every path out of its scope: passed as <code>moved</code>, or used as a value (returned, bound to another name, or put in a constructor or record). Reading a field, <code>len</code>, and passing it to a borrowed parameter only borrow it. A local that some path leaves unconsumed is an error at its <code>let</code>, and so is a <code>moved</code> parameter at the function's end. A borrowed linear parameter cannot be consumed. A <code>defer</code> that consumes the value counts on every exit. A <code>match</code> consumes its scrutinee, and <code>match f with | { fd } -&gt; e</code> takes a record apart into its fields, which is how a linear value is finally released. A pattern that drops a linear payload or field with <code>_</code>, or leaves a linear field out, is an error. Taking a linear record apart is not yet limited to its own module.</li>
+<li><strong>Slices in records and variants.</strong> A record field or a constructor's payload may be a slice, as in <code>result (borrowed(m) [u8]) OutOfMemory</code> or <code>{ data : [u8]; used : usize }</code>; the record is scalarized into its fields like any other, so the slice is a value of its own after that. The unused payload of a variant is <code>pia.empty</code>, a slice of length 0. A field may be an array, constant data or a local array: <code>{ c : [u8; 3]; alpha : u8 }</code>, read as <code>p.c.[i]</code> and written in place through an <code>inout</code> record as <code>p.c.[i] &lt;- v</code>. A buffer whose elements hold a slice is a buffer of slices, one per slice field (<a href="../adr/0048-buffers-whose-elements-hold-slices/">ADR 0048</a>): reading <code>xs.[i].slot</code> and <code>len xs.[i].slot</code> works for any element type, and writing through such a slice is allowed only when the element owns it, being <code>@linear</code> or having a <code>drop</code>, as a <code>box</code> does; otherwise it is read-only. A slice taken out of an owned element is lent from the buffer while it is live. An element's slice may be reached through a record's field, as <code>v.buf.[i].slot.[0] &lt;- x</code> writes through the <code>i</code>th box of a vector's buffer when <code>v</code> is <code>inout</code>. Codegen lowers each to a buffer of addresses and one of lengths (<a href="../codegen/#types">codegen.md</a>; tests/verify/slice_buffers.pia, tests/verify/vec_boxes.pia, tests/irgen/slice_buffer_errors.pia, tests/codegen/vec_boxes_core.pia). An owning element read as a value moves out of its buffer: IRGen stores it back with every slice empty, a store marked <code>pia.moved_out</code>, which codegen keeps so that the element's length is 0 at run time too, and drops that store again when the read turns out to be a borrow, as in <code>xs.[i].slot</code> (ADR 0048, section 6). Moving one out of a buffer the function cannot write is an error (tests/irgen/move_out_errors.pia). A store of a whole owning element is marked <code>pia.fills</code>, and the verifier proves the element written over owns nothing; a function whose lent buffer is <code>out</code> is marked <code>pia.out_result</code>. A slice that an <code>if</code> or <code>match</code> chooses is read from the branch taken, but the verifier refuses a write through it, since it does not know which buffer the write reaches.</li>
+<li><strong>Writable loans.</strong> A local holding a borrowed buffer whose result type says <code>out</code>, <code>inout</code> or <code>mutable</code>, as <code>alloc</code>'s <code>borrowed(m) out mutable [u8]</code> does, may be written, like an <code>out</code> parameter. A lender may be passed <code>inout</code> while it is lent, as <code>alloc</code> updates its allocator: the callee's contract is what keeps the earlier loans valid. Passing it <code>out</code> makes it anew, so that is an error while it is lent. The verifier sees a borrowed buffer result as fresh memory, which <code>alloc</code>'s loans are; for a result that views its lender, as <code>xs.[a .. b]</code> returned through <code>borrowed(xs)</code>, a write through it does not yet reach the lender's elements.</li>
+<li><strong>Fields as <code>inout</code> arguments.</strong> An <code>out</code> or <code>inout</code> argument may be a field of a mutable variable, at any depth, as <code>take_slot g.small</code> takes from one pool of a record of pools (tests/verify/size_classes.pia). After the call the variable holds a copy of itself with that field replaced, so the rest of the record is unchanged. The variable must not be lent at the call, as for <code>g.f &lt;- v</code>.</li>
+<li><strong>Borrows into <code>inout</code> parameters.</strong> <code>(v : borrowed(m) inout mutable vec)</code> says that the new value of <code>v</code> may hold a loan from the parameter <code>m</code>, as <code>push m v x</code> may store a buffer from the allocator <code>m</code> in the vector <code>v</code>. After the call, the caller's variable borrows from the argument passed as <code>m</code>, so it cannot outlive it. A function that stores a value borrowed from another parameter in an <code>inout</code> or <code>out</code> parameter without saying so is an error.</li>
+<li><strong>Borrows</strong> (#70, ADR 0026). A function whose result type says <code>borrowed(m)</code> returns a value borrowed from its parameter <code>m</code>, as an allocator's <code>alloc</code> does. The argument passed as <code>m</code> must be a named value, or something already borrowed from one, and the call's result is then borrowed from it. A local holding such a value borrows from it too, and so does anything taken from that local: a field that is not copied, a slice, a <code>match</code> or <code>?</code> payload, a record or constructor holding it, or either branch of an <code>if</code>. Only the parts of a value whose types some borrowed result borrows count, so an integer field of a borrow, a length, or the error of <code>result (borrowed(m) [u8]) e</code> borrows nothing. A borrow lasts until the last use of the local that holds it (<a href="../adr/0042-lifetimes-liveness-and-escape-analysis/">ADR 0042</a>), not to the end of its scope. Until then the lender cannot be moved or consumed, passed as <code>out</code>, <code>inout</code> or <code>mutable</code>, or assigned; each is an error that names the borrower and where it is used next. A use is a later mention of the local in its scope, in evaluation order, which follows the source; a mention in a cleanup, such as a <code>defer</code> or a drop, counts as later, since it runs at the exit; and inside a loop that began after the local was bound, the borrow lasts through the loop (tests/irgen/borrow_liveness.pia). A <code>let</code>'s value cannot be borrowed from its own local, since it would outlive it, and a function's result can be borrowed only from the parameter its result type names. Borrows of slices of local arrays are not checked yet.</li>
+<li><strong>Region parameters</strong> (<a href="../adr/0042-lifetimes-liveness-and-escape-analysis/">ADR 0042</a>, step 2). A borrow can name a region instead of a value: <code>(r : region)</code> is a parameter of a generic type or a function, and <code>borrowed(r)</code> on a record field, a result or an <code>inout</code> parameter says the value borrows from <code>r</code>. So <code>let vec = let (t : type) (r : region) =&gt; type { alloc : bump t r; buf : borrowed(r) mutable [t]; len : usize }</code> holds both an allocator and the buffer it lent, and neither borrows from the other or from the vector (tests/verify/vec_region.pia). Regions are erased before anything else (irgen/Regions.cpp): <code>vec u16 r</code> and <code>vec u16</code> are one type, and a type application may leave its regions out. Each region argument must name a region parameter in scope, and a function's <code>borrowed(r)</code> needs a parameter whose type mentions <code>r</code>. In a function, a parameter whose type mentions <code>r</code> holds loans from <code>r</code>, which is outside the function: they may go into another parameter whose type mentions <code>r</code>, or out through a result that mentions it, and nowhere else. A parameter of a type with region fields that names no region has a region of its own, so its loans stay in it. At a call, a result or <code>inout</code> parameter that mentions <code>r</code> borrows what the arguments for <code>r</code>'s parameters borrow, not those arguments themselves: <code>alloc v.alloc n</code> does not lend <code>v</code> to the buffer <code>push</code> stores in it. A field read of a region field borrows what its record borrows, so the memory a region lends lasts as long as whatever lent it, such as a <code>with_arena</code>, and an allocator that frees blocks one by one must hand them out as owned or linear values instead (tests/irgen/region_errors.pia, region_sig_errors.pia). A concept may take regions too, <code>let meta Allocator (a : type) (t : type) (r : region) : concept</code>: a requirement's parameter whose type mentions one of the concept's type parameters is in its regions, and a requirement's result may say <code>borrowed(r)</code>, so generic code over an allocator stores what it allocates (tests/verify/vec_allocator.pia). A type parameter such a constraint names, as <code>a</code> in <code>(a : type where Allocator a t r)</code>, is in the constraint's regions, so a parameter <code>(m : inout mutable a)</code> holds loans from <code>r</code> and a result that mentions <code>r</code> may return what <code>m</code> allocates (lib/Pia/Mem/Box.pia's <code>make</code>, tests/irgen/region_concept_errors.pia). An interface (ADR 0039) may list a generic type with regions and a function with region parameters; they are erased there as in the module, and an importer checks its own uses against the regions the interface names (tests/modules/regions.pia, region_import_errors.pia). Regions of variants and regions of a lambda are not supported yet.</li>
+<li><strong>Scoped regions</strong> (#70, ADR 0026). <code>with_arena 256 (let (a) =&gt; body)</code> is a <code>let</code> of <code>a : mutable arena</code>, where <code>arena</code> is <code>type { mem : [u8]; used : usize }</code> (a program may define its own <code>arena</code> with these fields). <code>a.mem</code> views 256 fresh bytes (<code>pia.region</code>), every one zero, and <code>used</code> starts at 0, so a bump allocator over the arena is ordinary Pia, and <code>a.mem.[i] &lt;- x</code> writes it (a field of a writable record can be written in place), as in tests/verify/arena.pia. The arena is borrowed from itself, so the <code>with_arena</code>'s value can hold neither the arena, nor a view of its memory, nor anything allocated in it, and the arena cannot be moved; each is an error at the <code>with_arena</code>'s body. The size is an integer literal of at most 1 MiB, since the region lives on the stack: codegen makes it once on entry to the function and zeroes it each time the <code>with_arena</code> is entered, so one in a loop does not grow the stack. Larger regions wait for pages over mmap.</li>
+<li><code>xs.[i]</code> lowers to <code>pia.load</code> and <code>xs.[i] &lt;- v</code> to <code>pia.store</code>. Writing requires the parameter to be <code>out</code> or <code>inout</code>. Indices go through <code>pia.to_index</code>. <code>len xs</code> is <code>pia.len</code> followed by <code>pia.from_index</code> to <code>usize</code>.</li>
+</ul>
+<h2 id="control-flow">Control flow<a class="headerlink" href="#control-flow" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>if c then a else b</code> lowers to <code>scf.if</code> with the joined result type. An <code>if</code> without <code>else</code> must have type unit.</li>
+<li><code>&amp;&amp;</code>, <code>||</code> and <code>==&gt;</code> in code short-circuit, so they lower to <code>scf.if</code>. This keeps <code>i &lt; len xs &amp;&amp; xs.[i] &lt;&gt; x</code> from loading out of bounds.</li>
+<li><code>for i in lo..hi step s do ... done</code> lowers to <code>scf.for</code> over <code>index</code>. The bounds are joined to one type, and <code>i</code> is bound with <code>pia.from_index</code> at that type. The range is half-open. Two literal bounds are <code>usize</code>.</li>
+<li><code>while c do ... done</code> lowers to <code>scf.while</code>. The condition is computed in the <code>before</code> region.</li>
+<li><code>a; b</code> evaluates <code>a</code> for its effects. <code>a</code> may not be a <code>result</code>: a result is never dropped unexamined, and neither is a loop body's value.</li>
+</ul>
+<h2 id="errors">Errors<a class="headerlink" href="#errors" title="Permanent link">&para;</a></h2>
+<p><code>result t e</code> (<code>Ok</code> of a <code>t</code>, or <code>Err</code> of an <code>e</code>) is in the prelude, unless the program defines its own <code>result</code>, <code>Ok</code> or <code>Err</code>. <code>e?</code> and <code>handle</code> follow <a href="../adr/0028-error-propagation-and-cleanup/">ADR 0028</a>:</p>
+<ul>
+<li>A <code>?</code> ends its scope early, so it must be in a <em>tail</em> of the scope: the scope itself, the body of a <code>let ... in</code>, the second part of <code>a; b</code>, a branch of an <code>if</code> or an arm of a <code>match</code> that is itself a tail, or anything those always evaluate first (a <code>let</code> value, an <code>if</code> condition, an operand). A <code>?</code> inside a branch whose value the scope still needs, or in a loop body without a <code>handle</code> of its own, is an error.</li>
+<li>There it becomes an <code>if</code> on the result's tag. <code>Ok</code> goes on with the rest of the scope, with the payload where the <code>?</code> was. <code>Err</code> becomes the scope's value: <code>Err e</code> returned to the caller when no <code>handle</code> encloses it, which needs the function to return a <code>result</code> with the same error type, or the handler's arms for that error.</li>
+<li>The arms are generated at each <code>?</code> that reaches them, so each is checked and proved once per <code>?</code>, knowing only what holds there: what was bound before it and what earlier calls promised. An arm that uses a name bound after some <code>?</code> that reaches it is an error that names that <code>?</code>.</li>
+<li>At each <code>?</code> the arms taken are those for the error type's constructors, in order, up to the first catch-all. A constructor no arm takes is an error at the <code>?</code>, and an arm no <code>?</code> reaches is an error at the arm, as is a <code>handle</code> with no <code>?</code> in its scope.</li>
+<li><code>| C p -&gt;</code> binds the payload, <code>| e -&gt;</code> the whole error, and <code>| C as e -&gt;</code> both tests <code>C</code> and binds the whole error.</li>
+<li>An error set <code>a | b</code> is one variant holding the constructors of each member, ordered by the members' names, so <code>b | a</code> is the same type. A value of a member converts to the set: its tag moves to its block of the set's constructors. So a <code>?</code> whose errors are a member of the function's error set passes them on, <code>Err NoEntry</code> builds the set directly, and a handler matches the set's constructors. Two members may not share a constructor name. A set does not yet convert to a larger set.</li>
+<li>An expression is evaluated from its first <code>?</code> on: in <code>g a + f x?</code>, <code>f x</code> runs before <code>g a</code>. A <code>?</code> inside a handler arm is not supported yet.</li>
+<li><code>defer d; rest</code> registers <code>d</code> as cleanup for <code>rest</code>, the rest of its sequence (#85). Each normal exit from <code>rest</code>, a node whose value is <code>rest</code>'s value (the body of a <code>let</code>, both branches of an <code>if</code>, each arm of a <code>match</code>), gets a copy of <code>d</code> after its value, and each <code>?</code> that leaves the scope runs the scope's <code>defer</code>s, innermost first, before its error goes to the handler or the caller. So cleanup runs in reverse order of registration on every exit, and the verifier proves it like any code at that exit. <code>d</code> must have type unit and contain no <code>?</code>. The error in flight is the <code>?</code>'s own payload, an immutable value read after the cleanup, so no cleanup can change or replace it. <code>defer?</code> is not supported yet.</li>
+<li><strong><code>drop</code></strong> (#85). A type has a drop when a <code>drop (x : moved t) : unit</code> is in scope, which is how it meets the <code>Drop</code> concept (ADR 0034). A generic one, <code>drop (t : type) (r : region) (b : moved mutable box t r)</code>, gives a drop to each type its parameter deduces, as it would meet a requirement, and its instance <code>drop&lt;u16&gt;</code> is a drop too (ADR 0046, step 1; tests/irgen/drop_generic.pia). A record of another module is dropped by that module's drop, so an importer drops a <code>Pia.Mem.Box.box u8</code> with <code>Pia.Mem.Box.drop</code> (tests/std/mem_edges.pia). A <code>moved mutable</code> parameter is the callee's alone, so its buffers may be written and an element read out of them moves it, as a box's drop takes its value out of its slot. A local or <code>moved</code> parameter of such a type is dropped at every exit from its scope that has not consumed it, as if by a <code>defer</code> registered where it is bound: after its scope's value on a normal exit, and before the error on a <code>?</code>. Using it as a value or passing it as <code>moved</code> consumes it, so a returned value is not dropped. An exit where it is consumed on only some paths is an error, since there is no runtime flag to decide. <code>drop</code> itself does not drop its argument again; it takes it apart with a record <code>match</code>. <code>@derive(drop)</code> is not supported yet.</li>
+</ul>
+<h2 id="contracts">Contracts<a class="headerlink" href="#contracts" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Pia</th>
+<th>IR</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>requires p</code></td>
+<td><code>pia_contract.requires</code> at function entry</td>
+</tr>
+<tr>
+<td><code>ensures p</code></td>
+<td><code>pia_contract.ensures</code> before the return, with <code>result</code> bound to the return value</td>
+</tr>
+<tr>
+<td><code>decreases m</code> on a function</td>
+<td><code>pia_contract.decreases</code> at entry</td>
+</tr>
+<tr>
+<td><code>invariant p</code>, <code>decreases m</code> on a loop</td>
+<td>at the head of each iteration: the start of the <code>for</code> body, or the <code>before</code> region of <code>scf.while</code></td>
+</tr>
+<tr>
+<td><code>assert p</code>, <code>assume p</code></td>
+<td><code>pia_contract.assert</code>, <code>pia_contract.assume</code></td>
+</tr>
+<tr>
+<td><code>old e</code></td>
+<td><code>pia_contract.old</code></td>
+</tr>
+<tr>
+<td><code>forall (i in lo..hi). p</code></td>
+<td><code>pia_contract.forall</code> whose block argument is <code>i</code>, yielding <code>(lo &lt;= i &amp;&amp; i &lt; hi) ==&gt; p</code></td>
+</tr>
+<tr>
+<td><code>exists (i in lo..hi). p</code></td>
+<td><code>pia_contract.exists</code>, yielding <code>lo &lt;= i &amp;&amp; i &lt; hi &amp;&amp; p</code></td>
+</tr>
+<tr>
+<td><code>forall (k : u8). p</code></td>
+<td>quantifies over the whole type, with no guard</td>
+</tr>
+</tbody>
+</table>
+<p>Several binders nest one quantifier op per name, so a later range can mention an earlier name. Inside contracts, which have no effects, <code>&amp;&amp;</code>, <code>||</code> and <code>==&gt;</code> are plain <code>arith</code> logic, and <code>==&gt;</code> is <code>(a xor true) or b</code>. Whether arithmetic in contracts is exact or follows the overflow mode is settled with the verifier in M5. Quantifiers are rejected outside contracts and assertions.</p>
+<h2 id="records">Records<a class="headerlink" href="#records" title="Permanent link">&para;</a></h2>
+<p>A <code>let name = type { field : T; ... }</code> item defines a record type. Records are values, like integers.</p>
+<ul>
+<li><strong>Literals.</strong> <code>{ r = v; g = 0; b = 0; a = 255 }</code> lowers to <code>pia.record</code>, with the fields in declaration order, whatever order they are written in. Its type comes from the context. Failing that, it is the one record type whose fields are exactly these. Every field must be given, once.</li>
+<li><strong>Field reads.</strong> <code>p.r</code> lowers to <code>pia.field %p, "r"</code>.</li>
+<li><strong>Field assignment.</strong> <code>q.r &lt;- v</code> on a mutable local record rebuilds <code>q</code> with one field replaced. So, like any mutable local, <code>q</code> is an SSA value threaded through <code>scf.if</code> and loops.</li>
+<li><strong>Equality.</strong> <code>p = q</code> on records calls <code>eq_&lt;name&gt;</code>, which <code>@derive(eq)</code> makes (<a href="../meta/#derives">meta.md</a>). <code>&lt;&gt;</code> negates it. The other operators on a record call <code>lt_&lt;name&gt;</code>, <code>le_</code>, <code>gt_</code>, <code>ge_</code>, <code>add_</code>, <code>sub_</code>, <code>mul_</code>, <code>div_</code> and <code>rem_</code> the same way, which the derives of a distinct type make (ADR 0064, section 4); a literal on the right takes the function's second parameter's type, so <code>l * 3</code> multiplies by a u32. In a contract, a record or variant without an <code>eq_</code> compares as a value: field by field, and a variant by its tag and then the payload it holds. Two arrays or slices compare by length and then element by element, as a <code>forall</code>. So a generic contract such as <code>ensures result = v</code>, which the definition check accepts for every type, means the same in every instance.</li>
+<li><strong>Buffers of records.</strong> <code>[pixel; 8]</code> and <code>[pixel]</code> hold records. <code>xs.[i]</code> reads one, <code>xs.[i] &lt;- p</code> writes one, and <code>xs.[i].a &lt;- v</code> reads element <code>i</code>, replaces its field and writes it back. Writing needs an <code>out</code> or <code>inout</code> parameter, as for any buffer.</li>
+<li><strong>Not yet supported:</strong> buffers inside records, and attributes on type items other than <code>@derive</code>.</li>
+</ul>
+<p>The verifier and code generation do not see records. <code>transforms::scalarizeRecords</code> replaces each record value with its fields first, using MLIR's 1:N dialect conversion. A <code>pixel</code> parameter becomes four parameters named <code>p.r</code>, <code>p.g</code>, <code>p.b</code> and <code>p.a</code>, a <code>pixel</code> result becomes four results, and <code>pia.record</code> and <code>pia.field</code> disappear. <code>old p</code> becomes <code>old</code> of each field. A buffer of records becomes one buffer per field, struct of arrays: an <code>xs : [pixel]</code> parameter becomes <code>xs.r</code>, <code>xs.g</code>, <code>xs.b</code> and <code>xs.a</code>, and loads, stores, views and <code>len</code> apply to each. The field buffers of a slice share one length, so every one after the first carries <code>{pia.length_of = k}</code>, naming the argument whose length it has; the verifier gives them that length, and the C entry point takes it once. A store of a field read back from the same element is dropped, so <code>xs.[i].a &lt;- v</code> writes only <code>xs.a</code>. The field copies of one load, store or view share its index and length, so every copy after the first carries the unit attribute <code>pia.bounds_shared</code>: the first carries the bounds goal, and the verifier only assumes it for the others, so each index is reported once. Copies of a load or view that nothing uses are erased, and the first copy still in use carries the goal, so a record read only by a contract raises no goal, as a scalar one would not.</p>
+<h2 id="functions">Functions<a class="headerlink" href="#functions" title="Permanent link">&para;</a></h2>
+<p>Each top-level <code>let f (x : T) ... : R = body</code> becomes <code>func.func @f</code>. Parameters need annotations. A <code>let</code> with no parameters becomes a function with no arguments, and its uses call it. The return type may be left out, and then it comes from the body. Such a function cannot be called before its definition, or recursively. Calls must pass every argument, since partial application and functions as values come later.</p>
+<p>A generic function, one with <code>(t : type)</code> parameters, is never generated itself. Each call works out the type arguments: first from <code>f&lt;u8&gt;</code> or <code>f&lt;t = u8&gt;</code>, then by matching the written types of the parameters that mention an unknown type parameter against the types of their arguments, which are generated first for this, then from the type the call is expected to have. The call goes to the instance, a private <code>func.func @"f&lt;u8&gt;"</code>, which is made on first use and generated after the function that used it, with each type parameter naming its argument. Generic types work the same way: <code>option u8</code> is a record type named <code>option&lt;u8&gt;</code>, made the first time it is used, and a generic constructor such as <code>Some</code> builds the instance it is expected to build, or else the one its payload's type gives.</p>
+<p>A constraint on a type parameter, <code>(t : type where Ord t)</code>, names a concept: a <code>let meta C (t : type) : concept = sig ... end</code> that the metaprogram pass keeps in the program. Each call checks that the deduced type arguments meet it (the use check of ADR 0034). A requirement <code>let f : (a : t) -&gt; bool</code> is met by a function in scope with that name, those parameter types and modifiers, and that result, and <code>include</code> requires another concept. A generic function meets it too, at the type arguments its parameters and result deduce, when those meet its own constraints: <code>alloc</code> over <code>bump t r</code> meets Allocator's <code>alloc</code> for <code>bump u16</code> at t = u16, and that instance is made and proved like any other (tests/verify/generic_meets_concept.pia, tests/modules/generic_meets.pia). A function that is not generic is tried first. A generic that would meet a concept only through its own constraint, such as <code>let same (t : type where Same t) ...</code> for <code>Same</code>, does not. Whether a concept is met is decided once per concept and type arguments. Each law, <code>let lemma name params ensures p</code>, becomes a lemma for those type arguments, <code>@"Ord&lt;u8&gt;.irreflexive"</code>, generated and proved like any other function. A requirement's contract becomes one too, <code>@"Ord&lt;u8&gt;.less.contract"</code>: under the requirement's <code>requires</code> it asserts the function's own <code>requires</code>, and it ensures the requirement's <code>ensures</code> of a call of the function. In an overload set, a generic whose type arguments do not meet its constraints is removed from the call, and the error for a call with no candidate left gives that reason.</p>
+<p>A generic body is checked once, at its definition (the definition check). It is generated with each type parameter standing for an unknown type, a record named after the parameter with no fields, and then thrown away with every instance it made. A call with an argument of such a type resolves against the requirements of the concepts its constraints promise, including the ones they include, and a generic it calls must have constraints those concepts promise. Anything else, such as <code>&lt;</code> on a <code>t</code> or a function the constraints do not require, is an error there, with a hint naming a concept that requires the function. A contract may still compare such values with <code>=</code>. Each instance then resolves its calls by its concrete types, which picks the function that met the concept at the use check, since two functions cannot share a name and parameter types.</p>
+<p>An adapter, <code>let adapter by_red : Same pixel = struct ... end</code>, holds functions named after it, <code>@"by_red.same"</code>, which no call reaches by name. The use check meets a concept directly when it can. Otherwise it uses the adapter the call names (<code>alike&lt;Same = by_red&gt;</code>), the one the function being generated already chose, or the only adapter in scope for that concept and those types. Two such adapters, with neither named, are an error. An instance made through adapters is named after them, <code>@"alike&lt;pixel, Same = by_red&gt;"</code>, and while it is generated a call by a requirement's name goes to the adapter's function in place of any with the same parameter types. The concept's laws and requirement contracts are proved the same way, about the adapter's functions.</p>
+<p>A type-level metaprogram, a <code>let meta</code> whose parameters are all types and that returns a <code>type</code> or a <code>bool</code>, also stays in the program (ADR 0035). A type such as <code>widen u8</code> or <code>widen t</code> runs it on the types it is applied to, and gives the type it returns. A <code>where</code> may state a predicate over types beside its concepts: a comparison, <code>||</code>, <code>==&gt;</code>, <code>&lt;==&gt;</code>, or a call of such a metaprogram that returns a bool, as in <code>where Ord t &amp;&amp; size_of t &lt;= 8</code>, or <code>where t = u8 || t = i8</code>. Each call evaluates it for the deduced type arguments; when it is false, the candidate is removed with the reason "the constraint 'small t' is false for t = u32". A concept can only be joined to the rest by <code>&amp;&amp;</code>. Types are the metaprogram's values: a type's name denotes it, <code>=</code> compares types, <code>name t</code> spells one, and <code>size_of t</code> gives the bytes it takes (an integer the smallest of 1, 2, 4 or 8 that holds its range, a bool 1, an array its elements', and a record the sum of its fields'; a slice has no fixed size). Such a metaprogram must terminate: recursion only on components of a type parameter, no mutual recursion, and nothing that reads or changes the program (<a href="../meta/#type-level-metaprograms">meta.md</a>); a use of one that may not is an error at the use. When a candidate's signature cannot be formed for the deduced types, because a metaprogram in one of its types or predicates fails, the candidate is removed with that reason, and the call falls back to the others (substitution failure, ADR 0035). Only the signature fails softly, never a body, and a metaprogram in a type outside a candidate's signature still fails with an error. <code>piac --explain-overloads=file:line</code> prints, as notes, each call on that line: its candidates, why each removed one was, and which one it chose. In the definition check, a type-level metaprogram applied to a type parameter stands for an unknown type too, and a signature with one has its body checked in each instance instead, since its types are only known there. A generic body may call a generic with a predicate only if its own constraints state the same predicate, and a generic whose constraints state every predicate of another's, and more, is the more specific. A type-level metaprogram applied in a parameter's type does not deduce its type arguments.</p>
+<p>A name may have several generic overloads. The first keeps the name and the others are numbered, <code>rank#2</code>, and so are their instances, <code>@"rank#2&lt;u8&gt;"</code>. When two generics both fit a call equally well by their arguments, the more specific one wins. A is more specific than B when A's parameter types, with stand-in types for its type parameters, are an instance of B's but not the reverse. When each is an instance of the other, A is more specific when its constraints entail B's and not the reverse. A concept is entailed when A's constraints promise it through <code>include</code>, or when the requirements they promise include every one of its requirements and it states no law or requirement contract. Laws and contracts would need a proof, which is not done yet. Two generics with the same patterns whose constraints entail each other are an error at the second definition. A call with no single most specific candidate is an ambiguity error that lists them. Overloads with the same parameter types are told apart by their preconditions. They must be ordered: each one's <code>requires</code> clauses, compared with the parameters renamed by position, include every clause of the next, which proves that each precondition implies the next. They must also return the same type. They are named <code>copy(out [u8], [u8])#2</code> and on. A call that only they fit goes to the least specific, with all of them, most specific first, in <code>pia.overload_candidates</code>, and the verifier picks the most specific one whose precondition it proves at the call (<a href="../verifier/#choosing-overloads-by-precondition">the verifier</a>). A call inside a contract uses the least specific, so a contract means the same in every build.</p>
+<p>A higher-order function, one with a parameter of function type such as <code>(p : u8 -&gt; bool)</code>, is never generated itself either (ADR 0044, step 1). Sema records its function parameters. Each call that passes a lambda or the name of a top-level function for them goes to a specialisation, <code>@"find[lambda@f.pia:12:9]"</code>, made on first use and cached by the function and its arguments: a copy of the function without those parameters, in which each one's name is the argument's symbol. The copy keeps the type parameters, so a generic one is then called through the generic path with the other arguments. A lambda becomes a private function <code>@"lambda@f.pia:12:9"</code> with its parameters, its result type if written (else the arrow's, else the body's), the arrow's <code>requires</code> renamed to its parameter names, its own <code>requires</code> asserted at the start of its body, and its own <code>ensures</code> and the arrow's. A named function is called directly when the arrow has no contract; otherwise through a wrapper, <code>@"succ@f.pia:20:9"</code>, that has the arrow's contract. <code>let sq = let (x : i32) : i32 =&gt; x * x in sq 3</code> binds <code>sq</code> to a lambda's function. A lambda anywhere else is an error naming ADR 0044.</p>
+<p>Step 2 adds function objects and overloading (ADR 0044, section 4). A call <code>g x</code> where <code>g</code> is a local of a record or variant type is <code>apply g x</code>. A local passed for a function parameter must have such a type, with one <code>apply</code> whose first parameter is that type and which takes as many arguments after it as the arrow; the specialisation, <code>@"find[below]"</code>, keeps the parameter, with the object's type, and calls <code>apply</code> (or, when the arrow has a contract, a wrapper <code>@"apply@f.pia:30:11"</code> with it) at each application. The prelude concept <code>Function f a r</code>, with the one requirement <code>apply : (g : f) -&gt; (x : a) -&gt; r</code>, is defined for a program that names it and defines no <code>Function</code> of its own, so a generic can take <code>(f : type where Function f t bool) (p : f)</code> and is proved once. Higher-order functions may share a name with each other and with ordinary overloads; they are named after their line, <code>find#line12</code>. At a call, a higher-order candidate is removed when an argument for a function parameter is not a lambda, a named function or a function object, or an argument for a value parameter is a lambda or a named function, and an ordinary one when any argument is a lambda or a named function, or the type of a named argument clashes with its parameter. One candidate must be left; <code>--explain-overloads</code> lists why each was removed.</p>
+<p>Step 3 adds captures (ADR 0044, section 6). A lambda lists them after <code>let</code>: <code>[lo, borrowed keys, inout n]</code>, a bare name copied, <code>borrowed</code> a shared loan and <code>inout</code> an exclusive one. Every local the body uses must be listed, once, and every listed name used; a copy must be of a copyable value, and an <code>inout</code> capture of a <code>mutable</code> variable; only an <code>inout</code> capture may be assigned; capturing a linear or <code>drop</code> value comes with step 7. A lambda that captures has its own record type, <code>lambda@f.pia:12:9</code>, with one field per capture, and its function is an <code>apply</code>, <code>@"apply[lambda@f.pia:12:9]"</code>, whose first parameter is the record and whose body reads each capture as a field of it. As a value, anywhere, a lambda is that record, made by a record literal of its captures, so a <code>let</code> of it is a function object and <code>where Function f t bool</code> deduces <code>f</code> to it. Passed for a function parameter, it is a function object of that type, so the specialisation takes the captures in one argument. A borrowed or referenced capture is a loan the closure holds until its last use (ADR 0042): a borrowed variable cannot be assigned, nor a borrowed buffer's elements, and a referenced one cannot even be read. With an <code>inout</code> capture, <code>apply</code> takes the closure <code>inout mutable</code>, so each call threads it back; a <code>let</code> of such a closure is mutable, the variables it references are rebound to its fields after each call, and loops carry both. Passed for a function parameter written <code>(f : inout t -&gt; unit)</code>, it is made in a hidden mutable local and the specialisation takes it <code>inout</code>; an arrow without <code>inout</code> refuses it, and such an <code>apply</code> cannot be called in a contract. A lambda that captures nothing is still called directly.</p>
+<p>Step 4 adds untyped and generic lambdas (ADR 0044, section 2). At a call of a generic higher-order function, its type parameters are first deduced from the arguments that fix them without being generated: named values, and the written types of typed lambdas, function objects and named functions. An untyped lambda parameter then gets the type of the arrow's domain under those bindings, written in the lifted function as a type alias, <code>type#lambda@f.pia:12:9#x</code>, and the deduced bindings join the specialisation's generic call. A lambda's result type, when it is not written and the arrow's cannot be resolved, is inferred by generating its body once in a function that is thrown away; its errors are dropped there, since they come again when it is generated for real. A <code>let</code> of a lambda that captures nothing and has untyped parameters is a generic function, <code>lambda@f.pia:12:9</code>, with an implicit type parameter <code>x#type</code> per untyped parameter; explicit <code>(t : type where C t)</code> parameters are kept, and when one has a constraint the lambda's definition is checked and proved once (ADR 0043), queued like an instance.</p>
+<p>Step 6 proves each higher-order function once (ADR 0044, section 5; ADR 0043). Before any call, each pure function parameter <code>p</code> of <code>f</code> becomes a type parameter <code>p#type</code> constrained by a concept made for it, <code>f#p</code>, whose one requirement is <code>apply</code> with the arrow's types and its <code>ensures</code>; <code>p</code> gets that type, so <code>p x</code> is <code>apply p x</code>. The copy, <code>f#proof</code>, is checked like a written generic, and its generic proof is kept when it is parametric. Each specialisation of <code>f</code> is then marked as an instance of <code>f#proof</code>, and the verifier discharges it when its calls match the proof's, a call of <code>apply</code> matched by the argument's function, which must return: the argument's own check against the arrow's contract happens where it is passed (its lifted function's <code>requires</code> and <code>ensures</code> are the arrow's). A law applied to <code>p</code> in a contract, such as <code>requires Pia.Fn.strict_weak_order p</code>, is part of the copy, and so is an arrow's <code>requires</code>: in a definition check, each call of a requirement with a precondition asserts it with the call's arguments, and the requirement's axiom is guarded by it. An arrow with <code>inout</code>, a specialisation whose closure writes a capture, and a function whose copy is not parametric are proved at each specialisation, as before. Spec functions are left alone.</p>
+<p>Step 7 adds partial application, functions as results and moved captures. A call of a lone top-level function with arguments left, <code>below lim</code>, is the lambda <code>let [lim] (arg#1 : u8) : bool =&gt; below lim arg#1</code>: a local argument is captured (copied, or borrowed when it cannot be), a literal is written in, and any other argument must be bound first. A function whose result is written as a function type, <code>: u8 -&gt; u8</code>, has the type of the closure its body makes, found by generating the body once before its first call; callers apply it like any function object. A capture list may say <code>[moved t]</code>: the closure owns <code>t</code>, which the record literal that makes it consumes, and when a moved capture has a <code>drop</code> the closure gets one, <code>@"drop[lambda@f.pia:12:9]"</code>, that takes it apart so each field is dropped once. A lambda in one place may be made with different captures in different copies of its body, such as a proof and a specialisation, and each copy gets its own closure type, <code>lambda@f.pia:12:9#2</code>.</p>
+<h2 id="atomics">Atomics<a class="headerlink" href="#atomics" title="Permanent link">&para;</a></h2>
+<p>An atomic cell, <code>atomic t</code>, is a place, not a value (<a href="../adr/0052-atomics/">ADR 0052</a>). Its type is <code>!pia.atomic&lt;T&gt;</code> for an integer type or <code>bool</code>. A range type such as <code>atomic int{0..64}</code> is a refined cell: its range is an invariant of the cell across every task. The ops are core builtins with the order first:</p>
+<table>
+<thead>
+<tr>
+<th>Pia</th>
+<th>IR</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>atomic_new v</code></td>
+<td><code>pia.atomic.new</code>, the cell's type from the context or from <code>v</code></td>
+</tr>
+<tr>
+<td><code>atomic_load o c</code></td>
+<td><code>pia.atomic.load o</code></td>
+</tr>
+<tr>
+<td><code>atomic_store o c v</code></td>
+<td><code>pia.atomic.store o</code></td>
+</tr>
+<tr>
+<td><code>atomic_swap</code>, <code>atomic_add</code>, <code>atomic_sub</code>, <code>atomic_and</code>, <code>atomic_or</code>, <code>atomic_xor</code>, <code>atomic_min</code>, <code>atomic_max</code></td>
+<td><code>pia.atomic.rmw &lt;kind&gt; o</code>, with <code>overflow(m)</code> on an add or sub</td>
+</tr>
+<tr>
+<td><code>atomic_cas ok fail c expected desired</code></td>
+<td><code>pia.atomic.cas ok fail</code></td>
+</tr>
+<tr>
+<td><code>fence o</code></td>
+<td><code>pia.fence o</code></td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><strong>Orders</strong> are the names <code>relaxed</code>, <code>acquire</code>, <code>release</code>, <code>acq_rel</code> and <code>seq_cst</code>, read from the order position only. So an order is always a compile-time constant, and the names stay free for functions such as <code>release</code>. Each op takes the orders in ADR 0052's table, and a failure order of <code>atomic_cas</code> is <code>relaxed</code>, <code>acquire</code> or <code>seq_cst</code> and no stronger than the success order. Anything else is an error that lists the orders the op takes.</li>
+<li><strong>Values</strong> stored or combined are converted to the cell's type, so storing into a refined cell is a range goal. On a refined cell <code>atomic_and</code>, <code>atomic_or</code> and <code>atomic_xor</code> are errors, since their results cannot be proved to stay in range.</li>
+<li><strong>Overflow.</strong> <code>atomic_add</code> and <code>atomic_sub</code> take only a mode written on the expression itself, <code>@wrap (atomic_add o c v)</code>, and are an error without one, even inside an <code>@overflow(...)</code> function. A plain cell takes <code>wrap</code>, <code>trap</code> or <code>saturate</code>. A refined cell takes only <code>proof</code>, and IRGen adds <code>pia.add</code> (or <code>sub</code>) of the old value and <code>v</code> in proof mode, whose goal is that the result stays in the range. Nothing reads its result, and codegen drops it.</li>
+<li><strong>Ownership.</strong> A cell is not copyable. Naming it in an op, or passing it to a borrowed parameter, borrows it; any other use as a value moves it, so it cannot be used afterwards. A cell local cannot be <code>mutable</code>. The ops are not allowed in contracts or ghost code.</li>
+<li><strong>Not yet:</strong> a cell in a record field, a buffer of cells, a function returning a cell, and a lambda capturing one. Each is an error that says so.</li>
+</ul>
+<h2 id="not-yet">Not yet<a class="headerlink" href="#not-yet" title="Permanent link">&para;</a></h2>
+<p>Local functions, captures, untyped lambdas and other function values, recursive types, <code>dyn</code>, <code>spread</code> and tiles (M8), type-level lengths (<code>[T; n]</code>), refinements (<code>where</code> on values), modules, <code>decreases</code> for metaprograms, generic adapters, entailment proved from laws and contracts, and precondition orders that need a proof rather than included clauses.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../architecture/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Architecture">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Architecture
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../verifier/" class="md-footer__link md-footer__link--next" aria-label="Next: Verifier">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Verifier
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.top", "navigation.footer", "content.code.copy", "search.highlight"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+    
+  </body>
+</html>

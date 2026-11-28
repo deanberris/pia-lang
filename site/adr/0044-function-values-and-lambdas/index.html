@@ -1,0 +1,4748 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="A programming language whose compiler proves your code correct before it runs.">
+      
+      
+      
+        <link rel="canonical" href="https://pia-lang.dev/adr/0044-function-values-and-lambdas/">
+      
+      
+        <link rel="prev" href="../0043-generic-definitions-proved-once/">
+      
+      
+        <link rel="next" href="../0045-json-derived-codecs-and-conforming-dom/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
+    
+    
+      
+        <title>44. Function values: typed and generic lambdas, a Function concept, and proofs through function arguments - Pia</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="teal">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#44-function-values-typed-and-generic-lambdas-a-function-concept-and-proofs-through-function-arguments" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Pia" class="md-header__button md-logo" aria-label="Pia" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Pia
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              44. Function values: typed and generic lambdas, a Function concept, and proofs through function arguments
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="teal"  aria-label="Dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="teal"  aria-label="Light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/deanberris/pia-lang" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    deanberris/pia-lang
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Pia" class="md-nav__button md-logo" aria-label="Pia" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Pia
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/deanberris/pia-lang" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    deanberris/pia-lang
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../repl/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The REPL
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent skills and MCP
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pia and other verified languages
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../demo/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: edge detection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../streams.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: stream delineation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../sediment.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: sediment transport
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../basins.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: sediment by basin, in parallel
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pull.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: sediment in pull form
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../placed.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: D8 directions and the picture on the GPU
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pull_gpu.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: the sediment pull step on the GPU
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../gpu-demo/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: CPU and GPU, side by side
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tour/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    A tour of Pia
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Feature index
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../library/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The standard library today
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../idioms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Idiomatic Pia
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../json/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    JSON
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../verification/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How verification works
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../theories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Theories: teaching the verifier a domain
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../repl-debugging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Debugging C++ with the REPL
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_22" >
+        
+          
+          <label class="md-nav__link" for="__nav_22" id="__nav_22_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Case studies
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_22">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Case studies
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cases/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Famous bugs, proved away
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cases/heartbleed.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Heartbleed
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cases/binary-search.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Binary search
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cases/cloudbleed.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cloudbleed
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cases/crowdstrike.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CrowdStrike Channel File 291
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cases/rust-str-repeat.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust str::repeat
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cases/rust-vecdeque.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust VecDeque::reserve
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cases/libwebp.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    libwebp Huffman tables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cases/bun-readfile.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bun readFile on Windows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cases/zlib-gzip-extra.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    zlib gzip extra field
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cases/giflib-background.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    giflib background colour
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Status and roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_24" >
+        
+          
+          <label class="md-nav__link" for="__nav_24" id="__nav_24_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_24_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_24">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Design
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Language design
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../grammar/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Grammar
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../meta/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Metaprograms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../stdlib/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Standard library (proposal)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cpp-std/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The C++23 standard library in Pia
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../abi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Shared libraries and certificates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../advisories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advisories
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../init/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Module initialisation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concurrency/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Coroutines, races and deadlocks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_25" >
+        
+          
+          <label class="md-nav__link" for="__nav_25" id="__nav_25_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compiler internals
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_25_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_25">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Compiler internals
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../irgen/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    IRGen
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../verifier/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Verifier
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../codegen/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Codegen
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../style/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Style guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_26" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_26" id="__nav_26_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Decision records
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_26_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_26">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Decision records
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Index
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0001-record-architecture-decisions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1. Record architecture decisions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0002-single-let-binding-form/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2. let is the only binding form
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0003-static-typing-with-tagged-dyn/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    3. Strong static typing; dynamic typing only through tagged values
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0004-strongest-guarantee-by-default/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    4. The strongest guarantee is always the default
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0005-parameter-modifiers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    5. Parameters carry ownership, access and modifiability modifiers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0006-contracts-and-module-state/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    6. Contracts, refinement types, and module state as exported symbols
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0007-metaprogramming-fixed-point-expansion/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    7. Metaprogramming from day one, expanded to a fixed point
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0008-operators-via-metaprograms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    8. Operators are defined only through metaprograms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0009-generics-concepts-adapters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    9. User-defined generics, checked concepts with laws, and adapters
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0010-modules-interfaces-and-proof-certificates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    10. Modules export interfaces; imports name them; proofs carry certificates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0011-mlir-and-z3-implementation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    11. Compiler in C++ on MLIR, verifying with interval analysis then Z3
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0012-floating-point-reassociation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    12. Three ways to license float reassociation and FMA
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0013-auto-vectorisation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    13. Auto-vectorise as much as possible; keep vec&lt;T, k&gt; for explicit control
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0014-concurrency-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    14. Concurrent by default: collectives, task graphs, futures; collectives proved to match
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0015-device-placement/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    15. Device placement: compiler cost model, explicit, or overridable
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0016-stream-delineation-flagship-demo/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    16. Stream delineation on Apple Silicon is the flagship demo
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0017-bazel-build/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    17. Build with Bazel; depend on LLVM/MLIR and Z3 as Bazel modules
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0018-dialect-layering/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    18. Three Pia dialects over upstream MLIR, with smt for solving
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0019-grammar-disambiguation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    19. Grammar disambiguation rules
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0020-presburger-for-affine-goals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    20. Decide affine aliasing and dependence goals with MLIR's Presburger library
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0021-language-server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    21. A language server, pia-lsp, with a VS Code client first
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0022-metaprogram-hygiene/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    22. Hygiene and name lookup: no shadowing, renamed quote binders, qualified names, ADL
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0023-minimal-core-self-hosted-stdlib/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    23. A minimal core, with the standard library written and proved in Pia
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0024-published-proof-certificates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    24. Shared libraries publish interfaces and proof certificates; loaders check them
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0025-sanitizers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    25. Sanitizers check the edges of the proof
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0026-memory-manager/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    26. A memory manager of explicit allocators, with no garbage collection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0027-coroutines-and-race-freedom/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    27. Stackless coroutines, structured tasks, and race freedom proved from permissions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0028-error-propagation-and-cleanup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    28. Errors propagate with ? to a scope's handler; cleanup runs at scope end
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0029-comments-as-syntax-and-literate-pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    29. Comments are syntax: \ line comments, doc comments, and literate .pia.md files
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0030-published-object-layouts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    30. Optimised object layouts are published, and a changed layout fails to load until relinked
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0031-verified-repl-and-live-environment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    31. A verified REPL over a reusable session, with proved live redefinition
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0032-parallel-sliced-cached-proving/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    32. Proofs run in parallel, one goal per solver, sliced, cached and selectable
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0033-module-initialisation-and-registries/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    33. Module initialisation: registries, proved @init hooks, and opt-in dynamic registration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0034-concepts-and-overload-resolution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    34. Concepts as checked signatures, and concept-based overload resolution
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0035-substitution-failure-and-total-constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    35. Substitution failure removes a candidate, and constraints are proved to terminate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0036-library-theories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    36. Libraries extend the solver with theories: sorts, functions and axioms, proved consistent by a model or listed as trusted
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0037-idiomatic-pia-and-lints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    37. Idiomatic Pia: facts in types first, written as opinions and checked by lints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0038-float-kernels-against-real-theories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    38. Float kernels are proved against real-valued specifications by rounding-error bounds
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0039-module-and-interface-syntax/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    39. Modules are private by default: one module per file, interfaces list every export, imports name interfaces
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0040-cpp23-standard-library-in-pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    40. The C++23 standard library, mapped onto Pia and proved
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0041-allocator-semantics-as-a-theory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    41. Allocator semantics are a theory, and allocators prove they refine it through spec-only state
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0042-lifetimes-liveness-and-escape-analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    42. Lifetimes are checked by liveness, marked where values cross boundaries, and escape analysis places memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0043-generic-definitions-proved-once/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    43. Generic definitions are proved once, against their concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    44. Function values: typed and generic lambdas, a Function concept, and proofs through function arguments
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    44. Function values: typed and generic lambdas, a Function concept, and proofs through function arguments
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Context">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#prior-art" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prior art
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Decision">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-lambdas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Lambdas
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-typed-and-generic-lambdas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Typed and generic lambdas
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-function-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Function types
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-the-function-concept" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. The Function concept
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-proofs-through-function-arguments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Proofs through function arguments
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#6-captures" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Captures
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#7-code-generation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Code generation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#8-what-this-adr-does-not-decide" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. What this ADR does not decide
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation order
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#consequences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Consequences
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#questions-for-dean" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Questions for Dean
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0045-json-derived-codecs-and-conforming-dom/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    45. JSON: derived streaming codecs, typed construction, and a DOM proved to conform to a type
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0046-box-over-a-type-or-a-concept/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    46. A box holds a type or any type meeting a concept, and what it holds is proved to have the concept's shape
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0047-recursive-sum-types-and-shared-references/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    47. Recursive sum types are explicit, recurse through an owning indirection, and share through strong and weak references
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0048-buffers-whose-elements-hold-slices/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    48. Buffers may hold slices: owned slices are written through, shared ones only read
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0049-targets-are-theories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    49. Linux x86_64 is a second target, tested in Linux CI, and each target is a model of a built-in Pia.Target theory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0050-senders-and-receivers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    50. Asynchronous work is senders and receivers whose completion rules are proved, over io_uring on Linux and a kqueue completion adapter on macOS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0051-variadic-generics-and-foreign-varargs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    51. Variadic functions and types take a pack that is called like any argument list, walked by metaprograms and proved once; foreign bindings are generated from tables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0052-atomics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    52. Atomics are a core cell type with checked orders and stated overflow, modelled by RC11 with a litmus battery before tasks exist, and lowered per target by a table proved against each hardware model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0053-protocols-checked-by-z3/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    53. Protocols and deadlock are checked in Z3, as transition systems proved by constrained Horn clauses; explicit search stays for atomics, and TLA+ is an export format
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0054-proved-gif-and-inflate-codecs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    54. GIF and inflate are proved total on every input, decode to a written specification, and GIF round-trips exactly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0055-sediment-transport-in-fixed-point/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    55. Sediment transport is integer mass moved downhill in height order, with conservation proved exactly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0056-tests-generated-from-contracts-and-theories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    56. Tests are generated by metaprograms from contracts, types and theories; a case the verifier can decide is proved, and only the rest is run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0057-posix-module-per-target-behind-one-interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    57. Pia.Sys.Posix is one generated module per target behind one hand-written interface, and the generator joins the contract overlay
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0058-spec-buffers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    58. Spec buffers: spec-only arrays that code writes, contracts read and codegen erases
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0059-digit-separators-and-type-bounds/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    59. Digits group with ' or _; min t and max t are an integer type's bounds, folded to literals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0060-spread-v0-ownership-and-runtime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    60. spread v0: iterations own the cells they write, proved one iteration at a time; MLIR's async runtime runs them
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0061-lean-proved-facts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    61. Lean proves the facts Z3 cannot: lemmas and theory models are proved in Lean against statements piac generates, recorded in certificates by statement hash, and checked outside the edit loop; cost bounds are proved by Z3, and their asymptotics in Lean
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0062-cost-bounds-in-contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    62. Cost bounds are contracts: costs c &lt;= e bounds what a function spends on a named counter, tracked by a spec-only spent c and proved by Z3
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0063-opaque-spec-functions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    63. Opaque spec functions: a spec function marked @opaque keeps its definition out of every goal until a proof reveals it
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0064-distinct-types/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    64. type always makes a new type: let length = type u32 is distinct from u32, converts only by applying a type to a value, and inherits only what it derives
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0065-lowerings-written-in-pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    65. Pia code extends the compiler's lowering: @lower gives a function an MLIR form and a type an MLIR type, the Pia definition stays the specification, and each lowering is proved to refine it or is listed as trusted
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0066-int-blasting-for-nonlinear-goals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    66. Nonlinear goals are tried first with Z3's int-blasting solver, and other solvers are kept out of the pipeline for now
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0067-release-0-1-0-a-proved-small-llm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    67. Release 0.1.0 is a small Llama-architecture LLM ported from PyTorch to Pia, proved where a proof means something, running inference on an M3 Mac on CPU SIMD and on the GPU through linalg
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0068-gpu-compute-through-spirv-and-metal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    68. GPU compute: a proved spread placed on the GPU, lowered through SPIR-V and SPIRV-Cross to Metal, launched by a small trusted shim
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0069-pure-and-impure-functions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    69. Pure and impure functions: computed purity, @pure assertions, and @impure interface boundaries
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0070-raw-binary-embedding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    70. Raw binary embedding: @embed for compile-time fixed byte blobs, hermetic roots, opaque verification and direct LLVM emission
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0071-function-references/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    71. Function references: a function is a value that travels by reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0072-drops-run-in-constant-stack/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    72. A drop never grows the stack: every drop is one walk, proved against the recursive drop, with a fixed stack bound per type
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0073-prover-identity-abi-version-and-advisories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    73. Certificates record who proved a module and with what, advisories revoke trust in faulty provers, and every breaking change ships a migration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0074-library-types-tensors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    74. Library types: a type written in Pia gets an MLIR type, ops and proofs from its library, and Pia.Tensor over MLIR tensor is the proof point
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0075-codegen-benchmarks-against-c-cpp-rust-zig/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    75. Codegen is benchmarked against C, C++, Rust and Zig on public problems, same algorithm first, counted in instructions on Linux and timed on Apple Silicon
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0076-transparent-exports/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    76. Transparent exports: an importer proves against an exported function's body, as a caller in its own module does
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0077-definitions-inherit-interface-contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    77. A definition that states no contract takes the contract of the interface that lists it
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0078-pia-lib-ops-with-proved-substitutions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    78. Library functions lower to pia_lib.call, a Pia-owned op whose meaning is its Pia body, and a late pass either expands it into the body or substitutes an upstream op through a rule proved against the body
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0079-pia-module-format/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    79. Pia IR: a versioned op schema Pia controls, in lock-step with piac, with deprecations and migrations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0080-protocol-buffers-in-pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    80. Protocol Buffers in Pia: a metaprogram that turns .proto into proved types and codecs, and Pia IR as a protobuf schema
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Context">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#prior-art" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prior art
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Decision">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-lambdas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Lambdas
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-typed-and-generic-lambdas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Typed and generic lambdas
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-function-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Function types
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-the-function-concept" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. The Function concept
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-proofs-through-function-arguments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Proofs through function arguments
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#6-captures" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Captures
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#7-code-generation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Code generation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#8-what-this-adr-does-not-decide" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. What this ADR does not decide
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation order
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#consequences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Consequences
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#questions-for-dean" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Questions for Dean
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="44-function-values-typed-and-generic-lambdas-a-function-concept-and-proofs-through-function-arguments">44. Function values: typed and generic lambdas, a Function concept, and proofs through function arguments<a class="headerlink" href="#44-function-values-typed-and-generic-lambdas-a-function-concept-and-proofs-through-function-arguments" title="Permanent link">&para;</a></h1>
+<p>Date: 2026-11-22</p>
+<p>Status: Accepted (Dean, 2026-11-22), with all three questions answered. Dean chose question 1 (2026-11-22): a function object is any type whose module defines <code>apply</code>.</p>
+<h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
+<p>Pia's design has always had function values. A nameless <code>let</code> is a function literal, <code>let (x) =&gt; x * x</code>, with no <code>fun</code> or <code>lambda</code> keyword, and function literals are curried (<a href="../../design/">design.md</a>). The parser reads them, and metaprograms run them in the interpreter: every operator in the prelude is one. Ordinary code cannot use them. IRGen has no lowering for <code>Lambda</code> outside <code>with_arena</code>, and the tour lists function values under "Designed but not built yet".</p>
+<p>The C++23 standard library (<a href="../0040-cpp23-standard-library-in-pia/">ADR 0040</a>) is blocked on them: predicates, comparators and operations for <code>&lt;algorithm&gt;</code> and <code>&lt;numeric&gt;</code>, <code>&lt;ranges&gt;</code> views, <code>&lt;functional&gt;</code>, and the monadic operations of <code>option</code> and <code>result</code>. Dean has set two requirements for that work (2026-11-22):</p>
+<ul>
+<li><strong>No <code>_if</code> variants.</strong> <code>find</code>, <code>count</code>, <code>remove</code>, <code>replace</code>, <code>copy</code>, <code>sort</code> and <code>accumulate</code> are each one overload set, with overloads that take a value and overloads that take a function (ADR 0040, section 6). So overload resolution (<a href="../0034-concepts-and-overload-resolution/">ADR 0034</a>) must tell a value of type <code>t</code> from a function <code>t -&gt; bool</code> cleanly.</li>
+<li><strong>A standard <code>Function</code> concept</strong> matches function objects, lambdas and plain functions alike, and the library's predicate overloads are constrained on it.</li>
+</ul>
+<p>The library thread also needs:</p>
+<ol>
+<li>a callee's <code>ensures</code> to mention its predicate, as in <code>find</code>'s <code>ensures result &lt; len xs ==&gt; p xs.[result]</code>, which needs function arguments to be pure and total;</li>
+<li>a callee to require a law of its comparator, such as a strict weak order for <code>sort</code>;</li>
+<li><code>find xs (let (x) =&gt; x &gt; 3)</code> to compile to the same vectorised loop as a hand-written one.</li>
+</ol>
+<p>Other constraints come from earlier decisions: fewer keywords is better; generic parameters are <code>(t : type)</code> with deduction (ADR 0034, <a href="../0035-substitution-failure-and-total-constraints/">ADR 0035</a>); generic definitions are to be proved once (<a href="../0043-generic-definitions-proved-once/">ADR 0043</a>); there is no garbage collection (<a href="../0026-memory-manager/">ADR 0026</a>); and captured values must respect ownership and borrows (<a href="../0042-lifetimes-liveness-and-escape-analysis/">ADR 0042</a>).</p>
+<h3 id="prior-art">Prior art<a class="headerlink" href="#prior-art" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>C++</strong> gives each lambda its own unnamed closure type with an <code>operator()</code>. Templates over the callable type monomorphise and inline, which is why <code>std::find_if</code> with a lambda vectorises. <code>std::function</code> is the separate, type-erased, allocating form. C++20 generic lambdas (<code>auto</code> parameters, or <code>[]&lt;typename T&gt;</code>) are lambdas with a template <code>operator()</code>.</li>
+<li><strong>Rust</strong> does the same with <code>Fn</code>, <code>FnMut</code> and <code>FnOnce</code> traits, <code>impl Fn</code> arguments and results, and <code>Box&lt;dyn Fn&gt;</code> for the dynamic form. Captures are inferred by use: by reference, by mutable reference, or by move.</li>
+<li><strong>Dafny</strong> and <strong>Why3</strong> treat function values in specifications as total mathematical functions; Dafny's <code>f.requires(x)</code> and <code>f.reads</code> expose a function value's contract. <strong>Verus</strong> gives closures <code>requires</code> and <code>ensures</code> clauses that the caller can rely on through <code>f.requires</code> and <code>f.ensures</code>.</li>
+<li><strong>OCaml</strong> has closures as heap values, which Pia cannot copy without a garbage collector.</li>
+</ul>
+<h2 id="decision">Decision<a class="headerlink" href="#decision" title="Permanent link">&para;</a></h2>
+<p>Function values are static by default, as in C++ and Rust: every lambda has its own type, a function parameter is a constrained type parameter, and each call with a lambda is a separate instance that codegen inlines. The proof follows ADR 0043: a higher-order function is proved once, with its function argument abstract and constrained by the contract of its parameter's type, and each argument is checked against that contract where it is passed.</p>
+<h3 id="1-lambdas">1. Lambdas<a class="headerlink" href="#1-lambdas" title="Permanent link">&para;</a></h3>
+<p>A lambda is a nameless <code>let</code>, as today. It may carry types, modifiers, a result type and contracts, in the same places a named function does:</p>
+<div class="highlight"><pre><span></span><code><span class="k">let</span> <span class="n">square</span> <span class="o">=</span> <span class="k">let</span> <span class="o">(</span><span class="n">x</span> <span class="o">:</span> <span class="n">i32</span><span class="o">)</span> <span class="o">=&gt;</span> <span class="n">x</span> <span class="o">*</span> <span class="n">x</span>
+<span class="k">let</span> <span class="n">next</span> <span class="o">=</span> <span class="k">let</span> <span class="o">(</span><span class="n">x</span> <span class="o">:</span> <span class="n">u8</span><span class="o">)</span> <span class="o">:</span> <span class="n">u8</span> <span class="n">requires</span> <span class="n">x</span> <span class="o">&lt;</span> <span class="mi">255</span> <span class="n">ensures</span> <span class="n">result</span> <span class="o">=</span> <span class="n">x</span> <span class="o">+</span> <span class="mi">1</span> <span class="o">=&gt;</span> <span class="n">x</span> <span class="o">+</span> <span class="mi">1</span>
+<span class="k">let</span> <span class="n">between</span> <span class="o">(</span><span class="n">lo</span> <span class="o">:</span> <span class="n">u8</span><span class="o">)</span> <span class="o">(</span><span class="n">hi</span> <span class="o">:</span> <span class="n">u8</span><span class="o">)</span> <span class="o">=</span> <span class="k">let</span> <span class="o">(</span><span class="n">x</span> <span class="o">:</span> <span class="n">u8</span><span class="o">)</span> <span class="o">=&gt;</span> <span class="n">lo</span> <span class="o">&lt;=</span> <span class="n">x</span> <span class="o">&amp;&amp;</span> <span class="n">x</span> <span class="o">&lt;=</span> <span class="n">hi</span>
+</code></pre></div>
+<p>The grammar gains the result type and the contracts:</p>
+<div class="highlight"><pre><span></span><code><span class="k">lambda </span><span class="o">=</span> <span class="s2">"let"</span> <span class="k">lparam </span><span class="p">{</span> <span class="k">lparam </span><span class="p">}</span> <span class="p">[</span> <span class="s2">":"</span> <span class="k">annot </span><span class="p">]</span> <span class="p">{</span> <span class="k">contract </span><span class="p">}</span> <span class="s2">"=&gt;"</span> <span class="k">seq </span><span class="p">;</span>
+</code></pre></div>
+<p>A lambda is curried like any function: <code>let (a) (b) =&gt; a + b</code> applied to one argument is a lambda of one parameter.</p>
+<p>A lambda's body is its definition. Where a lambda is in scope, the verifier knows what it computes, as it does for pure scalar functions today (#202), so most lambdas need no contract. A written <code>requires</code> restricts where it may be called, and a written <code>ensures</code> is checked against the body like any postcondition.</p>
+<h3 id="2-typed-and-generic-lambdas">2. Typed and generic lambdas<a class="headerlink" href="#2-typed-and-generic-lambdas" title="Permanent link">&para;</a></h3>
+<p>A lambda's parameters may be typed, untyped or explicitly generic.</p>
+<ul>
+<li><strong>Typed:</strong> <code>let (x : u8) =&gt; x &gt; 3</code> has type <code>u8 -&gt; bool</code>.</li>
+<li><strong>Untyped, with an expected type:</strong> where the lambda is an argument, or bound by a <code>let</code> whose type is written, the parameter types come from the expected type. In <code>find xs (let (x) =&gt; x &gt; 3)</code> with <code>xs : [u8]</code>, <code>x</code> is a <code>u8</code>, deduced exactly as a generic argument is deduced from the expected type (ADR 0034).</li>
+<li><strong>Untyped, with no expected type:</strong> <code>let gt3 = let (x) =&gt; x &gt; 3</code> is a generic lambda, like a C++ <code>auto</code> lambda. Each untyped parameter is an implicit type parameter, and each use instantiates it. Its body is checked and proved per instance, as generic code was before ADR 0043, because there is no concept to prove it against. A lint (<a href="../0037-idiomatic-pia-and-lints/">ADR 0037</a>) suggests a type, or an explicit generic form, for a generic lambda that is exported or used at more than one type.</li>
+<li><strong>Explicitly generic:</strong> <code>let (t : type where Ord t) (a : t) (b : t) =&gt; less a b</code> has type parameters like a generic function, deduced at each application and constrained by concepts. A constrained generic lambda is proved once, against its concepts, by ADR 0043.</li>
+</ul>
+<h3 id="3-function-types">3. Function types<a class="headerlink" href="#3-function-types" title="Permanent link">&para;</a></h3>
+<p>The arrow type that the grammar already has is the type of a function value. Its parameters may be named, and the whole arrow may carry contracts that talk about them and about <code>result</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="o">(</span><span class="n">p</span> <span class="o">:</span> <span class="n">t</span> <span class="o">-&gt;</span> <span class="kt">bool</span><span class="o">)</span>
+<span class="o">(</span><span class="n">f</span> <span class="o">:</span> <span class="o">(</span><span class="n">x</span> <span class="o">:</span> <span class="n">u8</span><span class="o">)</span> <span class="o">-&gt;</span> <span class="n">u8</span> <span class="n">requires</span> <span class="n">x</span> <span class="o">&lt;</span> <span class="mi">255</span> <span class="n">ensures</span> <span class="n">result</span> <span class="o">&gt;</span> <span class="n">x</span><span class="o">)</span>
+<span class="o">(</span><span class="n">less</span> <span class="o">:</span> <span class="o">(</span><span class="n">a</span> <span class="o">:</span> <span class="n">t</span><span class="o">)</span> <span class="o">-&gt;</span> <span class="o">(</span><span class="n">b</span> <span class="o">:</span> <span class="n">t</span><span class="o">)</span> <span class="o">-&gt;</span> <span class="kt">bool</span><span class="o">)</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="k">arrow_type </span><span class="o">=</span> <span class="k">arrow_dom </span><span class="s2">"-&gt;"</span> <span class="k">type </span><span class="p">{</span> <span class="k">contract </span><span class="p">}</span> <span class="p">;</span>
+</code></pre></div>
+<p>The contracts belong to the innermost arrow, so for a curried <code>(a : t) -&gt; (b : t) -&gt; bool</code> they may name both <code>a</code> and <code>b</code>, and they apply once both are given. Modifiers on the parameters are written as for named functions: <code>borrowed in [u8] -&gt; usize</code>.</p>
+<p>A function type is a type like any other, with two exceptions. Function types never meet <code>Eq</code>, <code>Ord</code> or <code>Hash</code>, since Pia has no function equality. And a function type in a parameter's position is not one type but any type that meets <code>Function</code> (section 4).</p>
+<h3 id="4-the-function-concept">4. The <code>Function</code> concept<a class="headerlink" href="#4-the-function-concept" title="Permanent link">&para;</a></h3>
+<p><code>Function</code> is a standard concept, in the prelude, defined with ADR 0034's syntax:</p>
+<div class="highlight"><pre><span></span><code><span class="k">let</span> <span class="n">meta</span> <span class="nc">Function</span> <span class="o">(</span><span class="n">f</span> <span class="o">:</span> <span class="k">type</span><span class="o">)</span> <span class="o">(</span><span class="n">a</span> <span class="o">:</span> <span class="k">type</span><span class="o">)</span> <span class="o">(</span><span class="n">r</span> <span class="o">:</span> <span class="k">type</span><span class="o">)</span> <span class="o">:</span> <span class="n">concept</span> <span class="o">=</span> <span class="k">sig</span>
+  <span class="k">let</span> <span class="n">apply</span> <span class="o">:</span> <span class="o">(</span><span class="n">g</span> <span class="o">:</span> <span class="n">f</span><span class="o">)</span> <span class="o">-&gt;</span> <span class="o">(</span><span class="n">x</span> <span class="o">:</span> <span class="n">a</span><span class="o">)</span> <span class="o">-&gt;</span> <span class="n">r</span>
+<span class="k">end</span>
+</code></pre></div>
+<p>A type <code>f</code> meets <code>Function f a r</code> when a value of it can be applied to an <code>a</code> to give an <code>r</code>. Three kinds of type meet it:</p>
+<ul>
+<li><strong>A lambda's type.</strong> Each lambda has its own anonymous type, a record of its captures (section 6), which meets <code>Function</code> with the lambda's own parameter and result types. Two lambdas with the same text are still two types.</li>
+<li><strong>A named function's type.</strong> A top-level function named as a value, <code>find xs is_digit</code>, has a singleton type with no fields, which meets <code>Function</code> with the function's signature. An overloaded name used as a value is resolved against the expected type, and is ambiguous without one.</li>
+<li><strong>A function object</strong>, a record or variant whose module defines <code>apply</code> for it. Application syntax calls it: for <code>g : counter_below</code>, <code>g x</code> is <code>apply g x</code>. This is how a library type such as a hash functor or a comparator with state is callable.</li>
+</ul>
+<p>Curried functions meet <code>Function</code> one argument at a time: <code>t -&gt; t -&gt; bool</code> is a function to <code>t -&gt; bool</code>, so a two-argument function object writes <code>apply (g : f) (a : t) (b : t) : bool</code>, which has the signature <code>f -&gt; t -&gt; (t -&gt; bool)</code>.</p>
+<p><strong>An arrow type in a parameter is sugar for a constrained type parameter.</strong> In</p>
+<div class="highlight"><pre><span></span><code><span class="k">let</span> <span class="n">find</span> <span class="o">(</span><span class="n">t</span> <span class="o">:</span> <span class="k">type</span><span class="o">)</span> <span class="o">(</span><span class="n">xs</span> <span class="o">:</span> <span class="o">[</span><span class="n">t</span><span class="o">])</span> <span class="o">(</span><span class="n">p</span> <span class="o">:</span> <span class="n">t</span> <span class="o">-&gt;</span> <span class="kt">bool</span><span class="o">)</span> <span class="o">:</span> <span class="n">usize</span>
+</code></pre></div>
+<p><code>p : t -&gt; bool</code> means a fresh type parameter <code>f</code> with <code>where Function f t bool</code>, and <code>p : f</code>. Writing the constraint out is allowed and means the same thing. Each argument passed for <code>p</code> deduces <code>f</code> to its own type, so every call is an instance at that lambda or function. A result type written as an arrow, as in <code>compose</code>'s, is the same: some type meeting <code>Function</code>, whose actual type the compiler knows, like Rust's <code>impl Fn</code>.</p>
+<p><strong>Overloading on a value or a function</strong> then needs nothing new. With</p>
+<div class="highlight"><pre><span></span><code><span class="k">let</span> <span class="n">find</span> <span class="o">(</span><span class="n">t</span> <span class="o">:</span> <span class="k">type</span> <span class="n">where</span> <span class="nc">Eq</span> <span class="n">t</span><span class="o">)</span> <span class="o">(</span><span class="n">xs</span> <span class="o">:</span> <span class="o">[</span><span class="n">t</span><span class="o">])</span> <span class="o">(</span><span class="n">v</span> <span class="o">:</span> <span class="n">t</span><span class="o">)</span> <span class="o">:</span> <span class="n">usize</span>
+<span class="k">let</span> <span class="n">find</span> <span class="o">(</span><span class="n">t</span> <span class="o">:</span> <span class="k">type</span><span class="o">)</span> <span class="o">(</span><span class="n">xs</span> <span class="o">:</span> <span class="o">[</span><span class="n">t</span><span class="o">])</span> <span class="o">(</span><span class="n">p</span> <span class="o">:</span> <span class="n">t</span> <span class="o">-&gt;</span> <span class="kt">bool</span><span class="o">)</span> <span class="o">:</span> <span class="n">usize</span>
+</code></pre></div>
+<p><code>find xs 3</code> is viable only for the first overload: deduction gives <code>t = u8</code> from <code>xs</code>, and <code>u8</code> does not meet <code>Function u8 u8 bool</code>. <code>find xs (let (x) =&gt; x &gt; 3)</code> is viable only for the second, because a lambda's type is not <code>u8</code>. Searching a slice of functions for a function is never ambiguous either, since function types do not meet <code>Eq</code>. A user adapter that makes a scalar type meet <code>Function</code> would make such a call ambiguous, and ADR 0034 reports that ambiguity with both candidates.</p>
+<h3 id="5-proofs-through-function-arguments">5. Proofs through function arguments<a class="headerlink" href="#5-proofs-through-function-arguments" title="Permanent link">&para;</a></h3>
+<p><strong>Pure function values.</strong> A function value is pure when its parameters are all <code>in</code> (no <code>inout</code> or <code>out</code>) and its body neither writes module state nor calls anything that does. A pure function value whose body is proved to terminate (every <code>let rec</code> and loop in it has a measure) is a total mathematical function, and may be applied in contracts and spec functions. A non-pure function value may be passed and called in code, but not in a contract; the verifier reports that as an error at the contract.</p>
+<p><strong>In the callee</strong>, a function parameter is abstract. Each pure function parameter <code>p</code> is an uninterpreted SMT function, shared by every application in the body and in the contracts, as ADR 0043 makes concept functions. The arrow's contract is the only fact about it: at each call <code>p x</code> in code, <code>p</code>'s <code>requires</code> is a goal, and its <code>ensures</code> is assumed of <code>p x</code>. A contract may mention <code>p x</code> freely, so</p>
+<div class="highlight"><pre><span></span><code><span class="k">let</span> <span class="n">find</span> <span class="o">(</span><span class="n">t</span> <span class="o">:</span> <span class="k">type</span><span class="o">)</span> <span class="o">(</span><span class="n">xs</span> <span class="o">:</span> <span class="o">[</span><span class="n">t</span><span class="o">])</span> <span class="o">(</span><span class="n">p</span> <span class="o">:</span> <span class="n">t</span> <span class="o">-&gt;</span> <span class="kt">bool</span><span class="o">)</span> <span class="o">:</span> <span class="n">usize</span>
+  <span class="n">ensures</span> <span class="n">result</span> <span class="o">&lt;=</span> <span class="n">len</span> <span class="n">xs</span>
+  <span class="n">ensures</span> <span class="n">result</span> <span class="o">&lt;</span> <span class="n">len</span> <span class="n">xs</span> <span class="o">==&gt;</span> <span class="n">p</span> <span class="n">xs</span><span class="o">.[</span><span class="n">result</span><span class="o">]</span>
+  <span class="n">ensures</span> <span class="n">forall</span> <span class="o">(</span><span class="n">i</span> <span class="o">:</span> <span class="n">usize</span><span class="o">).</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">result</span> <span class="o">==&gt;</span> <span class="n">p</span> <span class="n">xs</span><span class="o">.[</span><span class="n">i</span><span class="o">]</span> <span class="o">=</span> <span class="bp">false</span>
+<span class="o">=</span> <span class="o">...</span>
+</code></pre></div>
+<p>is proved once, whatever <code>p</code> is.</p>
+<p><strong>At the call site</strong>, the argument is checked against the parameter's type, and the callee's contract is then usable with the argument substituted for <code>p</code>:</p>
+<ol>
+<li>Under the type's <code>requires</code>, the argument's <code>requires</code> holds: the callee may call it anywhere the type allows.</li>
+<li>Under the type's <code>requires</code>, the argument's result meets the type's <code>ensures</code>. For a lambda this is a proof of its body; for a named function, of its contract.</li>
+<li>The caller then assumes the callee's <code>ensures</code>, in which <code>p xs.[i]</code> is the argument applied to <code>xs.[i]</code>. A lambda in scope unfolds to its body, so <code>find xs (let (x) =&gt; x &gt; 3)</code> gives the caller <code>result &lt; len xs ==&gt; xs.[result] &gt; 3</code> with no contract on the lambda.</li>
+</ol>
+<p>Captured values (section 6) are part of the argument: the lambda in <code>find xs (between lo hi)</code> is checked, and unfolds, with <code>lo</code> and <code>hi</code> as they are at the call.</p>
+<p><strong>Laws of function arguments</strong> are preconditions over spec functions. The library defines them once, in <code>Pia.Fn</code>, as spec predicates over function values:</p>
+<div class="highlight"><pre><span></span><code><span class="k">let</span> <span class="n">spec</span> <span class="n">strict_weak_order</span> <span class="o">(</span><span class="n">t</span> <span class="o">:</span> <span class="k">type</span><span class="o">)</span> <span class="o">(</span><span class="n">less</span> <span class="o">:</span> <span class="o">(</span><span class="n">a</span> <span class="o">:</span> <span class="n">t</span><span class="o">)</span> <span class="o">-&gt;</span> <span class="o">(</span><span class="n">b</span> <span class="o">:</span> <span class="n">t</span><span class="o">)</span> <span class="o">-&gt;</span> <span class="kt">bool</span><span class="o">)</span> <span class="o">:</span> <span class="kt">bool</span> <span class="o">=</span>
+  <span class="o">(</span><span class="n">forall</span> <span class="o">(</span><span class="n">a</span> <span class="o">:</span> <span class="n">t</span><span class="o">).</span> <span class="n">less</span> <span class="n">a</span> <span class="n">a</span> <span class="o">=</span> <span class="bp">false</span><span class="o">)</span> <span class="o">&amp;&amp;</span>
+  <span class="o">(</span><span class="n">forall</span> <span class="o">(</span><span class="n">a</span> <span class="o">:</span> <span class="n">t</span><span class="o">)</span> <span class="o">(</span><span class="n">b</span> <span class="o">:</span> <span class="n">t</span><span class="o">)</span> <span class="o">(</span><span class="n">c</span> <span class="o">:</span> <span class="n">t</span><span class="o">).</span> <span class="n">less</span> <span class="n">a</span> <span class="n">b</span> <span class="o">&amp;&amp;</span> <span class="n">less</span> <span class="n">b</span> <span class="n">c</span> <span class="o">==&gt;</span> <span class="n">less</span> <span class="n">a</span> <span class="n">c</span><span class="o">)</span> <span class="o">&amp;&amp;</span>
+  <span class="o">(</span><span class="n">forall</span> <span class="o">(</span><span class="n">a</span> <span class="o">:</span> <span class="n">t</span><span class="o">)</span> <span class="o">(</span><span class="n">b</span> <span class="o">:</span> <span class="n">t</span><span class="o">)</span> <span class="o">(</span><span class="n">c</span> <span class="o">:</span> <span class="n">t</span><span class="o">).</span>
+     <span class="n">less</span> <span class="n">a</span> <span class="n">b</span> <span class="o">=</span> <span class="bp">false</span> <span class="o">&amp;&amp;</span> <span class="n">less</span> <span class="n">b</span> <span class="n">a</span> <span class="o">=</span> <span class="bp">false</span> <span class="o">&amp;&amp;</span>
+     <span class="n">less</span> <span class="n">b</span> <span class="n">c</span> <span class="o">=</span> <span class="bp">false</span> <span class="o">&amp;&amp;</span> <span class="n">less</span> <span class="n">c</span> <span class="n">b</span> <span class="o">=</span> <span class="bp">false</span> <span class="o">==&gt;</span>
+       <span class="n">less</span> <span class="n">a</span> <span class="n">c</span> <span class="o">=</span> <span class="bp">false</span> <span class="o">&amp;&amp;</span> <span class="n">less</span> <span class="n">c</span> <span class="n">a</span> <span class="o">=</span> <span class="bp">false</span><span class="o">)</span>
+
+<span class="k">let</span> <span class="n">sort</span> <span class="o">(</span><span class="n">t</span> <span class="o">:</span> <span class="k">type</span><span class="o">)</span> <span class="o">(</span><span class="n">xs</span> <span class="o">:</span> <span class="n">borrowed</span> <span class="n">inout</span> <span class="k">mutable</span> <span class="o">[</span><span class="n">t</span><span class="o">])</span> <span class="o">(</span><span class="n">less</span> <span class="o">:</span> <span class="o">(</span><span class="n">a</span> <span class="o">:</span> <span class="n">t</span><span class="o">)</span> <span class="o">-&gt;</span> <span class="o">(</span><span class="n">b</span> <span class="o">:</span> <span class="n">t</span><span class="o">)</span> <span class="o">-&gt;</span> <span class="kt">bool</span><span class="o">)</span> <span class="o">:</span> <span class="kt">unit</span>
+  <span class="n">requires</span> <span class="n">strict_weak_order</span> <span class="n">less</span>
+  <span class="n">ensures</span> <span class="n">sorted</span> <span class="n">less</span> <span class="n">xs</span> <span class="o">&amp;&amp;</span> <span class="n">permutation</span> <span class="n">xs</span> <span class="o">(</span><span class="n">old</span> <span class="n">xs</span><span class="o">)</span>
+</code></pre></div>
+<p>The callee assumes the law, and each caller proves it for its argument. For <code>sort xs (let (a) (b) =&gt; a &gt; b)</code> over <code>u8</code>, the lambda unfolds and the law is a bit-vector fact. For <code>sort xs less</code> where <code>less</code> met <code>Ord t</code>, it follows from <code>Ord</code>'s laws. A law used as a precondition is proved where the argument is known, once per call site, and its goal is cached by ADR 0032 like any other.</p>
+<h3 id="6-captures">6. Captures<a class="headerlink" href="#6-captures" title="Permanent link">&para;</a></h3>
+<p><em>Amended 2026-11-23: Dean asked for explicit captures, each one copied, borrowed or referenced. This replaces captures inferred from use, which steps 3 and 4 built.</em></p>
+<p>A lambda lists what it captures, in brackets after <code>let</code>, before its parameters. Each capture says how it is captured, with the modifier words Pia already has, so no keyword is added:</p>
+<div class="highlight"><pre><span></span><code><span class="k">let</span> <span class="o">[</span><span class="n">lo</span><span class="o">,</span> <span class="n">hi</span><span class="o">]</span> <span class="o">(</span><span class="n">x</span> <span class="o">:</span> <span class="n">u8</span><span class="o">)</span> <span class="o">=&gt;</span> <span class="n">lo</span> <span class="o">&lt;=</span> <span class="n">x</span> <span class="o">&amp;&amp;</span> <span class="n">x</span> <span class="o">&lt;=</span> <span class="n">hi</span>           <span class="err">\</span> <span class="n">copied</span>
+<span class="k">let</span> <span class="o">[</span><span class="n">borrowed</span> <span class="n">keys</span><span class="o">]</span> <span class="o">(</span><span class="n">k</span> <span class="o">:</span> <span class="n">u32</span><span class="o">)</span> <span class="o">=&gt;</span> <span class="n">contains</span> <span class="n">keys</span> <span class="n">k</span>        <span class="err">\</span> <span class="n">borrowed</span>
+<span class="k">let</span> <span class="o">[</span><span class="n">inout</span> <span class="n">count</span><span class="o">]</span> <span class="o">(</span><span class="n">x</span> <span class="o">:</span> <span class="n">u8</span><span class="o">)</span> <span class="o">=&gt;</span> <span class="n">count</span> <span class="o">&lt;-</span> <span class="n">count</span> <span class="o">+</span> <span class="mi">1</span><span class="o">;</span> <span class="n">x</span> <span class="o">&gt;</span> <span class="mi">3</span> <span class="err">\</span> <span class="n">referenced</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="k">lambda   </span><span class="o">=</span> <span class="s2">"let"</span> <span class="p">[</span> <span class="k">captures </span><span class="p">]</span> <span class="k">lparam </span><span class="p">{</span> <span class="k">lparam </span><span class="p">}</span> <span class="p">[</span> <span class="s2">":"</span> <span class="k">annot </span><span class="p">]</span> <span class="p">{</span> <span class="k">contract </span><span class="p">}</span> <span class="s2">"=&gt;"</span> <span class="k">seq </span><span class="p">;</span>
+<span class="k">captures </span><span class="o">=</span> <span class="s2">"["</span> <span class="k">capture </span><span class="p">{</span> <span class="s2">","</span> <span class="k">capture </span><span class="p">}</span> <span class="s2">"]"</span> <span class="p">;</span>
+<span class="k">capture  </span><span class="o">=</span> <span class="p">[</span> <span class="s2">"borrowed"</span> <span class="p">|</span> <span class="s2">"inout"</span> <span class="p">]</span> <span class="k">IDENT </span><span class="p">;</span>
+</code></pre></div>
+<p>The three modes:</p>
+<ul>
+<li><strong>Copied</strong>, a bare name: the value is copied into the lambda when it is made. Only copyable values can be copied: scalars, <code>fixed</code> records and variants of them, never a buffer, a linear value or a <code>drop</code> value. Later changes to a <code>mutable</code> variable are not seen by the lambda, and the lambda cannot assign it.</li>
+<li><strong>Borrowed</strong>, <code>borrowed x</code>: a shared, read-only loan of <code>x</code>. The lambda's type holds a lent type, so it borrows from <code>x</code> exactly as a record holding <code>borrowed(m)</code> would (#70, <a href="../0042-lifetimes-liveness-and-escape-analysis/">ADR 0042</a>): it cannot outlive <code>x</code>, and <code>x</code> cannot be moved or written while the lambda is live. The loan ends at the lambda's last use. Any value can be borrowed, scalars included.</li>
+<li><strong>Referenced</strong>, <code>inout x</code>: an exclusive, writable loan of a <code>mutable</code> variable. The lambda may read and assign <code>x</code>, and its writes are seen by the enclosing code after the lambda's last use. While the lambda is live, nothing else may read, write or move <code>x</code>, which is the exclusive form of the same loan rule. A lambda with a referenced capture has an effect, so it is not pure (section 5): it can be called in code but not in a contract, and a higher-order function may take it only for a parameter whose arrow is marked as effectful (below). This replaces the "writing through a capture is not allowed" rule of the first version.</li>
+</ul>
+<p>A free variable of the body that is not in the list is an error that suggests the three forms: "'lim' is used but not captured: add it to the capture list as [lim] (copied), [borrowed lim] or [inout lim]". Listing a name twice, or listing one the body never uses, is also an error. A lambda with no captures has no list, so <code>let (x : u8) =&gt; x &gt; 3</code> is unchanged. Top-level functions, constructors and other module items are not captures, since they are not values of the enclosing scope.</p>
+<p><strong>Effectful arrows.</strong> A parameter that accepts lambdas with referenced captures writes <code>inout</code> before its arrow: <code>(f : inout t -&gt; unit)</code>. Inside the higher-order function such a parameter is called only in code, never in a contract, and its calls are ordered as written. A pure lambda may be passed for an effectful arrow, but not the reverse. This is what <code>for_each</code> with state needs; the effects follow-up in section 8 is reduced to effects through <code>inout</code> parameters of function types, which this covers for captures.</p>
+<p><strong>Moved captures</strong> stay step 7: <code>moved x</code> in the list, which makes the lambda own <code>x</code> and gives its type <code>drop</code> or linearity like a record holding it.</p>
+<p>A lambda's type is still a record with one field per capture, of the captured value for a copy and a lent type for a loan. A lambda that captures nothing is a type with no fields, and costs nothing to pass.</p>
+<h3 id="7-code-generation">7. Code generation<a class="headerlink" href="#7-code-generation" title="Permanent link">&para;</a></h3>
+<p>Each instance of a higher-order function at a lambda or named function is an ordinary function in which <code>p x</code> is a direct call to the lambda's body, with the lambda's captures as extra arguments. Codegen inlines small ones, as it does any small callee, so <code>find xs (let (x) =&gt; x &gt; 3)</code> becomes the same loop, and the same vector code, as writing the comparison into <code>find</code> by hand. There is no function pointer and no heap allocation for a static function value, ever.</p>
+<p>A lambda's type is private to the module that defines it. A module can export a function whose result is an arrow type, but the importer sees it as an opaque type meeting <code>Function</code>, and gets the instance through the interface (<a href="../0039-module-and-interface-syntax/">ADR 0039</a>) as it gets other generic instances.</p>
+<h3 id="8-what-this-adr-does-not-decide">8. What this ADR does not decide<a class="headerlink" href="#8-what-this-adr-does-not-decide" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Dynamic function values</strong>, a value whose function is chosen at run time from different lambdas, such as a table of handlers. That needs a type-erased value, a code pointer and an environment, and with no garbage collector it must take an explicit allocator. It is the library's <code>box</code> over a concept, <code>box (Function a r)</code>, decided in <a href="../0046-box-over-a-type-or-a-concept/">ADR 0046</a>, so there is no separate <code>std::function</code> type. An arrow type in <code>box</code>'s position is sugar for <code>Function</code> at that arrow, contract included. A call through a box may appear in a contract only when the arrow is pure; otherwise it is code-only, with its facts from the arrow's contract (ADR 0046, section 5). An <code>if</code> that picks between two lambdas of the same type is not dynamic and needs no box.</li>
+<li><strong>Effects through function values</strong> beyond referenced captures (section 6): <code>inout</code> and <code>out</code> parameters inside function types.</li>
+<li><strong>Recursion through function values</strong>, such as a fixed-point combinator. A lambda cannot name itself; a recursive helper is a named <code>let rec</code>.</li>
+</ul>
+<h2 id="implementation-order">Implementation order<a class="headerlink" href="#implementation-order" title="Permanent link">&para;</a></h2>
+<p>Each step is a PR with lit tests in <code>tests/verify</code> and <code>tests/codegen</code>, and the tour's "Designed but not built yet" entry shrinks as it goes.</p>
+<ol>
+<li><strong>Typed lambdas and named functions as arguments</strong>, with no captures. Arrow-typed parameters are instantiated per argument (<code>find&lt;lambda@file.pia:12:9&gt;</code>), the argument is checked against the arrow's contract, and the lambda unfolds at the caller. The verifier sees instances only, as generics did before ADR 0043.</li>
+<li><strong>The <code>Function</code> concept and overloading on a function</strong>: arrow parameters become constrained type parameters, function objects with <code>apply</code>, application syntax for them, and the value-or-function overload sets the library needs.</li>
+<li><strong>Captures by copy and by borrow</strong>, with the lambda's type as a record of its captures and ADR 0042's loan rules. Built inferred (PR #227); step 3b makes the list explicit and adds referenced captures and effectful arrows.</li>
+<li><strong>Generic lambdas</strong>: untyped parameters from the expected type, implicit type parameters when there is none, and explicit <code>(t : type)</code> parameters.</li>
+<li><strong>Laws of function arguments</strong> in <code>Pia.Fn</code> (<code>strict_weak_order</code>, <code>equivalence</code>, <code>associative</code> and friends), with the library's <code>sort</code> and <code>accumulate</code> using them.</li>
+<li><strong>Proved once</strong>: function parameters as uninterpreted functions in ADR 0043's abstract encoding, so a higher-order function is proved at its definition and each instance is discharged by the argument's check.</li>
+<li><strong>Partial application, lambdas as results, and moved captures</strong>: <code>add 1</code>, <code>compose f g</code>, and lambdas that own what they capture.</li>
+</ol>
+<p>Steps 1 and 2 are what the standard library needs first, for <code>find</code>, <code>count</code>, <code>all_of</code> and the comparator overload of <code>sort</code>. Steps 3 and 4 follow, because predicates usually capture a bound and rarely spell out their types.</p>
+<h2 id="consequences">Consequences<a class="headerlink" href="#consequences" title="Permanent link">&para;</a></h2>
+<ul>
+<li>The library can write one overload set per algorithm, as Dean asked, and a predicate overload is constrained on <code>Function</code> like any other generic.</li>
+<li>A call with a lambda costs what the loop costs. Monomorphisation does mean one instance per lambda, so code size grows with the number of distinct lambdas, as in C++ and Rust. Step 6 makes their proofs cost one check per argument, not a re-proof of the algorithm.</li>
+<li>Contracts can be written about predicates and comparators directly (<code>p xs.[result]</code>), because function values are pure and total unless they reference a capture, which marks them effectful and keeps them out of contracts.</li>
+<li>Laws such as strict weak ordering are ordinary preconditions. They are proved per call site, where a concrete lambda makes them decidable bit-vector facts, rather than being restated as contracts on every caller.</li>
+<li>Captures are written out, so what a lambda copies, borrows or references is visible at the lambda, at the cost of a short list on every lambda that captures.</li>
+<li>There is no dynamic function value in the core. Code that needs one waits for <code>Pia.Fn</code>'s boxed type and passes it an allocator.</li>
+</ul>
+<h2 id="questions-for-dean">Questions for Dean<a class="headerlink" href="#questions-for-dean" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>Function objects.</strong> Should a function object be any type with an <code>apply</code> function in its module, called with ordinary application syntax (recommended), or should it need an explicit <code>@derive(Function)</code>-style declaration? <em>Answered: any type with <code>apply</code>.</em></li>
+<li><strong>Captures.</strong> Should captures stay inferred from use, with no capture list (recommended, since it adds no syntax), or should a lambda list what it captures, as C++ does? <em>Answered 2026-11-23 by Dean: copy by default (a bare name), with borrowing (<code>borrowed x</code>) and mutable references (<code>inout x</code>) supported.</em></li>
+<li><strong>Dynamic function values.</strong> Is a library box in <code>Pia.Fn</code> that takes an allocator (recommended) the right home for run-time-chosen functions, or should the core have a built-in dynamic function type? <em>Settled by ADR 0046: <code>box (Function a r)</code>.</em></li>
+</ol>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../0043-generic-definitions-proved-once/" class="md-footer__link md-footer__link--prev" aria-label="Previous: 43. Generic definitions are proved once, against their concepts">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                43. Generic definitions are proved once, against their concepts
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../0045-json-derived-codecs-and-conforming-dom/" class="md-footer__link md-footer__link--next" aria-label="Next: 45. JSON: derived streaming codecs, typed construction, and a DOM proved to conform to a type">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                45. JSON: derived streaming codecs, typed construction, and a DOM proved to conform to a type
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.top", "navigation.footer", "content.code.copy", "search.highlight"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+    
+  </body>
+</html>

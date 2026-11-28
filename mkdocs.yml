@@ -194,3 +194,4 @@ nav:
       - adr/0077-definitions-inherit-interface-contracts.md
       - adr/0078-pia-lib-ops-with-proved-substitutions.md
       - adr/0079-pia-module-format.md
+      - adr/0080-protocol-buffers-in-pia.md

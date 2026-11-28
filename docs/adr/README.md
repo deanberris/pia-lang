@@ -83,3 +83,4 @@ Each file records one decision: its context, the decision, and its consequences.
 | [0077](0077-definitions-inherit-interface-contracts.md) | A definition that states no contract takes the contract of the interface that lists it, so a module writes each contract once | Accepted |
 | [0078](0078-pia-lib-ops-with-proved-substitutions.md) | Library functions lower to `pia_lib.call`, a Pia-owned op whose meaning is its Pia body; a late pass expands it or substitutes an upstream op through a rule proved against the body | Proposed |
 | [0079](0079-pia-module-format.md) | Pia IR: a versioned op schema Pia controls, in lock-step with piac, encoding every op piac uses, with deprecations and migrations, not MLIR bytecode | Proposed |
+| [0080](0080-protocol-buffers-in-pia.md) | Protocol Buffers in Pia: a metaprogram turns `.proto` into proved types and codecs, and Pia IR becomes a strict, canonical protobuf schema | Proposed |

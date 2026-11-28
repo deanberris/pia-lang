@@ -1,0 +1,4892 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="A programming language whose compiler proves your code correct before it runs.">
+      
+      
+      
+        <link rel="canonical" href="https://pia-lang.dev/adr/0050-senders-and-receivers/">
+      
+      
+        <link rel="prev" href="../0049-targets-are-theories/">
+      
+      
+        <link rel="next" href="../0051-variadic-generics-and-foreign-varargs/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
+    
+    
+      
+        <title>50. Asynchronous work is senders and receivers whose completion rules are proved, over io_uring on Linux and a kqueue completion adapter on macOS - Pia</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="teal">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#50-asynchronous-work-is-senders-and-receivers-whose-completion-rules-are-proved-over-io_uring-on-linux-and-a-kqueue-completion-adapter-on-macos" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Pia" class="md-header__button md-logo" aria-label="Pia" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Pia
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              50. Asynchronous work is senders and receivers whose completion rules are proved, over io_uring on Linux and a kqueue completion adapter on macOS
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="teal"  aria-label="Dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="teal"  aria-label="Light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/deanberris/pia-lang" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    deanberris/pia-lang
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Pia" class="md-nav__button md-logo" aria-label="Pia" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Pia
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/deanberris/pia-lang" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    deanberris/pia-lang
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../repl/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The REPL
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent skills and MCP
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pia and other verified languages
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../demo/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: edge detection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../streams.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: stream delineation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../sediment.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: sediment transport
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../basins.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: sediment by basin, in parallel
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pull.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: sediment in pull form
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../placed.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: D8 directions and the picture on the GPU
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pull_gpu.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: the sediment pull step on the GPU
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../gpu-demo/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo: CPU and GPU, side by side
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tour/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    A tour of Pia
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Feature index
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../library/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The standard library today
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../idioms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Idiomatic Pia
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../json/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    JSON
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../verification/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How verification works
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../theories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Theories: teaching the verifier a domain
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../repl-debugging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Debugging C++ with the REPL
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_22" >
+        
+          
+          <label class="md-nav__link" for="__nav_22" id="__nav_22_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Case studies
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_22">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Case studies
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cases/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Famous bugs, proved away
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cases/heartbleed.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Heartbleed
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cases/binary-search.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Binary search
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cases/cloudbleed.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cloudbleed
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cases/crowdstrike.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CrowdStrike Channel File 291
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cases/rust-str-repeat.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust str::repeat
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cases/rust-vecdeque.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust VecDeque::reserve
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cases/libwebp.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    libwebp Huffman tables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cases/bun-readfile.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bun readFile on Windows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cases/zlib-gzip-extra.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    zlib gzip extra field
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cases/giflib-background.pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    giflib background colour
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Status and roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_24" >
+        
+          
+          <label class="md-nav__link" for="__nav_24" id="__nav_24_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_24_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_24">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Design
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Language design
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../grammar/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Grammar
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../meta/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Metaprograms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../stdlib/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Standard library (proposal)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cpp-std/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The C++23 standard library in Pia
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../abi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Shared libraries and certificates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../advisories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advisories
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../init/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Module initialisation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concurrency/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Coroutines, races and deadlocks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_25" >
+        
+          
+          <label class="md-nav__link" for="__nav_25" id="__nav_25_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compiler internals
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_25_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_25">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Compiler internals
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../irgen/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    IRGen
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../verifier/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Verifier
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../codegen/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Codegen
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../style/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Style guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_26" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_26" id="__nav_26_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Decision records
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_26_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_26">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Decision records
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Index
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0001-record-architecture-decisions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1. Record architecture decisions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0002-single-let-binding-form/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2. let is the only binding form
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0003-static-typing-with-tagged-dyn/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    3. Strong static typing; dynamic typing only through tagged values
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0004-strongest-guarantee-by-default/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    4. The strongest guarantee is always the default
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0005-parameter-modifiers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    5. Parameters carry ownership, access and modifiability modifiers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0006-contracts-and-module-state/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    6. Contracts, refinement types, and module state as exported symbols
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0007-metaprogramming-fixed-point-expansion/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    7. Metaprogramming from day one, expanded to a fixed point
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0008-operators-via-metaprograms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    8. Operators are defined only through metaprograms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0009-generics-concepts-adapters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    9. User-defined generics, checked concepts with laws, and adapters
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0010-modules-interfaces-and-proof-certificates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    10. Modules export interfaces; imports name them; proofs carry certificates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0011-mlir-and-z3-implementation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    11. Compiler in C++ on MLIR, verifying with interval analysis then Z3
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0012-floating-point-reassociation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    12. Three ways to license float reassociation and FMA
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0013-auto-vectorisation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    13. Auto-vectorise as much as possible; keep vec&lt;T, k&gt; for explicit control
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0014-concurrency-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    14. Concurrent by default: collectives, task graphs, futures; collectives proved to match
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0015-device-placement/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    15. Device placement: compiler cost model, explicit, or overridable
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0016-stream-delineation-flagship-demo/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    16. Stream delineation on Apple Silicon is the flagship demo
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0017-bazel-build/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    17. Build with Bazel; depend on LLVM/MLIR and Z3 as Bazel modules
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0018-dialect-layering/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    18. Three Pia dialects over upstream MLIR, with smt for solving
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0019-grammar-disambiguation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    19. Grammar disambiguation rules
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0020-presburger-for-affine-goals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    20. Decide affine aliasing and dependence goals with MLIR's Presburger library
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0021-language-server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    21. A language server, pia-lsp, with a VS Code client first
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0022-metaprogram-hygiene/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    22. Hygiene and name lookup: no shadowing, renamed quote binders, qualified names, ADL
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0023-minimal-core-self-hosted-stdlib/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    23. A minimal core, with the standard library written and proved in Pia
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0024-published-proof-certificates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    24. Shared libraries publish interfaces and proof certificates; loaders check them
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0025-sanitizers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    25. Sanitizers check the edges of the proof
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0026-memory-manager/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    26. A memory manager of explicit allocators, with no garbage collection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0027-coroutines-and-race-freedom/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    27. Stackless coroutines, structured tasks, and race freedom proved from permissions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0028-error-propagation-and-cleanup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    28. Errors propagate with ? to a scope's handler; cleanup runs at scope end
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0029-comments-as-syntax-and-literate-pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    29. Comments are syntax: \ line comments, doc comments, and literate .pia.md files
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0030-published-object-layouts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    30. Optimised object layouts are published, and a changed layout fails to load until relinked
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0031-verified-repl-and-live-environment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    31. A verified REPL over a reusable session, with proved live redefinition
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0032-parallel-sliced-cached-proving/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    32. Proofs run in parallel, one goal per solver, sliced, cached and selectable
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0033-module-initialisation-and-registries/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    33. Module initialisation: registries, proved @init hooks, and opt-in dynamic registration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0034-concepts-and-overload-resolution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    34. Concepts as checked signatures, and concept-based overload resolution
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0035-substitution-failure-and-total-constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    35. Substitution failure removes a candidate, and constraints are proved to terminate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0036-library-theories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    36. Libraries extend the solver with theories: sorts, functions and axioms, proved consistent by a model or listed as trusted
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0037-idiomatic-pia-and-lints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    37. Idiomatic Pia: facts in types first, written as opinions and checked by lints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0038-float-kernels-against-real-theories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    38. Float kernels are proved against real-valued specifications by rounding-error bounds
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0039-module-and-interface-syntax/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    39. Modules are private by default: one module per file, interfaces list every export, imports name interfaces
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0040-cpp23-standard-library-in-pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    40. The C++23 standard library, mapped onto Pia and proved
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0041-allocator-semantics-as-a-theory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    41. Allocator semantics are a theory, and allocators prove they refine it through spec-only state
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0042-lifetimes-liveness-and-escape-analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    42. Lifetimes are checked by liveness, marked where values cross boundaries, and escape analysis places memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0043-generic-definitions-proved-once/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    43. Generic definitions are proved once, against their concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0044-function-values-and-lambdas/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    44. Function values: typed and generic lambdas, a Function concept, and proofs through function arguments
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0045-json-derived-codecs-and-conforming-dom/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    45. JSON: derived streaming codecs, typed construction, and a DOM proved to conform to a type
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0046-box-over-a-type-or-a-concept/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    46. A box holds a type or any type meeting a concept, and what it holds is proved to have the concept's shape
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0047-recursive-sum-types-and-shared-references/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    47. Recursive sum types are explicit, recurse through an owning indirection, and share through strong and weak references
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0048-buffers-whose-elements-hold-slices/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    48. Buffers may hold slices: owned slices are written through, shared ones only read
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0049-targets-are-theories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    49. Linux x86_64 is a second target, tested in Linux CI, and each target is a model of a built-in Pia.Target theory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    50. Asynchronous work is senders and receivers whose completion rules are proved, over io_uring on Linux and a kqueue completion adapter on macOS
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    50. Asynchronous work is senders and receivers whose completion rules are proved, over io_uring on Linux and a kqueue completion adapter on macOS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Context">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-p2300-is" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What P2300 is
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#where-p2300-relies-on-the-programmer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where P2300 relies on the programmer
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-the-operating-systems-offer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the operating systems offer
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Decision">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-four-concepts-in-piaexec" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Four concepts in Pia.Exec
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-io-senders-own-their-buffers-and-cancellation-is-proved" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. I/O senders own their buffers, and cancellation is proved
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-backends-io_uring-on-linux-and-one-proved-completion-adapter-over-kqueue-and-epoll" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Backends: io_uring on Linux, and one proved completion adapter over kqueue and epoll
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-the-stop-race-goes-to-the-model-checker" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. The stop race goes to the model checker
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-files-pipes-and-sockets-share-one-set-of-senders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Files, pipes and sockets share one set of senders
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#6-pipelines-with-every-error-case-proved-handled" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Pipelines: |&gt;, with every error case proved handled
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#7-a-pipeline-is-a-dataflow-graph-and-devices-are-schedulers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. A pipeline is a dataflow graph, and devices are schedulers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#8-what-this-changes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. What this changes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prerequisites-in-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prerequisites, in order
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#consequences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Consequences
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#answers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Answers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prior-art" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prior art
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0051-variadic-generics-and-foreign-varargs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    51. Variadic functions and types take a pack that is called like any argument list, walked by metaprograms and proved once; foreign bindings are generated from tables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0052-atomics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    52. Atomics are a core cell type with checked orders and stated overflow, modelled by RC11 with a litmus battery before tasks exist, and lowered per target by a table proved against each hardware model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0053-protocols-checked-by-z3/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    53. Protocols and deadlock are checked in Z3, as transition systems proved by constrained Horn clauses; explicit search stays for atomics, and TLA+ is an export format
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0054-proved-gif-and-inflate-codecs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    54. GIF and inflate are proved total on every input, decode to a written specification, and GIF round-trips exactly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0055-sediment-transport-in-fixed-point/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    55. Sediment transport is integer mass moved downhill in height order, with conservation proved exactly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0056-tests-generated-from-contracts-and-theories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    56. Tests are generated by metaprograms from contracts, types and theories; a case the verifier can decide is proved, and only the rest is run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0057-posix-module-per-target-behind-one-interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    57. Pia.Sys.Posix is one generated module per target behind one hand-written interface, and the generator joins the contract overlay
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0058-spec-buffers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    58. Spec buffers: spec-only arrays that code writes, contracts read and codegen erases
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0059-digit-separators-and-type-bounds/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    59. Digits group with ' or _; min t and max t are an integer type's bounds, folded to literals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0060-spread-v0-ownership-and-runtime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    60. spread v0: iterations own the cells they write, proved one iteration at a time; MLIR's async runtime runs them
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0061-lean-proved-facts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    61. Lean proves the facts Z3 cannot: lemmas and theory models are proved in Lean against statements piac generates, recorded in certificates by statement hash, and checked outside the edit loop; cost bounds are proved by Z3, and their asymptotics in Lean
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0062-cost-bounds-in-contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    62. Cost bounds are contracts: costs c &lt;= e bounds what a function spends on a named counter, tracked by a spec-only spent c and proved by Z3
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0063-opaque-spec-functions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    63. Opaque spec functions: a spec function marked @opaque keeps its definition out of every goal until a proof reveals it
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0064-distinct-types/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    64. type always makes a new type: let length = type u32 is distinct from u32, converts only by applying a type to a value, and inherits only what it derives
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0065-lowerings-written-in-pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    65. Pia code extends the compiler's lowering: @lower gives a function an MLIR form and a type an MLIR type, the Pia definition stays the specification, and each lowering is proved to refine it or is listed as trusted
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0066-int-blasting-for-nonlinear-goals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    66. Nonlinear goals are tried first with Z3's int-blasting solver, and other solvers are kept out of the pipeline for now
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0067-release-0-1-0-a-proved-small-llm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    67. Release 0.1.0 is a small Llama-architecture LLM ported from PyTorch to Pia, proved where a proof means something, running inference on an M3 Mac on CPU SIMD and on the GPU through linalg
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0068-gpu-compute-through-spirv-and-metal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    68. GPU compute: a proved spread placed on the GPU, lowered through SPIR-V and SPIRV-Cross to Metal, launched by a small trusted shim
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0069-pure-and-impure-functions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    69. Pure and impure functions: computed purity, @pure assertions, and @impure interface boundaries
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0070-raw-binary-embedding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    70. Raw binary embedding: @embed for compile-time fixed byte blobs, hermetic roots, opaque verification and direct LLVM emission
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0071-function-references/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    71. Function references: a function is a value that travels by reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0072-drops-run-in-constant-stack/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    72. A drop never grows the stack: every drop is one walk, proved against the recursive drop, with a fixed stack bound per type
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0073-prover-identity-abi-version-and-advisories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    73. Certificates record who proved a module and with what, advisories revoke trust in faulty provers, and every breaking change ships a migration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0074-library-types-tensors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    74. Library types: a type written in Pia gets an MLIR type, ops and proofs from its library, and Pia.Tensor over MLIR tensor is the proof point
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0075-codegen-benchmarks-against-c-cpp-rust-zig/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    75. Codegen is benchmarked against C, C++, Rust and Zig on public problems, same algorithm first, counted in instructions on Linux and timed on Apple Silicon
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0076-transparent-exports/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    76. Transparent exports: an importer proves against an exported function's body, as a caller in its own module does
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0077-definitions-inherit-interface-contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    77. A definition that states no contract takes the contract of the interface that lists it
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0078-pia-lib-ops-with-proved-substitutions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    78. Library functions lower to pia_lib.call, a Pia-owned op whose meaning is its Pia body, and a late pass either expands it into the body or substitutes an upstream op through a rule proved against the body
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0079-pia-module-format/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    79. Pia IR: a versioned op schema Pia controls, in lock-step with piac, with deprecations and migrations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0080-protocol-buffers-in-pia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    80. Protocol Buffers in Pia: a metaprogram that turns .proto into proved types and codecs, and Pia IR as a protobuf schema
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Context">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-p2300-is" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What P2300 is
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#where-p2300-relies-on-the-programmer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where P2300 relies on the programmer
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-the-operating-systems-offer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the operating systems offer
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Decision">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-four-concepts-in-piaexec" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Four concepts in Pia.Exec
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-io-senders-own-their-buffers-and-cancellation-is-proved" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. I/O senders own their buffers, and cancellation is proved
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-backends-io_uring-on-linux-and-one-proved-completion-adapter-over-kqueue-and-epoll" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Backends: io_uring on Linux, and one proved completion adapter over kqueue and epoll
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-the-stop-race-goes-to-the-model-checker" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. The stop race goes to the model checker
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-files-pipes-and-sockets-share-one-set-of-senders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Files, pipes and sockets share one set of senders
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#6-pipelines-with-every-error-case-proved-handled" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Pipelines: |&gt;, with every error case proved handled
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#7-a-pipeline-is-a-dataflow-graph-and-devices-are-schedulers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. A pipeline is a dataflow graph, and devices are schedulers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#8-what-this-changes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. What this changes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prerequisites-in-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prerequisites, in order
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#consequences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Consequences
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#answers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Answers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prior-art" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prior art
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="50-asynchronous-work-is-senders-and-receivers-whose-completion-rules-are-proved-over-io_uring-on-linux-and-a-kqueue-completion-adapter-on-macos">50. Asynchronous work is senders and receivers whose completion rules are proved, over io_uring on Linux and a kqueue completion adapter on macOS<a class="headerlink" href="#50-asynchronous-work-is-senders-and-receivers-whose-completion-rules-are-proved-over-io_uring-on-linux-and-a-kqueue-completion-adapter-on-macos" title="Permanent link">&para;</a></h1>
+<p>Date: 2026-11-23</p>
+<p>Status: Accepted (2026-11-23, with Dean's answers to its five questions, recorded under "Answers" below and folded into the decision)</p>
+<h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
+<p>Dean asked for <code>Sender</code> and <code>Receiver</code> abstractions in the style of Eric Niebler's work on C++ <code>std::execution</code> (<a href="https://wg21.link/p2300">P2300</a>, with Lewis Baker, Kirk Shoop, Michał Dominiak, Lucian Radu Teodorescu and others, in C++26). They should hide the operating system's I/O interface, and Pia should make them stronger. The proof point is io_uring on Linux and its nearest equivalent on macOS, behind one interface.</p>
+<p>The design so far (<a href="../0027-coroutines-and-race-freedom/">ADR 0027</a>, <a href="../../concurrency/#the-scheduler-is-pia">docs/concurrency.md</a>, issue #79) has <code>Pia.Io</code> wrap kqueue as a readiness loop that parks tasks. It mentions "epoll or io_uring on a later Linux port". Nothing in it is built yet. That leaves room to choose the abstraction before the first line of I/O code.</p>
+<h3 id="what-p2300-is">What P2300 is<a class="headerlink" href="#what-p2300-is" title="Permanent link">&para;</a></h3>
+<ul>
+<li>A <strong>sender</strong> describes work and does nothing until it is started. A <strong>receiver</strong> is where the result goes. It has three completion channels: <code>set_value</code>, <code>set_error</code> and <code>set_stopped</code>.</li>
+<li><code>connect(sender, receiver)</code> gives an <strong>operation state</strong>, and <code>start(op)</code> runs it. The operation must then call exactly one of the receiver's channels, exactly once.</li>
+<li>A sender advertises its <strong>completion signatures</strong>: the value types, error types and whether it can stop. Generic algorithms (<code>then</code>, <code>let_value</code>, <code>when_all</code>, <code>upon_error</code>, <code>continues_on</code>, <code>sync_wait</code>) compute their own signatures from their inputs.</li>
+<li>A <strong>scheduler</strong> is a factory of senders (<code>schedule</code>) that complete on its execution context. Cancellation goes through a <strong>stop token</strong> that the receiver's <strong>environment</strong> supplies.</li>
+</ul>
+<p>The model fits completion-based I/O directly: an io_uring submission is an operation state, and its completion queue entry is the receiver call.</p>
+<h3 id="where-p2300-relies-on-the-programmer">Where P2300 relies on the programmer<a class="headerlink" href="#where-p2300-relies-on-the-programmer" title="Permanent link">&para;</a></h3>
+<p>The C++ design states several rules that the compiler cannot check:</p>
+<ol>
+<li><strong>Exactly once.</strong> A receiver must get exactly one completion. Calling two, calling one twice or calling none is undefined behaviour or a hang. Only the documentation states this rule.</li>
+<li><strong>Operation states never move.</strong> After <code>start</code>, the operation state must stay where it is until it completes, because the kernel or another thread holds its address. Moving or destroying it early is undefined behaviour.</li>
+<li><strong>Buffers outlive the operation, including through cancellation.</strong> When a stop is requested, io_uring still writes into the buffer until the cancelled operation's own completion arrives. Releasing the buffer when the stop is requested, rather than when that completion arrives, is a use-after-free in the kernel's hands. Rust's async runtimes face the same problem: a future that owns an in-flight io_uring buffer can be dropped mid-flight.</li>
+<li><strong>Stop races.</strong> A stop request can race the completion it is cancelling. Stop callbacks must be deregistered without racing a callback that is still running. Getting this right is notoriously subtle in stdexec and libunifex.</li>
+<li><strong>Detached work.</strong> <code>ensure_started</code> and <code>start_detached</code> let work outlive its caller. Both were removed before C++26 (<a href="https://wg21.link/p3187">P3187</a>) in favour of async scopes (<a href="https://wg21.link/p3149">P3149</a>).</li>
+<li><strong>Error types are open.</strong> <code>set_error</code> can carry any type, so a caller cannot know it has handled every error.</li>
+</ol>
+<p>Pia already has the tools to turn each of these rules into a type rule or a proof goal. <code>@linear</code> types must be consumed exactly once on every path (<a href="../../stdlib/#7-linear-resources-and-memory">stdlib.md</a>). <code>moved</code> parameters transfer ownership. Closed error sets come with exhaustive handlers (<a href="../0028-error-propagation-and-cleanup/">ADR 0028</a>). Structured scopes allow no detached tasks (ADR 0027). Lifetimes and regions are checked by liveness (<a href="../0042-lifetimes-liveness-and-escape-analysis/">ADR 0042</a>). Generics are proved once against their concepts (<a href="../0043-generic-definitions-proved-once/">ADR 0043</a>). Contracts carry through function arguments (<a href="../0044-function-values-and-lambdas/">ADR 0044</a>). The model checker handles what types cannot express (ADR 0027, section 4).</p>
+<h3 id="what-the-operating-systems-offer">What the operating systems offer<a class="headerlink" href="#what-the-operating-systems-offer" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Linux</th>
+<th>macOS</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Completion-based</td>
+<td><strong>io_uring</strong>: shared submission and completion rings, one completion queue entry per submission (except multishot), a 64-bit <code>user_data</code> token, sockets and regular files, <code>IORING_OP_ASYNC_CANCEL</code>, <code>IORING_OP_TIMEOUT</code></td>
+<td><strong>Dispatch I/O</strong> (<code>dispatch_io_*</code>): callbacks as Objective-C blocks on libdispatch's own thread pool, with <code>dispatch_data_t</code> buffers. <strong>POSIX AIO</strong> with <code>SIGEV_KEVENT</code>: files only, with small default limits set by <code>sysctl</code></td>
+</tr>
+<tr>
+<td>Readiness-based</td>
+<td><strong>epoll</strong>: registers the open file description, not the descriptor</td>
+<td><strong>kqueue</strong>: <code>EVFILT_READ</code>, <code>EVFILT_WRITE</code>, <code>EVFILT_TIMER</code>, <code>EVFILT_USER</code>; it removes a registration when the descriptor is closed</td>
+</tr>
+<tr>
+<td>Availability</td>
+<td>io_uring can be missing or refused: <code>ENOSYS</code> on old kernels, <code>EPERM</code> when <code>kernel.io_uring_disabled</code> is set (Linux 6.6 and later), or a container's seccomp profile</td>
+<td>always</td>
+</tr>
+</tbody>
+</table>
+<p>macOS has no equivalent of io_uring. The candidates are kqueue with a completion adapter written in Pia, or Dispatch I/O.</p>
+<h2 id="decision">Decision<a class="headerlink" href="#decision" title="Permanent link">&para;</a></h2>
+<h3 id="1-four-concepts-in-piaexec">1. Four concepts in <code>Pia.Exec</code><a class="headerlink" href="#1-four-concepts-in-piaexec" title="Permanent link">&para;</a></h3>
+<p><code>Pia.Exec</code> is Pia's <code>&lt;execution&gt;</code> (<a href="../0040-cpp23-standard-library-in-pia/">ADR 0040</a>). It defines <code>Receiver</code>, <code>Sender</code>, <code>Operation</code> and <code>Scheduler</code> as concepts (<a href="../0034-concepts-and-overload-resolution/">ADR 0034</a>). Each P2300 rule that C++ only documents becomes a type rule or a law:</p>
+<div class="highlight"><pre><span></span><code><span class="c">(* Designed syntax. `v` is what the work produces, `e` its closed error set,</span>
+<span class="c">   which includes `Stopped` when the work can be cancelled. *)</span>
+<span class="k">let</span> <span class="n">meta</span> <span class="nc">Receiver</span> <span class="o">(</span><span class="n">r</span> <span class="o">:</span> <span class="k">type</span><span class="o">)</span> <span class="o">(</span><span class="n">v</span> <span class="o">:</span> <span class="k">type</span><span class="o">)</span> <span class="o">(</span><span class="n">e</span> <span class="o">:</span> <span class="k">type</span><span class="o">)</span> <span class="o">:</span> <span class="n">concept</span> <span class="o">=</span> <span class="k">sig</span>
+  <span class="o">@</span><span class="n">linear</span> <span class="n">r</span>                                       <span class="c">(* consumed exactly once *)</span>
+  <span class="k">let</span> <span class="n">value</span>   <span class="o">:</span> <span class="o">(</span><span class="n">self</span> <span class="o">:</span> <span class="n">moved</span> <span class="n">r</span><span class="o">)</span> <span class="o">-&gt;</span> <span class="o">(</span><span class="n">x</span> <span class="o">:</span> <span class="n">moved</span> <span class="n">v</span><span class="o">)</span> <span class="o">-&gt;</span> <span class="kt">unit</span>
+  <span class="k">let</span> <span class="n">error</span>   <span class="o">:</span> <span class="o">(</span><span class="n">self</span> <span class="o">:</span> <span class="n">moved</span> <span class="n">r</span><span class="o">)</span> <span class="o">-&gt;</span> <span class="o">(</span><span class="n">x</span> <span class="o">:</span> <span class="n">moved</span> <span class="n">e</span><span class="o">)</span> <span class="o">-&gt;</span> <span class="kt">unit</span>
+  <span class="k">let</span> <span class="n">env</span>     <span class="o">:</span> <span class="o">(</span><span class="n">self</span> <span class="o">:</span> <span class="n">borrowed</span> <span class="n">r</span><span class="o">)</span> <span class="o">-&gt;</span> <span class="n">env</span>        <span class="c">(* stop token, scheduler, allocator *)</span>
+<span class="k">end</span>
+
+<span class="k">let</span> <span class="n">meta</span> <span class="nc">Operation</span> <span class="o">(</span><span class="n">o</span> <span class="o">:</span> <span class="k">type</span><span class="o">)</span> <span class="o">:</span> <span class="n">concept</span> <span class="o">=</span> <span class="k">sig</span>
+  <span class="o">@</span><span class="n">linear</span> <span class="n">o</span>
+  <span class="k">let</span> <span class="n">start</span> <span class="o">:</span> <span class="o">(</span><span class="n">self</span> <span class="o">:</span> <span class="n">moved</span> <span class="n">o</span><span class="o">)</span> <span class="o">-&gt;</span> <span class="kt">unit</span>
+<span class="k">end</span>
+
+<span class="k">let</span> <span class="n">meta</span> <span class="nc">Sender</span> <span class="o">(</span><span class="n">s</span> <span class="o">:</span> <span class="k">type</span><span class="o">)</span> <span class="o">:</span> <span class="n">concept</span> <span class="o">=</span> <span class="k">sig</span>
+  <span class="k">let</span> <span class="n">connect</span> <span class="o">:</span> <span class="o">(</span><span class="n">r</span> <span class="o">:</span> <span class="k">type</span> <span class="n">where</span> <span class="nc">Receiver</span> <span class="n">r</span> <span class="o">(</span><span class="n">value_of</span> <span class="n">s</span><span class="o">)</span> <span class="o">(</span><span class="n">error_of</span> <span class="n">s</span><span class="o">))</span>
+             <span class="o">-&gt;</span> <span class="o">(</span><span class="n">self</span> <span class="o">:</span> <span class="n">moved</span> <span class="n">s</span><span class="o">)</span> <span class="o">-&gt;</span> <span class="o">(</span><span class="n">rcv</span> <span class="o">:</span> <span class="n">moved</span> <span class="n">r</span><span class="o">)</span> <span class="o">-&gt;</span> <span class="n">op_of</span> <span class="n">s</span> <span class="n">r</span>
+  <span class="n">law</span> <span class="nc">Operation</span> <span class="o">(</span><span class="n">op_of</span> <span class="n">s</span> <span class="n">r</span><span class="o">)</span>
+<span class="k">end</span>
+</code></pre></div>
+<ul>
+<li><strong>Exactly once is a type rule.</strong> A receiver is <code>@linear</code>, and each of its two channels takes it <code>moved</code>. An operation that holds a receiver must consume it on every path, by calling exactly one channel. A path that calls two channels is a use-after-move, and one that calls none fails the <code>@linear</code> check. Both are compile errors in the operation's own module. The rule holds for every receiver, including the ones the algorithms build.</li>
+<li><strong>Completion signatures are type-level metaprograms.</strong> <code>value_of s</code>, <code>error_of s</code> and <code>op_of s r</code> are type-level metaprograms over the sender's type (<a href="../0035-substitution-failure-and-total-constraints/">ADR 0035</a>), which plays the role of P2300's <code>completion_signatures_of_t</code>. <code>error_of s</code> is a closed error set, so the union in <code>when_all a b</code> is <code>error_of a | error_of b</code> (<a href="../0028-error-propagation-and-cleanup/">ADR 0028</a>), and a <code>match</code> on it must be exhaustive.</li>
+<li><strong>Values carry their facts.</strong> A value type is an ordinary Pia type, so its facts live in the type (<a href="../0037-idiomatic-pia-and-lints/">ADR 0037</a>). A read completes with <code>{ n : usize; buf : moved [u8] } where n &lt;= len buf</code>, and the bytes it wrote are <code>written buf 0 n</code>. A receiver is proved under those facts. <code>then s f</code> completes with <code>f</code>'s result and <code>f</code>'s <code>ensures</code>, proved once for every <code>s</code> and <code>f</code> (ADR 0043 and ADR 0044).</li>
+<li><strong>Operation states move freely.</strong> Pia never gives the kernel the address of a Pia value, other than buffers, whose memory does not move when their slice value moves. A backend that needs a stable token, such as io_uring's <code>user_data</code>, uses an index into its own table of in-flight slots (section 3). C++'s immovable operation states need no counterpart.</li>
+<li><strong>Cancellation is an error.</strong> P2300 has a third channel, <code>set_stopped</code>. In Pia a sender that can be cancelled has <code>Stopped</code> in its error set, so a stop arrives on the error channel like any other outcome that is not a value (Dean, 2026-11-23). It is a closed-set member, so a handler must cover it, <code>recover</code> can remove it (section 6), and <code>error_of s</code> says whether <code>s</code> can be stopped at all. Algorithms that treat a stop specially, such as <code>when_all</code> cancelling its siblings when one fails, match on <code>Stopped</code> explicitly.</li>
+<li><strong>No detached work.</strong> <code>Pia.Exec</code> has no <code>ensure_started</code> and no <code>start_detached</code>. Work that must run alongside other work is spawned into a <code>scope</code> (ADR 0027), which also serves as P3149's <code>async_scope</code>: <code>spawn s sender</code>. A scope cannot end until each operation it holds has completed, because each one is <code>@linear</code>.</li>
+</ul>
+<p>The first algorithms are <code>just</code>, <code>just_error</code>, <code>then</code>, <code>upon_error</code>, <code>let_value</code>, <code>when_all</code>, <code>continues_on</code>, <code>starts_on</code> and <code>sync_wait</code>. <code>bulk</code> waits for the <code>spread</code> work. <code>split</code> waits until sharing an operation's result, which needs <code>ref</code> from <a href="../0047-recursive-sum-types-and-shared-references/">ADR 0047</a>, comes up in practice.</p>
+<h3 id="2-io-senders-own-their-buffers-and-cancellation-is-proved">2. I/O senders own their buffers, and cancellation is proved<a class="headerlink" href="#2-io-senders-own-their-buffers-and-cancellation-is-proved" title="Permanent link">&para;</a></h3>
+<p><code>Pia.Io</code> offers I/O as senders: <code>read_some</code>, <code>write_some</code>, <code>accept</code>, <code>connect</code>, <code>recv</code>, <code>send</code>, <code>after</code> (a timer) and <code>close</code>. A buffer is passed <code>moved</code> into the sender, and every completion gives it back: <code>value</code> returns it with the byte count, and <code>error</code> returns it with the error, unchanged when the error is <code>Stopped</code>.</p>
+<ul>
+<li><strong>Nobody touches a buffer while the kernel owns it.</strong> Between <code>start</code> and the completion, the buffer belongs to the backend's in-flight slot. No Pia code can read or write it, so there is no race with the kernel. This is ADR 0027's race rule with the kernel treated as one more task.</li>
+<li><strong>A buffer returns only when the kernel's completion arrives.</strong> A stop request does not complete the operation. It asks the backend to cancel (<code>IORING_OP_ASYNC_CANCEL</code>, or deregistration on a readiness backend), and the receiver is called only when the target operation's own completion arrives. The buffer lives in the slot, and only the completion handler can take it back out, so a handler that returns it early does not type-check. That closes hole 3.</li>
+<li><strong><code>Stopped</code> means nothing happened.</strong> When an operation was cancelled after it transferred data, such as a read that completed in the same instant, its receiver gets <code>value</code>, never <code>Err Stopped</code>, so no data is lost. This is a law of every I/O sender. A readiness backend proves it. On io_uring it is the trusted meaning of <code>-ECANCELED</code> from io_uring_enter(2).</li>
+<li><strong>At most one read and one write in flight per stream.</strong> A connected stream splits into a <code>@linear</code> read half and a <code>@linear</code> write half. A pending read consumes the read half, and the completion gives it back. So the type system rules out two concurrent reads on one socket, and a readiness backend needs at most one registration per direction.</li>
+<li><strong>Borrowed buffers come later.</strong> A buffer could instead be <code>borrowed</code>, with a region that encloses the operation (ADR 0042). That is sound, because a <code>@linear</code> operation cannot be dropped before it completes. It is left for later because moving the buffer and getting it back is simpler to prove and to explain.</li>
+</ul>
+<p>Inside a <code>@suspends</code> function, <code>wait s</code> connects the coroutine's frame as the receiver, as <code>co_await</code> does in C++. <code>value</code> resumes the coroutine with <code>Ok</code>, and <code>error</code> with <code>Err</code>, which includes <code>Err Stopped</code> for a cancelled operation. So the read loop in <a href="../../concurrency/#syntax">docs/concurrency.md</a> is unchanged. <code>read</code> is now a sender, and <code>wait</code> is how a coroutine consumes one. Senders also work without coroutines, through <code>then</code> chains and <code>sync_wait</code>. That matters because the coroutines (#77) are not built yet.</p>
+<h3 id="3-backends-io_uring-on-linux-and-one-proved-completion-adapter-over-kqueue-and-epoll">3. Backends: io_uring on Linux, and one proved completion adapter over kqueue and epoll<a class="headerlink" href="#3-backends-io_uring-on-linux-and-one-proved-completion-adapter-over-kqueue-and-epoll" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>                    Pia.Exec concepts  (Sender, Receiver, Operation, Scheduler)
+                               │
+                     Pia.Io senders and io_context
+             ┌─────────────────┴───────────────────┐
+     Pia.Io.Uring                        Pia.Io.Ready r   (completion over readiness,
+     @target(x86_64_linux)               proved once for every r : Readiness)
+     native completion                   ┌──────────┴──────────┐
+                                  Pia.Io.Kqueue          Pia.Io.Epoll
+                                  @target(arm64_macos)   @target(x86_64_linux)
+</code></pre></div>
+<p><strong>Linux uses io_uring.</strong> <code>Pia.Io.Uring</code> maps a sender's <code>start</code> to one submission queue entry. Its <code>user_data</code> is a slot index and a generation, and each completion queue entry calls the receiver held in that slot. glibc has no io_uring wrappers, and most of liburing is <code>static inline</code> code that cannot be called through FFI. So the module calls <code>io_uring_setup</code>, <code>io_uring_enter</code> and <code>io_uring_register</code> through <code>syscall</code>, and it sees the mapped rings through <code>unsafe view</code> (<a href="../../stdlib/#8-posix-trusted-declarations-and-typed-wrappers">stdlib.md</a>). Ring heads and tails are read with acquire loads and written with release stores. The split between trust and proof:</p>
+<ul>
+<li><strong>Trusted</strong>, with each item citing io_uring(7) or io_uring_enter(2): the kernel writes only completion entries between the head and the tail it publishes, it returns each <code>user_data</code> it was given exactly once (outside multishot), and <code>-ECANCELED</code> means the operation did not run.</li>
+<li><strong>Proved</strong>: ring indexing by mask, which is affine and suits Presburger (<a href="../0020-presburger-for-affine-goals/">ADR 0020</a>). A submission happens only when the ring has room. Every slot index taken from a completion is in bounds and in flight. Each slot is delivered once. The number of operations in flight never exceeds the table's capacity, so completion-queue overflow cannot happen. <code>IORING_FEAT_NODROP</code> is required anyway, as a belt to the braces.</li>
+</ul>
+<p><strong>macOS uses kqueue with a completion adapter written in Pia.</strong> <code>Pia.Io.Ready r</code> turns any readiness interface into completions. On <code>start</code> it tries the system call nonblocking. If the call returns <code>EAGAIN</code>, it registers one-shot interest (<code>EV_ONESHOT</code> or <code>EPOLLONESHOT</code>) in that descriptor's direction and parks the operation in its slot. When the event fires, it retries the call, and either completes or rearms. The adapter is generic over a <code>Readiness</code> concept (<code>register</code>, <code>rearm</code>, <code>deregister</code>, <code>wait events timeout</code>, <code>wake</code>), so it is proved once (ADR 0043). <code>Pia.Io.Kqueue</code> and <code>Pia.Io.Epoll</code> are its two models, each <code>@target</code> of its own platform (<a href="../0049-targets-are-theories/">ADR 0049</a>). Each model differs only in what it trusts:</p>
+<ul>
+<li>Cross-thread wakeups use <code>EVFILT_USER</code> on kqueue and an <code>eventfd</code> on epoll.</li>
+<li>Timers are a proved heap in Pia (<code>Pia.Core.Algo.Heap</code>) that drives the wait's timeout. That costs no system call per timer, and it is the same code on both platforms. io_uring uses <code>IORING_OP_TIMEOUT</code>.</li>
+<li>epoll registers the open file description, so a descriptor that is closed while registered can leave a stale registration behind if it was <code>dup</code>ed. A registration is therefore <code>@linear</code>, and <code>close</code> takes the registration first, which makes <code>EPOLL_CTL_DEL</code> before <code>close</code> a type rule. kqueue removes a registration on close, and the same rule costs it nothing.</li>
+<li>Regular files are always "ready" to a readiness API, yet their reads can still block on the disk. So the adapter sends file operations to the blocking pool (<code>offload</code>, <a href="../../concurrency/#blocking-calls">docs/concurrency.md</a>), as libuv and Tokio do. io_uring runs them natively.</li>
+</ul>
+<p><strong>Dispatch I/O is rejected for now.</strong> Its callbacks are Objective-C blocks, which would need the blocks ABI in FFI. It runs on libdispatch's own thread pool, whose interleavings Pia cannot see, so race and deadlock proofs would stop at its boundary. It owns its buffers as <code>dispatch_data_t</code>, so the moved-and-returned ownership of section 2 does not apply. Its file I/O is a thread pool anyway, and that pool competes with <code>Pia.Task</code>'s workers for the same cores. It could come back later as a separate scheduler, for interoperating with Apple frameworks.</p>
+<p><strong>The backend is chosen at run time on Linux.</strong> <code>io_context.create</code> tries <code>io_uring_setup</code>. If that fails with <code>ENOSYS</code> or <code>EPERM</code>, it falls back to <code>Ready Epoll</code>. The context is a variant of the two backends, so a submission costs one <code>match</code>. Both backends satisfy the same sender laws, so a program's proofs do not depend on which one runs. On macOS there is only <code>Ready Kqueue</code>, chosen at compile time through <code>when Target.is arm64_macos</code>. Linux CI runs the I/O tests twice, once with each backend (with <code>PIA_IO=epoll</code> to force the fallback), and macOS CI runs them once.</p>
+<p><strong>No allocation per operation.</strong> The in-flight table is allocated once, when the context is created, from the allocator it is given, and that allocation can fail like any other (ADR 0026). After that, <code>start</code> never allocates. A full table is back-pressure: the <code>schedule</code> sender waits for a free slot. A context is <code>@linear</code>, and <code>close</code> requires its table to be empty, so it cannot be closed with work in flight.</p>
+<h3 id="4-the-stop-race-goes-to-the-model-checker">4. The stop race goes to the model checker<a class="headerlink" href="#4-the-stop-race-goes-to-the-model-checker" title="Permanent link">&para;</a></h3>
+<p>Each in-flight slot is a small state machine: free, submitted, cancel requested, completed, free. A stop request from another thread races the completion handler. The goal is that every slot delivers exactly one completion, and that a stop callback is never running after its slot is freed. That is a protocol goal for the model checker (ADR 0027, section 4, issue #81), proved once for the slot table and the stop-token implementation, and not per program. Until the model checker exists, <code>Pia.Io</code> accepts stop requests only from its own run-loop thread, where the race cannot happen. A cross-thread stop is an unproved goal that <code>--allow-unproved=race:</code> must accept.</p>
+<h3 id="5-files-pipes-and-sockets-share-one-set-of-senders">5. Files, pipes and sockets share one set of senders<a class="headerlink" href="#5-files-pipes-and-sockets-share-one-set-of-senders" title="Permanent link">&para;</a></h3>
+<p>Nothing in sections 1 to 4 is specific to sockets. <code>Pia.Io</code>'s senders cover every kind of descriptor:</p>
+<ul>
+<li><strong>Streams and files alike.</strong> <code>read_some</code> and <code>write_some</code> work on any descriptor: a file, a pipe, a socket or a terminal. Files also get positional <code>read_at</code> and <code>write_at</code> (<code>pread</code> and <code>pwrite</code>), whose footprints are byte ranges, so tasks that write disjoint ranges of one file are proved race-free by FPL (<a href="../../concurrency/#resources-other-than-memory">docs/concurrency.md</a>). The flagship demo's parallel tile writes need exactly that.</li>
+<li><strong>File operations are senders too.</strong> <code>open</code> (<code>openat</code>), <code>close</code>, <code>fsync</code>, <code>stat</code>, <code>rename</code> and <code>unlink</code> are senders. <code>read_all</code> and <code>write_all</code> are senders composed from the others, proved to transfer exactly the buffer's length or to fail.</li>
+<li><strong>The backend chooses how, per descriptor kind.</strong> <code>open</code> returns a <code>file</code>, and <code>accept</code>, <code>connect</code> and <code>pipe</code> return a <code>stream</code>, so the choice is static. io_uring runs all of them natively (<code>IORING_OP_READ</code>, <code>WRITE</code>, <code>OPENAT</code>, <code>STATX</code>, <code>FSYNC</code> and <code>CLOSE</code>). The readiness adapter runs streams through kqueue or epoll and sends file operations to the blocking pool, since readiness says nothing useful about regular files. It is the same sender with the same laws either way, so the caller cannot tell the difference.</li>
+<li><strong>Cancelling a file operation on the blocking pool</strong> completes it with <code>Err Stopped</code> only if it had not started. A <code>pread</code> that is already running cannot be interrupted, so it completes with its value, and the law that <code>Stopped</code> means nothing happened still holds.</li>
+<li><strong>Blocking I/O is the same layer.</strong> The <code>reader</code> and <code>writer</code> concepts of <code>Pia.Io</code> (<a href="../../stdlib/">docs/stdlib.md</a>, <a href="../../cpp-std/">docs/cpp-std.md</a>) are implemented over these senders, and the blocking forms are <code>sync_wait</code> of them. There is one I/O layer, not a blocking one beside an asynchronous one.</li>
+</ul>
+<h3 id="6-pipelines-with-every-error-case-proved-handled">6. Pipelines: <code>|&gt;</code>, with every error case proved handled<a class="headerlink" href="#6-pipelines-with-every-error-case-proved-handled" title="Permanent link">&para;</a></h3>
+<p>A sender adapter takes the sender as its last argument, <code>then f s</code>, and the prelude operator <code>|&gt;</code> passes its left side as the last argument of its right side: <code>s |&gt; then f</code> is <code>then f s</code>. It is defined by a metaprogram, as every operator is (<a href="../0008-operators-via-metaprograms/">ADR 0008</a>). P2300 spells this <code>|</code>, but in Pia <code>|</code> already separates match arms and variants, and <code>|&gt;</code> is OCaml's and F#'s spelling for the same idea. A pipeline is then dataflow between senders, written in the order it runs:</p>
+<div class="highlight"><pre><span></span><code><span class="c">(* Designed syntax. *)</span>
+<span class="k">let</span> <span class="n">load_config</span> <span class="o">(</span><span class="n">path</span> <span class="o">:</span> <span class="n">cstr</span><span class="o">)</span> <span class="o">(</span><span class="n">buf</span> <span class="o">:</span> <span class="n">moved</span> <span class="o">[</span><span class="n">u8</span><span class="o">])</span> <span class="o">=</span>
+  <span class="k">open</span> <span class="n">path</span> <span class="n">o_rdonly</span>                                   <span class="c">(* errors: OpenError *)</span>
+  <span class="o">|&gt;</span> <span class="n">let_value</span> <span class="o">(</span><span class="k">let</span> <span class="o">(</span><span class="n">f</span><span class="o">)</span> <span class="o">=&gt;</span> <span class="n">read_all</span> <span class="n">f</span> <span class="n">buf</span><span class="o">)</span>             <span class="c">(* ... | IoError *)</span>
+  <span class="o">|&gt;</span> <span class="k">then</span> <span class="n">parse_config</span>                                 <span class="c">(* ... | ParseError *)</span>
+  <span class="o">|&gt;</span> <span class="n">recover</span> <span class="o">(</span><span class="k">let</span> <span class="o">(</span><span class="n">e</span><span class="o">)</span> <span class="o">=&gt;</span>
+       <span class="k">match</span> <span class="n">e</span> <span class="k">with</span>
+       <span class="o">|</span> <span class="nc">ParseError</span> <span class="o">_</span> <span class="o">-&gt;</span> <span class="n">just</span> <span class="n">default_config</span>
+       <span class="o">|</span> <span class="nc">NoEntry</span> <span class="o">-&gt;</span> <span class="n">just</span> <span class="n">default_config</span><span class="o">)</span>
+<span class="c">(* value_of: config.  error_of: (OpenError | IoError) without NoEntry *)</span>
+</code></pre></div>
+<ul>
+<li><strong>Errors flow through the types.</strong> Each stage's error set is the union of its inputs' error sets (<a href="../0028-error-propagation-and-cleanup/">ADR 0028</a>). <code>recover</code> and <code>upon_error</code> take a handler whose <code>match</code> is checked against that set, and the cases it handles are removed from the set: the stage's <code>error_of</code> is the remainder, computed by a type-level <code>without</code> on closed error sets. An arm for an error that cannot reach it is an error, as an unreachable arm always is.</li>
+<li><strong>A pipeline must end with nothing left unhandled.</strong> A pipeline ends in <code>sync_wait</code>, which returns a <code>result</code> that the caller must <code>match</code>; in <code>wait</code>, whose <code>Err</code> arms or <code>handle</code> block must cover the set; or in <code>spawn</code> into a scope, whose handler must cover it. There is no way to start a sender and drop its errors, so an unhandled error is a compile error, never a run-time unwind.</li>
+<li><strong>Values carry their facts forward.</strong> <code>then f</code> is proved under the facts of the previous stage's value type (section 1), so <code>parse_config</code> may assume that <code>read_all</code> filled its buffer, and the pipeline's own value has <code>parse_config</code>'s <code>ensures</code>.</li>
+<li><strong>Resources come back on every path.</strong> A buffer moved into a stage comes back in that stage's value or in its error, so a handler that recovers from <code>IoError</code> gets the buffer back to reuse or free, and the <code>@linear</code> rules check that it does.</li>
+<li><strong>Fan-out and fan-in</strong> are <code>when_all a b c</code> (variadic, <a href="../0051-variadic-generics-and-foreign-varargs/">ADR 0051</a>), with <code>split</code> later. A channel from ADR 0027 bridges in both directions: <code>recv ch</code> and <code>send ch x</code> are senders. A pipeline of senders is acyclic by construction, because values only flow forward, so only channels can close a cycle, and ADR 0027's channel topology check covers those.</li>
+</ul>
+<p><strong>Why this is stronger than exceptions.</strong> An exception can be of any type, thrown from any call, and it is invisible in signatures: C++ has only <code>noexcept</code> or nothing. Through asynchronous boundaries it travels as a type-erased <code>exception_ptr</code>, and no compiler checks that a handler exists for what can reach it. Here, every pipeline's error set is in its type and is closed, every handler is checked exhaustive against it, what a handler removes is gone from the type, the end of every pipeline must have handled the rest, and cleanup is by linearity, with resources returned along the error path too.</p>
+<h3 id="7-a-pipeline-is-a-dataflow-graph-and-devices-are-schedulers">7. A pipeline is a dataflow graph, and devices are schedulers<a class="headerlink" href="#7-a-pipeline-is-a-dataflow-graph-and-devices-are-schedulers" title="Permanent link">&para;</a></h3>
+<p>Senders are lazy and their types say what they are, so a pipeline is a value describing a dataflow graph before anything runs: <code>then</code> is an edge, <code>when_all</code> is a join, and <code>split</code> is a fork. Each node runs on a scheduler. That makes CPU and GPU compute one more pair of schedulers, as NVIDIA's stdexec does for CUDA:</p>
+<div class="highlight"><pre><span></span><code><span class="c">(* Designed syntax. *)</span>
+<span class="k">let</span> <span class="n">step</span> <span class="o">(</span><span class="n">gpu</span> <span class="o">:</span> <span class="n">borrowed</span> <span class="n">metal</span><span class="o">)</span> <span class="o">(</span><span class="n">cpu</span> <span class="o">:</span> <span class="n">borrowed</span> <span class="n">pool</span><span class="o">)</span> <span class="o">(</span><span class="n">tile</span> <span class="o">:</span> <span class="n">moved</span> <span class="o">[</span><span class="n">f32</span><span class="o">])</span> <span class="o">=</span>
+  <span class="n">just</span> <span class="n">tile</span>
+  <span class="o">|&gt;</span> <span class="n">continues_on</span> <span class="n">gpu</span>
+  <span class="o">|&gt;</span> <span class="k">then</span> <span class="n">sediment_kernel</span>                 <span class="c">(* runs as a Metal compute pass *)</span>
+  <span class="o">|&gt;</span> <span class="n">continues_on</span> <span class="n">cpu</span>
+  <span class="o">|&gt;</span> <span class="k">then</span> <span class="n">summarise</span>                       <span class="c">(* runs on a CPU worker *)</span>
+  <span class="o">|&gt;</span> <span class="n">upon_error</span> <span class="n">report_device_error</span>
+</code></pre></div>
+<ul>
+<li><strong>A device is a <code>Scheduler</code>.</strong> <code>Pia.Exec.Metal</code> schedules work as command buffers on a Metal queue, and its completion handler is the receiver call. <code>Pia.Task</code>'s workers are the CPU scheduler, and the Neural Engine can come later the same way. <code>continues_on d</code> moves the rest of the pipeline to <code>d</code>.</li>
+<li><strong>Data moves with ownership.</strong> A buffer is <code>moved</code> into a GPU stage and comes back in its value or its error, exactly as with I/O (section 2). So the CPU cannot touch a buffer while the GPU writes it, which is ADR 0027's rule for device queues, now expressed as a sender. On Apple silicon's unified memory, moving costs no copy. A device with its own memory makes <code>continues_on</code> insert the transfer, and the transfer is a sender too.</li>
+<li><strong>Placement chooses the schedulers.</strong> A pipeline whose stages say <code>@place(auto)</code> instead of a fixed <code>continues_on</code> is placed by the cost model of <a href="../0015-device-placement/">ADR 0015</a>, which sees the whole graph because it is a type. The model can keep neighbouring stages on one device to avoid transfers, and fuse a chain of <code>then</code>s into one kernel. Placement must never change the proved result. So a stage's float tolerance has to be proved on the device it is placed on (<a href="../0038-float-kernels-against-real-theories/">ADR 0038</a>), and a device that cannot prove it is excluded or is an error, as ADR 0038 already decided.</li>
+<li><strong>Device errors are ordinary errors.</strong> A command buffer that fails, or a device that is lost, completes with an error from a closed set (<code>DeviceLost | OutOfMemory | Timeout</code>), so the pipeline must handle it like any other (section 6).</li>
+<li><strong>The graph is checked as a whole.</strong> It is acyclic by construction, except through channels, so ADR 0027's topology check covers its deadlock goal. Its race freedom is the ownership rule above, and its error handling is section 6's rule.</li>
+</ul>
+<p>This is the generic form of the flagship demo's CPU and GPU pipeline (<a href="../0016-stream-delineation-flagship-demo/">ADR 0016</a>). Its tile loop becomes a graph of senders, placed by the cost model, instead of hand-written queue code.</p>
+<h3 id="8-what-this-changes">8. What this changes<a class="headerlink" href="#8-what-this-changes" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>ADR 0027 and issue #79.</strong> <code>Pia.Io</code> offers senders instead of a parking API, and the kqueue loop becomes one backend of several. <code>Pia.Task</code>'s scheduler is a <code>Scheduler</code>, and <code>spawn s x</code> accepts a sender as well as a closure. The <code>@blocking</code> and <code>offload</code> rules are unchanged.</li>
+<li><strong>The earlier poller plan</strong> (a readiness poller as the public I/O interface) becomes <code>Pia.Io.Ready</code>'s internal <code>Readiness</code> concept.</li>
+<li><strong>C++ mapping.</strong> <a href="../../cpp-std/">docs/cpp-std.md</a> gains <code>&lt;execution&gt;</code> mapped to <code>Pia.Exec</code>.</li>
+<li><strong>Blocking <code>Pia.Io</code></strong> (stdlib.md, section 8) becomes <code>sync_wait</code> over the same senders (section 5).</li>
+</ul>
+<h2 id="prerequisites-in-order">Prerequisites, in order<a class="headerlink" href="#prerequisites-in-order" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>FFI</strong> (#55): variadic foreign calls, as <a href="../0051-variadic-generics-and-foreign-varargs/">ADR 0051</a> section 6 designs them (<code>syscall</code>, <code>open</code> and <code>fcntl</code> are variadic, and Apple arm64 passes variadic arguments on the stack), C structs passed as byte buffers (<code>sockaddr</code>, <code>kevent</code>, <code>epoll_event</code>, <code>io_uring_sqe</code>), and <code>errno</code> (<code>__error</code> on macOS, <code>__errno_location</code> on glibc).</li>
+<li><strong><code>@target</code> items and <code>when Target.is</code></strong> (ADR 0049, step 3c, PR #292).</li>
+<li><strong><code>Pia.Sys.Posix</code>, <code>Pia.Sys.Fs</code> and <code>Pia.Sys.Net</code></strong> (#57), blocking and per target: constants, <code>sockaddr</code> (macOS has a <code>sin_len</code> byte, Linux does not), the packed <code>epoll_event</code> on x86_64, and <code>SO_NOSIGPIPE</code> versus <code>MSG_NOSIGNAL</code>.</li>
+<li><strong><code>Pia.Mem</code> as a module</strong> (#59), for buffers and the in-flight table.</li>
+<li><strong>Tuples and variadic generics</strong> (ADR 0051), for <code>when_all</code> over any number of senders. <strong>Function values stored in data</strong> (ADR 0044, a later step), because an operation state holds its receiver and <code>then</code>'s function, and <strong>acquire and release atomics on foreign memory</strong>, for the io_uring rings.</li>
+<li><strong><code>Pia.Exec</code></strong>: the concepts and algorithms, with an inline scheduler and <code>sync_wait</code>, the <code>|&gt;</code> operator, and <code>recover</code> with the type-level <code>without</code> on error sets. It is pure Pia with no system calls, so it can be proved and tested first.</li>
+<li><strong><code>Pia.Io.Ready</code>, <code>Pia.Io.Kqueue</code> and <code>Pia.Io.Epoll</code></strong>, the run loop and the timer heap, with a proved echo server as the demo, tested on both CI jobs.</li>
+<li><strong><code>Pia.Io.Uring</code></strong>, and the Linux run-time choice between the two backends.</li>
+<li><strong><code>Pia.Exec.Metal</code></strong>, a GPU scheduler, once Metal placement lands (ADR 0015), and placement of <code>@place(auto)</code> stages over a sender graph.</li>
+<li><strong>Cross-thread stop</strong>, when the model checker lands (#81). <strong><code>wait</code> on senders</strong>, when coroutines land (#77).</li>
+</ol>
+<h2 id="consequences">Consequences<a class="headerlink" href="#consequences" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Every P2300 rule listed under "Where P2300 relies on the programmer" is checked. Exactly-once completion and the absence of detached work are type rules. Buffer ownership during I/O and through cancellation are type rules too. Closed error sets come with exhaustive handlers. The stop race is a model-checker goal.</li>
+<li>Files, pipes and sockets go through one set of senders, and blocking I/O is <code>sync_wait</code> of them.</li>
+<li>A pipeline is a dataflow graph whose nodes run on schedulers, so CPU and GPU compute use the same interface as I/O, with ownership moving buffers between them.</li>
+<li>Pipelines written with <code>|&gt;</code> are checked to handle every error that can reach their end, which exceptions cannot offer.</li>
+<li>One interface hides three backends. Only the system-call contracts differ between them, and they are listed per target in the trust report.</li>
+<li>On macOS, completion is emulated, so an operation can cost one extra system call compared with io_uring, and file I/O runs on the blocking pool. Pia does not claim equal performance across the two platforms, only the same semantics.</li>
+<li>The I/O stack is larger than a bare poller. Its lower layers are still needed (<code>Pia.Sys</code>), and the poller survives as <code>Readiness</code> inside the adapter.</li>
+<li><code>wait</code> gets a precise meaning: it connects a coroutine frame to a sender.</li>
+</ul>
+<h2 id="answers">Answers<a class="headerlink" href="#answers" title="Permanent link">&para;</a></h2>
+<p>Dean's answers (2026-11-23):</p>
+<ol>
+<li><strong><code>Stopped</code> is a member of the error set</strong>, not a third channel. Receivers have <code>value</code> and <code>error</code> only (section 1).</li>
+<li><strong>Linux probes io_uring and falls back to epoll</strong> at run time, and CI tests both backends (section 3).</li>
+<li><strong>On macOS, regular files go to the blocking pool first.</strong> POSIX AIO with <code>SIGEV_KEVENT</code> can come later as an optimisation behind the same senders (sections 3 and 5).</li>
+<li><strong>Multishot completions wait for their own ADR</strong>, on sequence senders in the style of <a href="https://wg21.link/p2849">P2849</a>. Version 1 loops over single-shot senders.</li>
+<li><strong>The module is <code>Pia.Exec</code></strong>, after <code>std::execution</code>.</li>
+</ol>
+<h2 id="prior-art">Prior art<a class="headerlink" href="#prior-art" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Source</th>
+<th>What Pia takes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>P2300 <code>std::execution</code>, stdexec, libunifex</td>
+<td>senders, receivers, operation states, completion channels, schedulers, environments, stop tokens</td>
+</tr>
+<tr>
+<td>P3149 <code>async_scope</code>, P3187</td>
+<td>scoped spawning instead of detached work</td>
+</tr>
+<tr>
+<td>tokio-uring, glommio, monoio</td>
+<td>buffers moved into the operation and returned with the completion</td>
+</tr>
+<tr>
+<td>libuv, Tokio</td>
+<td>completion over readiness, and file I/O on a blocking pool</td>
+</tr>
+<tr>
+<td>Austral, ATS linear types</td>
+<td>consuming a resource exactly once, as a type rule</td>
+</tr>
+</tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../0049-targets-are-theories/" class="md-footer__link md-footer__link--prev" aria-label="Previous: 49. Linux x86_64 is a second target, tested in Linux CI, and each target is a model of a built-in Pia.Target theory">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                49. Linux x86_64 is a second target, tested in Linux CI, and each target is a model of a built-in Pia.Target theory
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../0051-variadic-generics-and-foreign-varargs/" class="md-footer__link md-footer__link--next" aria-label="Next: 51. Variadic functions and types take a pack that is called like any argument list, walked by metaprograms and proved once; foreign bindings are generated from tables">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                51. Variadic functions and types take a pack that is called like any argument list, walked by metaprograms and proved once; foreign bindings are generated from tables
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.top", "navigation.footer", "content.code.copy", "search.highlight"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+    
+  </body>
+</html>
