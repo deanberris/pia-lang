@@ -815,14 +815,19 @@ let meta json_record (t : type_decl) : list =
   (* Length only when there is an array field. *)
   let has_arr = fold (let (acc) (f) => or acc (is_arr f)) false fs in
   let elen = ctor "Length" in
-  (* A nested record's errors are its own type's, wrapped in one
-     constructor per such field, so the set stays exact. *)
-  let efield = let (f) => concat (concat (concat "Field_" tn) "_") f in
-  let ecs = concat
-    (concat [ [ esyn; "usize" ]; [ eunk; "usize" ]; [ edup; "usize" ]; [ emis; "usize" ] ]
-            (concat (if has_int then [ [ erng; "usize" ] ] else []) (if has_arr then [ [ elen; "usize" ] ] else [])))
-    (map (let (f) => [ efield f; concat (name (base f)) "_json_error" ]) (filter is_rec fs)) in
-  let error_type = `( let $ename = type | $ecs ) in
+  let ecs =
+    concat [ [ esyn; "usize" ]; [ eunk; "usize" ]; [ edup; "usize" ]; [ emis; "usize" ] ]
+           (concat (if has_int then [ [ erng; "usize" ] ] else []) (if has_arr then [ [ elen; "usize" ] ] else [])) in
+  (* A nested record's reader raises its own type's errors, so with
+     nested records the set is the union of this type's own errors and
+     theirs (ADR 0045), each once, and stays exact. *)
+  let nested_errs = fold (let (acc) (x) => if fold (let (h) (y) => or h (eq y x)) false acc then acc else concat acc [ x ]) [] (map (let (f) => concat (name (base f)) "_json_error") (filter is_rec fs)) in
+  let own = if eq (length nested_errs) 0 then ename else concat tn "_json_own_error" in
+  let error_type =
+    if eq (length nested_errs) 0 then [ `( let $ename = type | $ecs ) ]
+    else (
+      let set = fold (let (acc) (m) => `( ($acc | $m) )) `( $own ) nested_errs in
+      [ `( let $own = type | $ecs ); `( let $ename = $set ) ]) in
   let rname = concat tn "_json_read" in
   let read_type = `( let $rname = type { value : $t; stop : usize } ) in
   let fread = let (i) => concat (concat (concat "read_json_" tn) "_") (nth fs i) in
@@ -838,10 +843,9 @@ let meta json_record (t : type_decl) : list =
     let body =
       if is_rec f then
         (let inner = concat "read_json_" (name ft) in
-         let ef = efield f in
          `( match $inner $!s $!pos with
             | Ok $!r -> Ok { value = $!r.value; stop = $!r.stop }
-            | Err $!e -> Err ($ef $!e) ))
+            | Err $!e -> Err $!e ))
       else if is_bool f then
         `( match $(json_read "read_bool") $!s $!pos with
            | Ok $!r -> Ok { value = $!r.value; stop = $!r.stop }
@@ -1050,7 +1054,7 @@ let meta json_record (t : type_decl) : list =
   let dlit = map (let (f) => [ f; dflt f ]) fs in
   let default_fn = `( let $dname : $t = { $dlit } ) in
   concat (concat (map member_writer idx) [ writer_fn; room_const; default_fn ])
-    (concat [ error_type; read_type; key_fn ] (concat (fold (let (acc) (i) => concat acc (field_reader i)) [] idx) [ reader_fn ]))
+    (concat (concat error_type [ read_type; key_fn ]) (concat (fold (let (acc) (i) => concat acc (field_reader i)) [] idx) [ reader_fn ]))
 
 (* @derive(json): json_record for a record, json_distinct for a distinct
    type (ADR 0064), json_variant for a variant,
