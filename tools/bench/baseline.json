@@ -513,11 +513,18 @@
       "wall_ms_n": 719.7
     },
     "tests/verify/box_concept.pia": {
-      "cost": 4043407,
-      "goals": 60,
-      "solve_ms_n": 402,
-      "solved": 57,
-      "wall_ms_n": 969.1
+      "cost": 6319060,
+      "goals": 90,
+      "solve_ms_n": 781,
+      "solved": 87,
+      "wall_ms_n": 4263.9
+    },
+    "tests/verify/box_error_payload.pia": {
+      "cost": 5431281,
+      "goals": 69,
+      "solve_ms_n": 715,
+      "solved": 66,
+      "wall_ms_n": 2484.6
     },
     "tests/verify/box_errors.pia": {
       "cost": 2624000,
