@@ -404,7 +404,8 @@ mlir::Type TypeResolver::resolve(const Node &type) {
         if (auto p = it->find(type.text); p != it->end()) return p->second;
       if (mlir::Type t = builtin(type.text)) return t;
       if (mlir::Type t = named(type.text)) return t;
-      if (type.text == "range") return rangeType();
+      if (type.text == "range")
+        return rangeType();
       if (isTypeFunction(type.text)) {
         diags_.error(type.loc, "'" + type.text + "' is a type-level "
                                "metaprogram: apply it to types, as in '" +

@@ -1247,9 +1247,10 @@ class Gen {
           annot->kids[1]->kind != NodeKind::ArrayType)
         continue;
       const Node &len = *annot->kids[1]->kids[1];
-      BindingPtr r = len.kind == NodeKind::Name || len.kind == NodeKind::TypeName
-                         ? lookup(len.text)
-                         : nullptr;
+      BindingPtr r =
+          len.kind == NodeKind::Name || len.kind == NodeKind::TypeName
+              ? lookup(len.text)
+              : nullptr;
       if (!r || !r->isParam || r->type != types_.rangeType())
         continue;
       b->over = r;
@@ -1258,9 +1259,9 @@ class Gen {
       Value hi = create<FieldOp>(l, types_.usize(), r->value, "hi");
       Value n = create<FromIndexOp>(
           l, types_.usize(), create<LenOp>(l, b_.getIndexType(), b->value));
-      Value count = create<ExactSubOp>(l, intT,
-                                       create<ExactConvertOp>(l, intT, hi),
-                                       create<ExactConvertOp>(l, intT, lo));
+      Value count =
+          create<ExactSubOp>(l, intT, create<ExactConvertOp>(l, intT, hi),
+                             create<ExactConvertOp>(l, intT, lo));
       create<contract::AssumeOp>(
           l, create<ExactCmpOp>(l, b_.getI1Type(),
                                 CmpPredicateAttr::get(&ctx_, CmpPredicate::eq),
@@ -4718,7 +4719,8 @@ class Gen {
     if (const Node &f = *n.kids[0]; f.kind == NodeKind::Name &&
                                      f.flags.empty() && !lookup(f.text) &&
                                      overloadSet(f.text).empty()) {
-      if (f.text == "unsafe") return genUnsafe(n, expected);
+      if (f.text == "unsafe")
+        return genUnsafe(n, expected);
       if (f.text == "with_arena")
         return fail(n, "'with_arena' takes the arena's size in bytes, an "
                        "integer literal, and a function of the arena, as "
@@ -9850,17 +9852,17 @@ class Gen {
     std::optional<Value> idx;
     // `xs.[k]` of an array over a range reads its cell `k - r.lo`, which
     // the bounds goal keeps within it (ADR 0086).
-    BindingPtr ranged = n.kids[0]->kind == NodeKind::Name
-                            ? lookup(n.kids[0]->text)
-                            : nullptr;
+    BindingPtr ranged =
+        n.kids[0]->kind == NodeKind::Name ? lookup(n.kids[0]->text) : nullptr;
     if (ranged && ranged->over) {
       R k = genExpr(*n.kids[1], types_.usize());
-      if (!k) return std::nullopt;
+      if (!k)
+        return std::nullopt;
       R ku = coerce(*k, types_.usize(), *n.kids[1]);
-      if (!ku) return std::nullopt;
+      if (!ku)
+        return std::nullopt;
       Location il = loc(*n.kids[1]);
-      Value lo =
-          create<FieldOp>(il, types_.usize(), ranged->over->value, "lo");
+      Value lo = create<FieldOp>(il, types_.usize(), ranged->over->value, "lo");
       if (!contract_ && !ghost_) {
         auto inRange = create<contract::AssertOp>(
             il, cmp(il, CmpPredicate::ge, ku->value, lo));
@@ -11783,8 +11785,8 @@ class Gen {
       // A collective's argument, which publishes the buffer: a collective
       // takes no out or inout parameter, so it reads the buffer once every
       // iteration has written its cells (ADR 0086).
-      bool exchanged = parent && isCollective(*parent) &&
-                       parent->kids[0].get() != &n;
+      bool exchanged =
+          parent && isCollective(*parent) && parent->kids[0].get() != &n;
       if (!indexed && !measured && !passed && !exchanged)
         return &n;
     }
@@ -12237,8 +12239,7 @@ class Gen {
     std::vector<bool> out;
     if (sig.isGeneric()) {
       for (const Node *p : valueParamsOf(sig))
-        out.push_back(!p->kids.empty() &&
-                      p->kids[0]->kind == NodeKind::Annot &&
+        out.push_back(!p->kids.empty() && p->kids[0]->kind == NodeKind::Annot &&
                       p->kids[0]->kids[1]->kind == NodeKind::TypeName &&
                       p->kids[0]->kids[1]->text == "range");
       return out;
@@ -12290,8 +12291,7 @@ class Gen {
   // codegen calls it once for the whole spread (ADR 0086, section 1).
   bool markCollective(const Node &attr, const sema::FuncSig &sig,
                       mlir::func::FuncOp fn, bool isExtern) {
-    if (isExtern || hasFlag(*sig.item, "spec") ||
-        hasFlag(*sig.item, "lemma"))
+    if (isExtern || hasFlag(*sig.item, "spec") || hasFlag(*sig.item, "lemma"))
       return fail(attr, "@collective is for a function with a Pia body, "
                         "which codegen runs once for the whole spread: "
                         "not an extern, a spec function or a lemma"),
@@ -12407,8 +12407,8 @@ class Gen {
                          "(ADR 0086)");
         }
         Type rt = types_.rangeType();
-        Value rv = create<RecordOp>(l, rt,
-                                    mlir::ValueRange{lo->value, hi->value});
+        Value rv =
+            create<RecordOp>(l, rt, mlir::ValueRange{lo->value, hi->value});
         std::string tmp = "$range" + std::to_string(p);
         bind(tmp, rv, rt, false);
         call->add(syntax::makeNode(NodeKind::Name, n.loc, tmp));
@@ -12451,8 +12451,8 @@ class Gen {
       // How the argument binds: the array holds a cell per position of
       // the spread's range, and the iteration's own argument is at its
       // position, cell `i - lo`.
-      Value len = create<FromIndexOp>(
-          l, usize, create<LenOp>(l, b_.getIndexType(), xs));
+      Value len = create<FromIndexOp>(l, usize,
+                                      create<LenOp>(l, b_.getIndexType(), xs));
       Value count = create<ExactSubOp>(
           l, intT, create<ExactConvertOp>(l, intT, spread_->hi),
           create<ExactConvertOp>(l, intT, spread_->lo));
@@ -12460,16 +12460,15 @@ class Gen {
           l, create<ExactCmpOp>(l, b_.getI1Type(),
                                 CmpPredicateAttr::get(&ctx_, CmpPredicate::eq),
                                 create<ExactConvertOp>(l, intT, len), count));
-      Value at = create<SubOp>(l, spread_->iv.getType(), spread_->iv,
-                               spread_->lo);
+      Value at =
+          create<SubOp>(l, spread_->iv.getType(), spread_->iv, spread_->lo);
       Value own = create<LoadOp>(l, x->type, xs, toIndex(l, at));
-      Value same =
-          isBool(x->type)
-              ? create<mlir::arith::XOrIOp>(
-                    l, create<mlir::arith::XOrIOp>(l, own, x->value),
-                    boolConst(l, true))
-                    .getResult()
-              : cmp(l, CmpPredicate::eq, own, x->value);
+      Value same = isBool(x->type)
+                       ? create<mlir::arith::XOrIOp>(
+                             l, create<mlir::arith::XOrIOp>(l, own, x->value),
+                             boolConst(l, true))
+                             .getResult()
+                       : cmp(l, CmpPredicate::eq, own, x->value);
       create<contract::AssumeOp>(l, same);
       std::string tmp = "$gathered" + std::to_string(p);
       bind(tmp, xs, st, false);
@@ -12564,8 +12563,9 @@ class Gen {
       if (!why.empty())
         return fail(n, "every iteration must reach this call of the "
                        "collective '" +
-                           name + "' in the same order, but it is reached "
-                                  "only when " +
+                           name +
+                           "' in the same order, but it is reached "
+                           "only when " +
                            why +
                            " holds, and that depends on the iteration "
                            "(ADR 0086)"),

@@ -2392,8 +2392,8 @@ static LogicalResult declareGathers(mlir::ModuleOp module) {
     std::string key;
     llvm::raw_string_ostream os(key);
     os << ft;
-    auto [it, fresh] = names.try_emplace(
-        key, kGatherPrefix.str() + std::to_string(names.size()));
+    auto [it, fresh] = names.try_emplace(key, kGatherPrefix.str() +
+                                                  std::to_string(names.size()));
     if (fresh) {
       mlir::OpBuilder b = mlir::OpBuilder::atBlockEnd(module.getBody());
       auto decl = make<mlir::func::FuncOp>(b, op.getLoc(), it->second, ft);

@@ -234,7 +234,8 @@ private:
                       mlir::IRMapping &outer) {
     if (ops.empty() && gathers.empty())
       return mlir::success();
-    Location l = !ops.empty() ? ops.front()->getLoc() : gathers.front().getLoc();
+    Location l =
+        !ops.empty() ? ops.front()->getLoc() : gathers.front().getLoc();
     auto par =
         make<scf::ParallelOp>(b_, l, mlir::ValueRange{lo_},
                               mlir::ValueRange{hi_}, mlir::ValueRange{one_});
@@ -250,7 +251,8 @@ private:
       if (mlir::failed(x))
         return mlir::failure();
       Value at = make<arith::SubIOp>(pb, g.getLoc(), iv, lo_);
-      make<memref::StoreOp>(pb, g.getLoc(), *x, gathered_.lookup(g.getResult(0)),
+      make<memref::StoreOp>(pb, g.getLoc(), *x,
+                            gathered_.lookup(g.getResult(0)),
                             mlir::ValueRange{at});
     }
     return mlir::success();
