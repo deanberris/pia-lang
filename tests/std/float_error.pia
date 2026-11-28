@@ -1,0 +1,17 @@
+(* Pia.Float.Error (ADR 0038, step 3): every goal of the module is proved,
+   the step lemmas by the solver alone and each kernel's loop through
+   them, and its interface exports the spec functions with their
+   definitions, so an importer's goals unfold them.
+// RUN: FileCheck %s < %S/../../lib/Pia/Float/error.goals
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Float/Error.pia
+// RUN: FileCheck --check-prefix=IFACE %s < %t/Pia.Float.Error.Error.piai
+*)
+
+(* CHECK-NOT: failed
+// CHECK: {{[0-9]+}} proved, 0 failed, 0 skipped
+// IFACE: module Pia.Float.Error
+// IFACE: let lemma dot_step
+// IFACE: let dot : (xs : [f32]) -> (ys : [f32]) -> (bx : real) -> (by : real) -> (m : real) -> f32
+// IFACE: let spec gamma (n : real) : real
+// IFACE-NEXT: = 1.01 * (n + 1.0) * eps f32
+*)

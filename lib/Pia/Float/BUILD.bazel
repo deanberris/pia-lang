@@ -1,0 +1,19 @@
+load("//tools/piac:pia.bzl", "pia_library")
+load("//tools/piac:targets.bzl", "PIA_TARGETS")
+
+# Pia.Float: floats against reals (ADR 0038). Each module is proved and
+# compiled on its own, and importers build against its interfaces.
+
+package(default_visibility = ["//visibility:public"])
+
+# Its tests read the source, to write its interfaces.
+exports_files(["Error.pia"])
+
+# Rounding error bounds for f32 sums and dot products (ADR 0038, step 3):
+# tests/std/float_error.pia checks its goals and interface, and
+# tests/std/float_error_use.pia calls its kernels through it.
+pia_library(
+    name = "error",
+    src = "Error.pia",
+    target_compatible_with = PIA_TARGETS,
+)
