@@ -5742,8 +5742,19 @@ bool multipliesVariables(const std::string &script) {
 
 // Whether `script` is eligible for Z3's int-blasting solver (ADR 0066).
 // Quantified queries leave int-blasting incomplete and stall on quantified
-// definitions, so only quantifier-free nonlinear queries take this path.
+// definitions, so only quantifier-free nonlinear queries take this path,
+// except goals over reals that convert integers, below.
 bool canIntBlast(const std::string &script) {
+  // A goal that compares the real value of an integer with reals, as a
+  // float error bound does with `real i` for a loop's index (ADR 0038),
+  // goes through bv2int, which bit-blasting decides only by blasting the
+  // integer: `a <= b ==> real a <= real b` on two usizes alone did not
+  // finish in minutes, and takes milliseconds int-blasted, quantified
+  // hypotheses and all. Only goals over reals take this path, so integer
+  // goals that convert to `int` keep the solver they had.
+  if (script.find("(bv2int ") != std::string::npos &&
+      script.find("Real") != std::string::npos)
+    return true;
   if (script.find("(forall") != std::string::npos ||
       script.find("(exists") != std::string::npos ||
       script.find("(lambda") != std::string::npos)
