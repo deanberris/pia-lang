@@ -90,6 +90,8 @@ Dean, 2026-11-27: "this idea scales to pretty much every math function that we w
 
 ADR 0065's existing function lowerings (`linalg.matmul` in `tests/codegen/lower_linalg.pia`) move onto `pia_lib.call` in step 1. They keep their states and their tests.
 
+Step 1 is built. The dialect is `src/dialect/Lib.td`. Codegen makes each `func.call` of a function with `@lower` a `pia_lib.call` when it lowers to core (`markLibCalls`), and expands it into a call again before it goes to LLVM (`expandLibCalls`), so `--emit=core` shows the op. It is made in codegen rather than in IRGen, so that the verifier's call rule, and every pass that rewrites signatures and calls before core, stay as they are; the op still lives through every pass that runs on core IR. The function's own body is still replaced by its lowering, so C callers and Pia callers get the same code. The op is not marked `pure` yet: ADR 0069's purity is computed by the verifier and not yet passed to codegen. Step 2 adds substitution at the call.
+
 ## Consequences
 
 - Pia.Math and every would-be builtin become Pia functions with optional rules, so the compiler's C++ grows by one dialect and one pass, not by one op per function.

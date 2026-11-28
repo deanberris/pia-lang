@@ -120,6 +120,7 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 - `src/dialect/Pia.td` and `src/dialect/PiaDialect.{h,cpp}` define `pia`: range integers, arrays, slices, records, `dyn` and scalar ops.
 - `src/dialect/Contract.td` and `src/dialect/ContractDialect.{h,cpp}` define `pia_contract`: requires, ensures, invariant, `obligation`, quantifiers and `old`.
 - `src/dialect/Par.td` and `src/dialect/ParDialect.{h,cpp}` define `pia_par`: tiled grids, `spread` and collectives. They are not lowered yet.
+- `src/dialect/Lib.td` and `src/dialect/LibDialect.{h,cpp}` define `pia_lib` (ADR 0078): its one op, `pia_lib.call`, is a call of a library function with a lowering rule. `markLibCalls` and `expandLibCalls` in `src/codegen/Lowerings.cpp` make and expand it; `tests/codegen/lib_call.pia` tests it.
 
 ### src/transforms, src/verify, src/codegen
 
@@ -227,7 +228,7 @@ Each module is a `pia_library` in the `BUILD.bazel` next to it, with its tests i
 | `tests/dialect` | ODS round trips | |
 | `tests/repl`, `tests/lsp` | end to end over pipes | `tests/repl` runs in shards |
 | `tests/docs` | `doc_examples_test.py`: every doc, case study and skill example | its markers are `<!-- example: -->`, `<!-- expect: fail -->` and `<!-- untested: -->` |
-| `tests/lean` | lemmas proved in Lean (ADR 0061): `--emit=lean`, receipts from `pia_lean_proof`, stale receipts, the trust report and certificate lines, `native_decide` only in `@trusted` files; `CallRule.lean`, the verifier's call rule proved sound, modular and incomplete (ADR 0076) | `sums_proof` runs Lean on `Proofs.lean`, `native_proof` on `Native.lean`; `call_rule_test` checks `CallRule.lean` |
+| `tests/lean` | lemmas proved in Lean (ADR 0061): `--emit=lean`, receipts from `pia_lean_proof`, stale receipts, the trust report and certificate lines, `native_decide` only in `@trusted` files, machine integers as `Int` with their ranges (`bytes.pia`); `CallRule.lean`, the verifier's call rule proved sound, modular and incomplete (ADR 0076) | `sums_proof` runs Lean on `Proofs.lean`, `native_proof` on `Native.lean`, `bytes_proof` on `Bytes.lean`; `call_rule_test` checks `CallRule.lean` |
 | `tests/smoke` | the tools start | |
 | `tests/lit` | `run_lit.sh` and `lit.bzl`, the lit runner | |
 

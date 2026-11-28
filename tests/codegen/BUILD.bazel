@@ -8,6 +8,7 @@ lit_tests(
     srcs = glob(["*.pia"], exclude = ["floats.pia", "saturate.pia", "bits.pia", "bit_counts.pia", "ffi_run.pia", "slices.pia", "consts.pia", "variants.pia", "record_buffers.pia", "arena.pia", "pages.pia", "spec_state.pia", "box_concept.pia", "box_error_payload.pia", "rec_run.pia", "slice_buffers_run.pia", "local_arrays.pia", "spread.pia", "collectives.pia"]),
     tools = [
         "//tools/pia-cert",
+        "//tools/pia-opt",
         "//tools/piac",
     ],
 )
@@ -306,6 +307,26 @@ cc_test(
     srcs = [
         "fn_refs_test.c",
         ":fn_refs_run_obj",
+    ],
+    target_compatible_with = PIA_TARGETS,
+)
+
+# fn_tables.pia, function references stored in records and a handler
+# table (ADR 0071), run against the same steps in C.
+genrule(
+    name = "fn_tables_run_obj",
+    srcs = ["fn_tables.pia"],
+    outs = ["fn_tables_run.o"],
+    cmd = "$(location //tools/piac) --emit=obj " + PIAC_TARGET_FLAGS + " -o $@ $<",
+    target_compatible_with = PIA_TARGETS,
+    tools = ["//tools/piac"],
+)
+
+cc_test(
+    name = "fn_tables_run_test",
+    srcs = [
+        "fn_tables_test.c",
+        ":fn_tables_run_obj",
     ],
     target_compatible_with = PIA_TARGETS,
 )

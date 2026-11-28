@@ -1,0 +1,31 @@
+(* Function reference fields outside what ADR 0071 has built so far are
+   reported.
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let succ (x : u8) : u8 = x
+
+let op = type { f : (x : u8) -> u8; n : u8 }
+let other = type { g : (x : u8) -> u8; m : u8 }
+
+(* CHECK-DAG: fn_reference_field_errors.pia:[[@LINE+2]]:38: error: 'y' is a local; the field 'f' of op takes a top-level function by its name, or the same field of another op (ADR 0071)
+*)
+let from_local (y : u8) : op = { f = y; n = 0 }
+
+(* CHECK-DAG: fn_reference_field_errors.pia:[[@LINE+2]]:41: error: the field 'f' of op takes a top-level function by its name, or the same field of another op (ADR 0071)
+*)
+let from_other (o : other) : op = { f = o.g; n = 0 }
+
+(* CHECK-DAG: fn_reference_field_errors.pia:[[@LINE+2]]:57: error: a call through a function reference field is code, not part of a contract
+*)
+let in_contract (o : op) (y : u8) : u8 ensures result = o.f y = o.f y
+
+(* CHECK-DAG: fn_reference_field_errors.pia:[[@LINE+2]]:39: error: '.n' is u8, not a function reference, so it cannot be called
+*)
+let not_a_fn (o : op) (y : u8) : u8 = o.n y
+
+(* CHECK-DAG: fn_reference_field_errors.pia:[[@LINE+4]]:3: error: 'g' is a copy of a mutable function reference; call the reference itself, as copies come later (ADR 0071)
+*)
+let copied (o : op) (y : u8) : u8 =
+  let g = o.f in
+  g y

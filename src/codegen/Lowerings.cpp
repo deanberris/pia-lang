@@ -1,5 +1,6 @@
 #include "codegen/Lowerings.h"
 #include "codegen/Codegen.h"
+#include "dialect/LibDialect.h"
 #include "dialect/PiaDialect.h"
 
 #include <array>
@@ -28,6 +29,7 @@
 #include "mlir/Interfaces/ViewLikeInterface.h"
 #include "mlir/Parser/Parser.h"
 #include "mlir/Pass/PassManager.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/SHA256.h"
 #include "llvm/Support/raw_ostream.h"
@@ -493,6 +495,32 @@ void unmark(mlir::func::FuncOp f) {
   }
 }
 
+// Each call of a function with a lowering becomes `pia_lib.call` (ADR
+// 0078, step 1), which names the function whose body is its meaning, until
+// `expandLibCalls` makes it a call again. Calls from C reach the function
+// itself, whose body the lowering replaces.
+void markLibCalls(mlir::ModuleOp module,
+                  llvm::ArrayRef<mlir::func::FuncOp> marked) {
+  llvm::DenseSet<mlir::StringAttr> lowered;
+  for (mlir::func::FuncOp f : marked)
+    lowered.insert(f.getSymNameAttr());
+  llvm::SmallVector<mlir::func::CallOp> calls;
+  module.walk([&](mlir::func::CallOp call) {
+    if (lowered.contains(call.getCalleeAttr().getAttr()))
+      calls.push_back(call);
+  });
+  for (mlir::func::CallOp call : calls) {
+    mlir::OpBuilder b(call);
+    auto op = lib::CallOp::create(b, call.getLoc(), call.getResultTypes(),
+                                  call.getCalleeAttr(), call.getOperands(),
+                                  mlir::UnitAttr());
+    for (mlir::NamedAttribute a : call->getDiscardableAttrs())
+      op->setAttr(a.getName(), a.getValue());
+    call.replaceAllUsesWith(op.getResults());
+    call.erase();
+  }
+}
+
 } // namespace
 
 void loadLoweringDialects(mlir::MLIRContext &ctx) {
@@ -501,7 +529,7 @@ void loadLoweringDialects(mlir::MLIRContext &ctx) {
                   mlir::func::FuncDialect, mlir::index::IndexDialect,
                   mlir::linalg::LinalgDialect, mlir::memref::MemRefDialect,
                   mlir::scf::SCFDialect, mlir::tensor::TensorDialect,
-                  mlir::transform::TransformDialect>();
+                  mlir::transform::TransformDialect, lib::LibDialect>();
 }
 
 mlir::LogicalResult applyLowerings(mlir::ModuleOp module, bool enabled,
@@ -514,6 +542,9 @@ mlir::LogicalResult applyLowerings(mlir::ModuleOp module, bool enabled,
     return mlir::success();
   if (enabled)
     loadLoweringDialects(*module.getContext());
+  else
+    module.getContext()->loadDialect<lib::LibDialect>();
+  markLibCalls(module, marked);
   bool ok = true, lowered = false;
   for (mlir::func::FuncOp f : marked) {
     if (enabled && !f.isExternal()) {
@@ -563,6 +594,21 @@ mlir::LogicalResult checkLowerings(mlir::ModuleOp module) {
       return mlir::success();
   }
   return applyLowerings(*copy, /*enabled=*/true);
+}
+
+void expandLibCalls(mlir::ModuleOp module) {
+  llvm::SmallVector<lib::CallOp> calls;
+  module.walk([&](lib::CallOp call) { calls.push_back(call); });
+  for (lib::CallOp call : calls) {
+    mlir::OpBuilder b(call);
+    auto expanded =
+        mlir::func::CallOp::create(b, call.getLoc(), call.getCalleeAttr(),
+                                   call.getResultTypes(), call.getArgs());
+    for (mlir::NamedAttribute a : call->getDiscardableAttrs())
+      expanded->setAttr(a.getName(), a.getValue());
+    call.replaceAllUsesWith(expanded.getResults());
+    call.erase();
+  }
 }
 
 bool takeLoweredMark(mlir::ModuleOp module) {

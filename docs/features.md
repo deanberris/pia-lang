@@ -34,7 +34,7 @@ Every feature `piac` builds today, with the page that explains it and a working 
 | Spec functions and lemmas | [verifier](verifier.md#spec-functions-and-lemmas) | [specs](../tests/verify/specs.pia), [pure_calls](../tests/verify/pure_calls.pia), [fuel_counterexamples](../tests/verify/fuel_counterexamples.pia) |
 | Opaque spec functions, `@opaque` and `with f` | [verifier](verifier.md#spec-functions-and-lemmas), [ADR 0063](adr/0063-opaque-spec-functions.md) | [opaque](../tests/verify/opaque.pia) |
 | Frames, `reads xs.[lo .. hi]` | [verifier](verifier.md#spread) | [frames](../tests/verify/frames.pia) |
-| Lemmas proved in Lean, `by lean`, `--emit=lean`, receipts in certificates and `--trust-report` | [verifier](verifier.md#spec-functions-and-lemmas), [ADR 0061](adr/0061-lean-proved-facts.md) | [by_lean](../tests/verify/by_lean.pia), [sums](../tests/lean/sums.pia), [native_trusted](../tests/lean/native_trusted.pia) |
+| Lemmas proved in Lean, `by lean`, `--emit=lean`, receipts in certificates and `--trust-report` | [verifier](verifier.md#spec-functions-and-lemmas), [ADR 0061](adr/0061-lean-proved-facts.md) | [by_lean](../tests/verify/by_lean.pia), [sums](../tests/lean/sums.pia), [native_trusted](../tests/lean/native_trusted.pia), [bytes](../tests/lean/bytes.pia) |
 | Spec-only `int` and `real` | [verifier](verifier.md#spec-only-int-and-real) | [reals](../tests/verify/reals.pia) |
 | Spec state: `let spec` locals and `spec` fields | [verifier](verifier.md#spec-state), [ADR 0058](adr/0058-spec-buffers.md) | [spec_locals](../tests/verify/spec_locals.pia), [spec_fields](../tests/verify/spec_fields.pia), [spec_buffers](../tests/verify/spec_buffers.pia) |
 | Cost bounds, `costs iterations` and `costs calls` | [tour](tour.md#cost-bounds), [verifier](verifier.md#cost-bounds), [ADR 0062](adr/0062-cost-bounds-in-contracts.md) | [costs](../tests/verify/costs.pia) |
@@ -70,6 +70,7 @@ Every feature `piac` builds today, with the page that explains it and a working 
 | Contracts on function types | [verifier](verifier.md#higher-order-functions-proved-once) | [lambda_arrow_contract](../tests/verify/lambda_arrow_contract.pia), [lambda_requires](../tests/verify/lambda_requires.pia) |
 | Captures, partial application and closures as results | [tour](tour.md#function-values) | [lambda_captures](../tests/verify/lambda_captures.pia), [lambda_results](../tests/verify/lambda_results.pia) |
 | Function references: `let h : (x : u8) -> u8 requires ... = succ`, and `mutable` ones rebound with `<-` and called indirectly | [tour](tour.md#function-values), [ADR 0071](adr/0071-function-references.md) | [fn_references](../tests/verify/fn_references.pia), [fn_references_mutable](../tests/verify/fn_references_mutable.pia) |
+| Function reference fields: `type { f : (x : u8) -> u8 requires ...; ... }`, stored and rebound with `<-`, and buffers of them as tables called indirectly | [tour](tour.md#function-values), [codegen](codegen.md), [ADR 0071](adr/0071-function-references.md) | [fn_reference_fields](../tests/verify/fn_reference_fields.pia) |
 | Function objects, any type with an `apply` | [tour](tour.md#function-values) | [function_object](../tests/verify/function_object.pia) |
 
 ## Errors, resources and memory
