@@ -2026,6 +2026,19 @@ class Encoder {
       return true;
     }
 
+    // The slice of every iteration's argument to a collective (ADR 0086):
+    // a fresh buffer, whose length and own cell IRGen's assumptions give.
+    if (auto g = mlir::dyn_cast<ForeignOp>(op); g && g->hasAttr("pia.gather")) {
+      Value r = g.getResult(0);
+      if (Type sort = sortOf(r.getType())) {
+        arrays_[r] = declare(sort, "", false);
+        Value len = declare(bvType(), "", false);
+        assertTerm(inRange(len, indexRange()));
+        lengths_[r] = len;
+      }
+      return true;
+    }
+
     // Everything else: compute the results from the operands.
     llvm::SmallVector<Value> operands;
     for (Value v : op->getOperands()) operands.push_back(term(v));

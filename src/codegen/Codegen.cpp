@@ -2372,6 +2372,42 @@ static void defineBoxDescriptors(mlir::ModuleOp module) {
   }
 }
 
+// `pia.foreign "pia$par$gather"(%x)`, marked `pia.gather`: the slice of
+// every iteration's argument to a collective (ADR 0086). It becomes a
+// call of a private declaration per element type, so that the type
+// conversion gives it a memref, and the phase split finds it by name.
+static LogicalResult declareGathers(mlir::ModuleOp module) {
+  llvm::SmallVector<ForeignOp> gathers;
+  module.walk([&](ForeignOp op) {
+    if (op->hasAttr("pia.gather"))
+      gathers.push_back(op);
+  });
+  std::map<std::string, std::string> names;
+  for (ForeignOp op : gathers) {
+    if (op.getNumResults() != 1 || op.getArgs().size() != 1)
+      return op.emitError("internal error: a gather takes one value and "
+                          "makes one slice");
+    mlir::FunctionType ft = mlir::FunctionType::get(
+        module.getContext(), op.getArgs().getTypes(), op.getResultTypes());
+    std::string key;
+    llvm::raw_string_ostream os(key);
+    os << ft;
+    auto [it, fresh] = names.try_emplace(
+        key, kGatherPrefix.str() + std::to_string(names.size()));
+    if (fresh) {
+      mlir::OpBuilder b = mlir::OpBuilder::atBlockEnd(module.getBody());
+      auto decl = make<mlir::func::FuncOp>(b, op.getLoc(), it->second, ft);
+      decl.setPrivate();
+    }
+    mlir::OpBuilder b(op);
+    auto call = make<mlir::func::CallOp>(b, op.getLoc(), it->second,
+                                         op.getResultTypes(), op.getArgs());
+    op.getResult(0).replaceAllUsesWith(call.getResult(0));
+    op.erase();
+  }
+  return mlir::success();
+}
+
 // A `spread` (ADR 0060) reaches codegen as an `scf.for` marked
 // `pia.spread`, so that the verifier sees an ordinary loop. Its iterations
 // own disjoint cells, which the verifier proved, so here it becomes an
@@ -2437,6 +2473,11 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
   types.addDatatypes(module);
   for (auto d : llvm::make_early_inc_range(module.getOps<DatatypeOp>()))
     d.erase();
+  // The gathered slices of collectives (ADR 0086) are not C calls: each
+  // becomes a call of a declaration with Pia types, which the phase split
+  // replaces with a buffer of the spread's count.
+  if (mlir::failed(declareGathers(module)))
+    return mlir::failure();
   // Foreign functions (#55): each C symbol a `pia.foreign` calls gets a
   // private declaration with C types, marked `pia.c`. A Pia declaration
   // with the same name as its symbol is renamed out of the way.

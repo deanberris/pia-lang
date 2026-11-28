@@ -12,6 +12,7 @@
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Interfaces/ViewLikeInterface.h"
 #include "mlir/Transforms/RegionUtils.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/Config/llvm-config.h"
@@ -39,13 +40,23 @@ Op make(mlir::OpBuilder &b, Location loc, Args &&...args) {
 #endif
 }
 
-constexpr llvm::StringLiteral kPrefix = "pia$par$";
-constexpr llvm::StringLiteral kHalo = "pia$par$halo_exchange";
-constexpr llvm::StringLiteral kReduce = "pia$par$all_reduce$";
+// A gathered slice (ADR 0086): a call of one of the declarations that
+// Codegen.cpp's declareGathers made.
+mlir::func::CallOp gatherCall(Operation *op) {
+  auto c = mlir::dyn_cast<mlir::func::CallOp>(op);
+  if (c && c.getCallee().starts_with(kGatherPrefix))
+    return c;
+  return nullptr;
+}
 
+// A call of a function marked `pia.collective`, which IRGen checked.
 mlir::func::CallOp collectiveCall(Operation *op) {
   auto c = mlir::dyn_cast<mlir::func::CallOp>(op);
-  if (c && c.getCallee().starts_with(kPrefix))
+  if (!c)
+    return nullptr;
+  auto f = mlir::SymbolTable::lookupNearestSymbolFrom<mlir::func::FuncOp>(
+      c, c.getCalleeAttr());
+  if (f && f->hasAttr("pia.collective"))
     return c;
   return nullptr;
 }
@@ -100,8 +111,38 @@ public:
     Value any = make<arith::CmpIOp>(b_, l, arith::CmpIPredicate::slt, lo_, hi_);
     auto guard = make<scf::IfOp>(b_, l, mlir::TypeRange{}, any, false);
     b_.setInsertionPoint(guard.thenBlock()->getTerminator());
-    if (mlir::failed(block(*spread_.getBody(), mlir::IRMapping())))
+    // Each gathered slice is a buffer of the spread's count on the heap,
+    // for the whole spread: a gather in a lifted loop fills it again at
+    // each step.
+    mlir::IRMapping outer;
+    Value count = make<arith::SubIOp>(b_, l, hi_, lo_);
+    llvm::SmallVector<Value> buffers;
+    LogicalResult made = mlir::success();
+    spread_.getBody()->walk([&](mlir::func::CallOp c) {
+      if (!gatherCall(c))
+        return;
+      auto rt = mlir::dyn_cast<mlir::MemRefType>(c.getResult(0).getType());
+      if (!rt || rt.getRank() != 1) {
+        made = c.emitError("internal error: a gathered slice is not a "
+                           "one-dimensional memref");
+        return;
+      }
+      auto plain = mlir::MemRefType::get({mlir::ShapedType::kDynamic},
+                                         rt.getElementType());
+      Value buf = make<memref::AllocOp>(b_, l, plain, mlir::ValueRange{count});
+      buffers.push_back(buf);
+      Value view = buf;
+      if (plain != rt)
+        view = make<memref::CastOp>(b_, l, rt, buf);
+      gathered_[c.getResult(0)] = buf;
+      outer.map(c.getResult(0), view);
+    });
+    if (mlir::failed(made))
       return mlir::failure();
+    if (mlir::failed(block(*spread_.getBody(), outer)))
+      return mlir::failure();
+    for (Value buf : buffers)
+      make<memref::DeallocOp>(b_, l, buf);
     spread_.erase();
     return mlir::success();
   }
@@ -112,6 +153,8 @@ private:
   mlir::Block *entry_ = nullptr;
   Value lo_, hi_, one_, zero_;
   llvm::DenseSet<Value> written_;
+  // Each gather's result, and the buffer it fills.
+  llvm::DenseMap<Value, Value> gathered_;
 
   bool inBody(Value v) {
     return spread_.getRegion().isAncestor(v.getParentRegion());
@@ -184,78 +227,53 @@ private:
     return remat(v, ctl, b_);
   }
 
-  // One phase: `ops` as a parallel loop over the range, and then, if
-  // `reduce` is an all_reduce, its contribution folded into one cell.
-  LogicalResult phase(llvm::ArrayRef<Operation *> ops, mlir::IRMapping &outer,
-                      mlir::func::CallOp reduce) {
-    if (ops.empty() && !reduce)
+  // One phase: `ops` as a parallel loop over the range, in which each
+  // iteration also stores its argument to each of `gathers` in its cell.
+  LogicalResult phase(llvm::ArrayRef<Operation *> ops,
+                      llvm::ArrayRef<mlir::func::CallOp> gathers,
+                      mlir::IRMapping &outer) {
+    if (ops.empty() && gathers.empty())
       return mlir::success();
-    Location l = reduce ? reduce.getLoc() : ops.front()->getLoc();
-    Value acc;
-    Type accT;
-    arith::AtomicRMWKind kind = arith::AtomicRMWKind::addi;
-    llvm::StringRef op;
-    if (reduce) {
-      op = reduce.getCallee().drop_front(kReduce.size());
-      Type rt = reduce.getResult(0).getType();
-      bool boolean = op == "or" || op == "and";
-      // LLVM has no atomics on i1: a bool is a byte.
-      accT = boolean ? b_.getI8Type() : rt;
-      unsigned w = accT.getIntOrFloatBitWidth();
-      llvm::APInt id(w, 0);
-      if (op == "add_u" || op == "add_s") {
-        kind = arith::AtomicRMWKind::addi;
-      } else if (op == "min_u") {
-        kind = arith::AtomicRMWKind::minu;
-        id = llvm::APInt::getMaxValue(w);
-      } else if (op == "min_s") {
-        kind = arith::AtomicRMWKind::mins;
-        id = llvm::APInt::getSignedMaxValue(w);
-      } else if (op == "max_u") {
-        kind = arith::AtomicRMWKind::maxu;
-      } else if (op == "max_s") {
-        kind = arith::AtomicRMWKind::maxs;
-        id = llvm::APInt::getSignedMinValue(w);
-      } else if (op == "or") {
-        kind = arith::AtomicRMWKind::ori;
-      } else if (op == "and") {
-        kind = arith::AtomicRMWKind::andi;
-        id = llvm::APInt(w, 1);
-      } else {
-        return reduce.emitError("internal error: unknown collective");
-      }
-      // The cell lives in the function's frame, made once.
-      mlir::OpBuilder eb = mlir::OpBuilder::atBlockBegin(entry_);
-      acc = make<memref::AllocaOp>(eb, l, mlir::MemRefType::get({1}, accT));
-      Value init = make<arith::ConstantOp>(b_, l, b_.getIntegerAttr(accT, id));
-      make<memref::StoreOp>(b_, l, init, acc, mlir::ValueRange{zero_});
-    }
+    Location l = !ops.empty() ? ops.front()->getLoc() : gathers.front().getLoc();
     auto par =
         make<scf::ParallelOp>(b_, l, mlir::ValueRange{lo_},
                               mlir::ValueRange{hi_}, mlir::ValueRange{one_});
     mlir::OpBuilder pb(par.getBody()->getTerminator());
     mlir::IRMapping m = outer;
-    m.map(spread_.getInductionVar(), par.getInductionVars()[0]);
+    Value iv = par.getInductionVars()[0];
+    m.map(spread_.getInductionVar(), iv);
     for (Operation *o : ops)
       if (mlir::failed(cloneInto(o, m, pb)))
         return mlir::failure();
-    if (!reduce)
-      return mlir::success();
-    mlir::FailureOr<Value> v = remat(reduce.getOperand(0), m, pb);
-    if (mlir::failed(v))
-      return mlir::failure();
-    Value x = *v;
-    if (x.getType() != accT)
-      x = op == "add_s" ? Value(make<arith::ExtSIOp>(pb, l, accT, x))
-                        : Value(make<arith::ExtUIOp>(pb, l, accT, x));
-    make<memref::AtomicRMWOp>(pb, l, accT, kind, x, acc,
-                              mlir::ValueRange{zero_});
-    Value r = make<memref::LoadOp>(b_, l, acc, mlir::ValueRange{zero_});
-    if (op == "or" || op == "and") {
-      Value z = make<arith::ConstantOp>(b_, l, b_.getIntegerAttr(accT, 0));
-      r = make<arith::CmpIOp>(b_, l, arith::CmpIPredicate::ne, r, z);
+    for (mlir::func::CallOp g : gathers) {
+      mlir::FailureOr<Value> x = remat(g.getOperand(0), m, pb);
+      if (mlir::failed(x))
+        return mlir::failure();
+      Value at = make<arith::SubIOp>(pb, g.getLoc(), iv, lo_);
+      make<memref::StoreOp>(pb, g.getLoc(), *x, gathered_.lookup(g.getResult(0)),
+                            mlir::ValueRange{at});
     }
-    outer.map(reduce.getResult(0), r);
+    return mlir::success();
+  }
+
+  // A collective's call, made once between two phases. What it does not
+  // gather is uniform, so it is computed as the iteration at lo would.
+  LogicalResult collective(mlir::func::CallOp c, mlir::IRMapping &outer) {
+    llvm::SmallVector<Value> args;
+    for (Value a : c.getOperands()) {
+      if (Value got = outer.lookupOrNull(a)) {
+        args.push_back(got);
+        continue;
+      }
+      mlir::FailureOr<Value> v = control(a, outer);
+      if (mlir::failed(v))
+        return mlir::failure();
+      args.push_back(*v);
+    }
+    auto call = make<mlir::func::CallOp>(b_, c.getLoc(), c.getCalleeAttr(),
+                                         c.getResultTypes(), args);
+    for (auto [from, to] : llvm::zip(c.getResults(), call.getResults()))
+      outer.map(from, to);
     return mlir::success();
   }
 
@@ -263,15 +281,20 @@ private:
   // computed outside the parallel loops.
   LogicalResult block(mlir::Block &blk, mlir::IRMapping outer) {
     llvm::SmallVector<Operation *> ops;
-    auto flush = [&](mlir::func::CallOp reduce) {
-      LogicalResult r = phase(ops, outer, reduce);
+    llvm::SmallVector<mlir::func::CallOp> gathers;
+    auto flush = [&]() {
+      LogicalResult r = phase(ops, gathers, outer);
       ops.clear();
+      gathers.clear();
       return r;
     };
     for (Operation &op : blk.without_terminator()) {
+      if (auto g = gatherCall(&op)) {
+        gathers.push_back(g);
+        continue;
+      }
       if (auto c = collectiveCall(&op)) {
-        if (mlir::failed(
-                flush(c.getCallee() == kHalo ? mlir::func::CallOp() : c)))
+        if (mlir::failed(flush()) || mlir::failed(collective(c, outer)))
           return mlir::failure();
         continue;
       }
@@ -279,12 +302,12 @@ private:
         ops.push_back(&op);
         continue;
       }
-      if (mlir::failed(flush(mlir::func::CallOp())))
+      if (mlir::failed(flush()))
         return mlir::failure();
       if (mlir::failed(lift(op, outer)))
         return mlir::failure();
     }
-    return flush(mlir::func::CallOp());
+    return flush();
   }
 
   // An if or for that holds a collective, lifted out of the
@@ -338,7 +361,7 @@ LogicalResult splitIntoPhases(scf::ForOp spread) {
 
 void eraseCollectiveDeclarations(mlir::ModuleOp module) {
   for (auto f : llvm::make_early_inc_range(module.getOps<mlir::func::FuncOp>()))
-    if (f.isExternal() && f.getSymName().starts_with(kPrefix) &&
+    if (f.isExternal() && f.getSymName().starts_with(kGatherPrefix) &&
         mlir::SymbolTable::symbolKnownUseEmpty(f, module))
       f.erase();
 }

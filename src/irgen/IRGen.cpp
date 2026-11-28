@@ -1255,6 +1255,7 @@ class Gen {
     owns_.clear();
     variadic_.reset();
     lower_ = nullptr;
+    collective_ = nullptr;
     case_ = nullptr;
     deref_ = nullptr;
     solver_.clear();
@@ -1590,6 +1591,8 @@ class Gen {
       return;
     }
     if (lower_ && !markLowering(*lower_, sig, fn, isExtern))
+      return;
+    if (collective_ && !markCollective(*collective_, sig, fn, isExtern))
       return;
     if (deref_ && !isExtern) {
       fail(*deref_, "@deref is only for a foreign declaration, "
@@ -2622,6 +2625,16 @@ class Gen {
           return false;
         }
         lower_ = a.get();
+        continue;
+      }
+      // `@collective(xs)`: every iteration of a spread calls the function
+      // once, together, over the slice of their arguments for `xs` (ADR
+      // 0086); checked with the signature.
+      if (a->text == "collective" &&
+          llvm::all_of(a->kids, [](const syntax::NodePtr &k) {
+            return k->kind == NodeKind::Name;
+          })) {
+        collective_ = a.get();
         continue;
       }
       // `@deref` on a foreign declaration: the C function returns a
@@ -4658,8 +4671,6 @@ class Gen {
                                      f.flags.empty() && !lookup(f.text) &&
                                      overloadSet(f.text).empty()) {
       if (f.text == "unsafe") return genUnsafe(n, expected);
-      if (isCollectiveName(f.text))
-        return genCollective(n, f.text);
       if (f.text == "with_arena")
         return fail(n, "'with_arena' takes the arena's size in bytes, an "
                        "integer literal, and a function of the arena, as "
@@ -4701,6 +4712,10 @@ class Gen {
         for (const NodePtr &k : n.kids) call->add(syntax::clone(*k));
         return genApply(*keep(std::move(call)), expected);
       }
+    // A call of a `@collective` function in a spread body (ADR 0086).
+    if (!local && fn.flags != "prelude" && &n != inCollective_ &&
+        collectiveSig(fn.text))
+      return genCollectiveApply(n, fn.text, expected);
     if (!local && fn.flags != "prelude")
       // In code from another module, its higher-order functions by their
       // own names, as its other functions are found (ADR 0039, section 6;
@@ -11628,7 +11643,7 @@ class Gen {
     std::set<std::string> written;     // the buffers the body writes
     std::map<std::string, BindingPtr> owners;
     bool footprint = false; // a function's @owns, not a spread
-    // Collectives (ADR 0086): the range, the buffers a halo_exchange made
+    // Collectives (ADR 0086): the range, the buffers a collective published,
     // readable everywhere until the next collective, and the if, for and
     // while statements that hold a collective, which are barriers.
     Value lo, hi;
@@ -11693,10 +11708,10 @@ class Gen {
                 return f.buf == at;
               });
         }
-      // `halo_exchange b` names the buffer, and reads or writes none of it
-      // (ADR 0086).
+      // A collective's argument, which publishes the buffer: a collective
+      // takes no out or inout parameter, so it reads the buffer once every
+      // iteration has written its cells (ADR 0086).
       bool exchanged = parent && isCollective(*parent) &&
-                       parent->kids[0]->text == "halo_exchange" &&
                        parent->kids[0].get() != &n;
       if (!indexed && !measured && !passed && !exchanged)
         return &n;
@@ -11719,15 +11734,15 @@ class Gen {
     if (!spread_->outside.count(buf.get()) ||
         !spread_->written.count(buf->name))
       return true;
-    // After `halo_exchange buf`, every cell is readable and none writable
-    // until the next collective (ADR 0086, section 3).
+    // After a collective that takes `buf`, every cell is readable and none
+    // writable until the next collective (ADR 0086, section 4).
     if (spread_->halo.count(buf->name)) {
       if (!write)
         return true;
       fail(at, "'" + buf->name +
-                   "' was exchanged by halo_exchange, so every iteration "
-                   "may read any of its cells and none may write it until "
-                   "the next collective (ADR 0086)");
+                   "' was passed to a collective, which published it: "
+                   "every iteration may read any of its cells and none may "
+                   "write it until the next collective (ADR 0086)");
       return false;
     }
     Location l = loc(at);
@@ -11836,7 +11851,9 @@ class Gen {
   // that it touches the iteration's cells, `b = i` (ADR 0060).
   bool checkFootprintCall(const Node &n, const sema::FuncSig &sig,
                           const std::vector<const Node *> &args) {
-    if (!spread_ || contract_ || ghost_)
+    // A collective's buffer arguments are published, not written: it takes
+    // no out or inout parameter (ADR 0086).
+    if (!spread_ || contract_ || ghost_ || &n == inCollective_)
       return true;
     std::vector<Footprint> fps = footprintsOf(sig);
     for (size_t i = 0; i < args.size(); ++i) {
@@ -11848,7 +11865,7 @@ class Gen {
         continue;
       if (spread_->halo.count(arg.text))
         return fail(arg, "'" + arg.text +
-                             "' was exchanged by halo_exchange, so no "
+                             "' was published by a collective, so no "
                              "iteration may write it until the next "
                              "collective (ADR 0086)"),
                false;
@@ -12103,15 +12120,104 @@ class Gen {
   // genExprOf lets it through the second time.
   const Node *inCompound_ = nullptr;
 
-  bool isCollectiveName(const std::string &name) {
-    return (name == "all_reduce" || name == "halo_exchange") && !lookup(name) &&
-           overloadSet(name).empty();
+  // The call being generated as a collective's, so that genApply's hook
+  // lets it through to overload resolution.
+  const Node *inCollective_ = nullptr;
+
+  // `@collective` or `@collective(xs, ...)` after a function's return type
+  // (ADR 0086, section 1), or null.
+  static const Node *collectiveAttrOf(const Node *item) {
+    if (!item || item->kids.size() < 2)
+      return nullptr;
+    const Node &ret = *item->kids[1];
+    if (ret.kind != NodeKind::RetAnnot || ret.kids.size() < 2 || !ret.kids[1])
+      return nullptr;
+    for (const syntax::NodePtr &a : ret.kids[1]->kids)
+      if (a && a->text == "collective")
+        return a.get();
+    return nullptr;
   }
 
+  // The positions, among its value parameters, of the parameters a
+  // collective gathers.
+  std::vector<size_t> gatheredOf(const sema::FuncSig &sig) {
+    std::vector<size_t> out;
+    const Node *a = collectiveAttrOf(sig.item);
+    if (!a)
+      return out;
+    std::vector<std::string> names;
+    if (sig.isGeneric())
+      for (const Node *p : valueParamsOf(sig))
+        names.push_back(p->text);
+    else
+      for (const sema::Param &p : sig.params)
+        names.push_back(p.name);
+    for (const syntax::NodePtr &k : a->kids)
+      for (size_t i = 0; i < names.size(); ++i)
+        if (k->kind == NodeKind::Name && names[i] == k->text)
+          out.push_back(i);
+    return out;
+  }
+
+  // A function that `name` may call and that is a collective, or null.
+  const sema::FuncSig *collectiveSig(const std::string &name) {
+    if (lookup(name))
+      return nullptr;
+    for (const sema::FuncSig *s : overloadSet(name))
+      if (collectiveAttrOf(s->item))
+        return s;
+    return nullptr;
+  }
+
+  // Whether `n` calls a collective. The compiler knows none by name: a
+  // collective is any function marked `@collective` (ADR 0086).
   bool isCollective(const Node &n) {
-    return n.kind == NodeKind::Apply && !n.kids.empty() &&
-           n.kids[0]->kind == NodeKind::Name && n.kids[0]->flags.empty() &&
-           isCollectiveName(n.kids[0]->text);
+    if (n.kind != NodeKind::Apply || n.kids.empty())
+      return false;
+    const Node *f = n.kids[0].get();
+    if (f->kind == NodeKind::Instantiate && !f->kids.empty())
+      f = f->kids[0].get();
+    return f->kind == NodeKind::Name && f->flags != "prelude" &&
+           collectiveSig(f->text);
+  }
+
+  // Checks `@collective` on the function being generated and marks it, so
+  // codegen calls it once for the whole spread (ADR 0086, section 1).
+  bool markCollective(const Node &attr, const sema::FuncSig &sig,
+                      mlir::func::FuncOp fn, bool isExtern) {
+    if (isExtern || hasFlag(*sig.item, "spec") ||
+        hasFlag(*sig.item, "lemma"))
+      return fail(attr, "@collective is for a function with a Pia body, "
+                        "which codegen runs once for the whole spread: "
+                        "not an extern, a spec function or a lemma"),
+             false;
+    for (const sema::Param &p : sig.params)
+      if (writes(p) || sema::hasModifier(p.modifiers, "mutable"))
+        return fail(attr, "a collective takes no out, inout or mutable "
+                          "parameter: it runs once for every iteration, so "
+                          "what it writes would be no iteration's (ADR "
+                          "0086); '" +
+                              p.name + "' is one"),
+               false;
+    std::set<std::string> seen;
+    for (const syntax::NodePtr &k : attr.kids) {
+      auto p = llvm::find_if(sig.params, [&](const sema::Param &q) {
+        return k->kind == NodeKind::Name && q.name == k->text;
+      });
+      if (p == sig.params.end())
+        return fail(*k, "@collective names the parameters it gathers, as "
+                        "in @collective(xs)"),
+               false;
+      if (!mlir::isa<SliceType>(p->type))
+        return fail(*k, "a gathered parameter is a slice, '" + p->name +
+                            " : [t]', which holds every iteration's argument "
+                            "(ADR 0086)"),
+               false;
+      if (!seen.insert(p->name).second)
+        return fail(*k, "'" + p->name + "' is gathered twice"), false;
+    }
+    fn->setAttr("pia.collective", b_.getUnitAttr());
+    return true;
   }
 
   // At a collective, and around an if, for or while that holds one, the
@@ -12142,118 +12248,105 @@ class Gen {
     return r;
   }
 
-  // `all_reduce op e` and `halo_exchange b1 ... bk` in a spread body.
-  R genCollective(const Node &n, const std::string &name) {
+  // A call of a collective in a spread body (ADR 0086, sections 1 and 4).
+  // Each gathered argument becomes the slice of every iteration's
+  // argument, a fresh buffer of which the iteration knows its length and
+  // its own cell, and the call is generated as any other, after a barrier.
+  // Codegen gathers the buffer and runs the call once.
+  R genCollectiveApply(const Node &n, const std::string &name, Type expected) {
     Location l = loc(n);
     if (!spread_ || spread_->footprint || contract_ || ghost_)
       return fail(n, "'" + name +
-                         "' is a collective, which every iteration of a "
-                         "spread joins: it can only be called in a spread's "
-                         "body (ADR 0086)");
-    if (name == "halo_exchange") {
-      if (n.kids.size() < 2)
-        return fail(n, "halo_exchange names the buffers to exchange, as in "
-                       "'halo_exchange bed'");
-      std::vector<std::string> bufs;
-      for (size_t k = 1; k < n.kids.size(); ++k) {
-        const Node &a = *n.kids[k];
-        BindingPtr b = a.kind == NodeKind::Name ? lookup(a.text) : nullptr;
-        if (!b || !elementType(b->type) || !spread_->outside.count(b.get()) ||
-            !spread_->written.count(a.text))
-          return fail(a, "halo_exchange names a buffer the spread writes; "
-                         "one that no iteration writes can be read anywhere "
-                         "already (ADR 0086)");
-        bufs.push_back(a.text);
+                         "' is a collective (@collective), which every "
+                         "iteration of a spread joins: it can only be "
+                         "called in a spread's body (ADR 0086)");
+    const sema::FuncSig *first = collectiveSig(name);
+    std::vector<size_t> gathered = gatheredOf(*first);
+    for (const sema::FuncSig *s : overloadSet(name))
+      if (!collectiveAttrOf(s->item) || gatheredOf(*s) != gathered)
+        return fail(n, "every overload of the collective '" + name +
+                           "' must be a collective that gathers the same "
+                           "parameters (ADR 0086)");
+    auto call = syntax::makeNode(NodeKind::Apply, n.loc);
+    call->flags = n.flags;
+    call->add(syntax::clone(*n.kids[0]));
+    pushScope();
+    std::vector<std::string> published;
+    Type usize = types_.usize();
+    Type intT = UnboundedIntType::get(&ctx_);
+    for (size_t k = 1; k < n.kids.size(); ++k) {
+      const Node &arg = *n.kids[k];
+      if (!llvm::is_contained(gathered, k - 1)) {
+        if (arg.kind == NodeKind::Name && spread_->written.count(arg.text))
+          if (BindingPtr b = lookup(arg.text);
+              b && spread_->outside.count(b.get()))
+            published.push_back(arg.text);
+        call->add(syntax::clone(arg));
+        continue;
       }
-      spreadBarrier(l);
-      auto x = create<ForeignOp>(l, mlir::TypeRange{},
-                                 b_.getStringAttr("pia$par$halo_exchange"),
-                                 mlir::ValueRange{});
-      x->setAttr("pia.collective", b_.getUnitAttr());
-      spread_->halo.insert(bufs.begin(), bufs.end());
-      return unit();
-    }
-    static const std::set<std::string> ops = {"add", "min", "max", "or", "and"};
-    if (n.kids.size() != 3 || n.kids[1]->kind != NodeKind::Name ||
-        !ops.count(n.kids[1]->text))
-      return fail(n, "all_reduce takes an operator and a value, as in "
-                     "'all_reduce add x': add, min or max over integers, or "
-                     "or and and over bools");
-    const std::string op = n.kids[1]->text;
-    const Node &arg = *n.kids[2];
-    bool boolean = op == "or" || op == "and";
-    R v = genExpr(arg, boolean ? boolType() : Type());
-    if (!v)
-      return v;
-    if (boolean && v->type != boolType())
-      return fail(arg, "all_reduce " + op + " combines bools, found " +
-                           typeName(v->type));
-    auto it = mlir::dyn_cast<IntType>(v->type);
-    if (!boolean && !it)
-      return fail(arg, "all_reduce " + op +
-                           " combines integers for now, found " +
-                           typeName(v->type) + " (floats come with M11)");
-    std::string sym = "pia$par$all_reduce$" + op;
-    Type rt = v->type;
-    bool sgn = it && it.isSigned();
-    if (!boolean) {
-      sym += sgn ? "_s" : "_u";
-      if (op == "add")
-        rt = types_.builtin(sgn ? "i64" : "u64");
-    }
-    // The sum of every iteration's contribution fits the result when the
-    // range has at most max / m iterations, for m the largest magnitude
-    // of the contribution's type.
-    if (op == "add") {
-      constexpr unsigned w = 192;
-      llvm::APInt lo = it.getLo().sextOrTrunc(w),
-                  hi = it.getHi().sextOrTrunc(w);
-      llvm::APInt m = lo.abs().ugt(hi.abs()) ? lo.abs() : hi.abs();
-      if (!m.isZero()) {
-        llvm::APInt top = sgn ? llvm::APInt::getSignedMaxValue(64).zext(w)
-                              : llvm::APInt::getMaxValue(64).zext(w);
-        llvm::APInt most = top.udiv(m);
-        Type intT = UnboundedIntType::get(&ctx_);
-        Value hiI = create<ExactConvertOp>(l, intT, spread_->hi);
-        Value loI = create<ExactConvertOp>(l, intT, spread_->lo);
-        Value count = create<ExactSubOp>(l, intT, hiI, loI);
-        TV k = exactConst(l, intT, llvm::toString(most, 10, false));
-        Value ok = create<ExactCmpOp>(
-            l, b_.getI1Type(), CmpPredicateAttr::get(&ctx_, CmpPredicate::le),
-            count, k.value);
-        auto as = create<contract::AssertOp>(l, ok);
-        as->setAttr("pia.claim",
-                    b_.getStringAttr(
-                        "the sum of every iteration's " + typeName(v->type) +
-                        " fits in " + (sgn ? "i64" : "u64") + ": at most " +
-                        llvm::toString(most, 10, false) +
-                        (most.isOne() ? " iteration" : " iterations")));
+      // A lone non-generic collective gives the element type, so that a
+      // u8 is gathered into its [u32].
+      Type elem;
+      if (auto set = overloadSet(name); set.size() == 1 &&
+                                        !set[0]->isGeneric() &&
+                                        k - 1 < set[0]->params.size())
+        if (auto sl = mlir::dyn_cast<SliceType>(set[0]->params[k - 1].type))
+          elem = sl.getElementType();
+      R x = genExpr(arg, elem);
+      if (x && elem)
+        x = coerce(*x, elem, arg);
+      if (!x) {
+        popScope();
+        return x;
       }
+      if (!mlir::isa<IntType>(x->type) && !isBool(x->type)) {
+        popScope();
+        return fail(arg, "a gathered argument is an integer or a bool for "
+                         "now, found " +
+                             typeName(x->type) + " (ADR 0086)");
+      }
+      Type st = SliceType::get(&ctx_, x->type);
+      auto g = create<ForeignOp>(l, mlir::TypeRange{st},
+                                 b_.getStringAttr("pia$par$gather"),
+                                 mlir::ValueRange{x->value});
+      g->setAttr("pia.gather", b_.getUnitAttr());
+      Value xs = g.getResult(0);
+      // How the argument binds: `len xs = hi - lo`, and the iteration's
+      // own argument at `xs.[i - lo]`.
+      Value len = create<FromIndexOp>(
+          l, usize, create<LenOp>(l, b_.getIndexType(), xs));
+      Value count = create<ExactSubOp>(
+          l, intT, create<ExactConvertOp>(l, intT, spread_->hi),
+          create<ExactConvertOp>(l, intT, spread_->lo));
+      create<contract::AssumeOp>(
+          l, create<ExactCmpOp>(l, b_.getI1Type(),
+                                CmpPredicateAttr::get(&ctx_, CmpPredicate::eq),
+                                create<ExactConvertOp>(l, intT, len), count));
+      Value at = create<SubOp>(l, spread_->iv.getType(), spread_->iv,
+                               spread_->lo);
+      Value own = create<LoadOp>(l, x->type, xs, toIndex(l, at));
+      Value same =
+          isBool(x->type)
+              ? create<mlir::arith::XOrIOp>(
+                    l, create<mlir::arith::XOrIOp>(l, own, x->value),
+                    boolConst(l, true))
+                    .getResult()
+              : cmp(l, CmpPredicate::eq, own, x->value);
+      create<contract::AssumeOp>(l, same);
+      std::string tmp = "$gathered" + std::to_string(k);
+      bind(tmp, xs, st, false);
+      call->add(syntax::makeNode(NodeKind::Name, arg.loc, tmp));
     }
     spreadBarrier(l);
-    auto call = create<ForeignOp>(l, mlir::TypeRange{rt}, b_.getStringAttr(sym),
-                                  mlir::ValueRange{v->value});
-    call->setAttr("pia.collective", b_.getUnitAttr());
-    Value r = call.getResult(0);
-    // What one contribution says about the result.
-    Value fact;
-    if (op == "add" && !sgn) {
-      R wide = coerce(*v, rt, arg);
-      if (!wide)
-        return wide;
-      fact = cmp(l, CmpPredicate::ge, r, wide->value);
-    } else if (op == "min") {
-      fact = cmp(l, CmpPredicate::le, r, v->value);
-    } else if (op == "max") {
-      fact = cmp(l, CmpPredicate::ge, r, v->value);
-    } else if (op == "or") {
-      fact = implies(l, v->value, r);
-    } else if (op == "and") {
-      fact = implies(l, r, v->value);
-    }
-    if (fact)
-      create<contract::AssumeOp>(l, fact);
-    return TV{r, rt};
+    const Node &c = *keep(std::move(call));
+    const Node *saved = inCollective_;
+    inCollective_ = &c;
+    R r = genApply(c, expected);
+    inCollective_ = saved;
+    popScope();
+    if (r)
+      spread_->halo.insert(published.begin(), published.end());
+    return r;
   }
 
   // The protocol check (ADR 0086, section 2): every collective is reached
@@ -12283,7 +12376,7 @@ class Gen {
   }
 
   // Whether `n` is the same in every iteration: it reads only names bound
-  // before the spread, uniform locals and all_reduce results, and no
+  // before the spread, uniform locals and collectives' results, and no
   // buffer the spread writes.
   bool uniformExpr(const Node &n, const SpreadScope &sc, const Protocol &p) {
     if (isCollective(n))
@@ -12326,15 +12419,38 @@ class Gen {
       return true;
     };
     if (isCollective(n)) {
-      const std::string &name = n.kids[0]->text;
+      const Node *f = n.kids[0].get();
+      if (f->kind == NodeKind::Instantiate)
+        f = f->kids[0].get();
+      const std::string &name = f->text;
       if (!why.empty())
-        return fail(n, "every iteration must reach this " + name +
-                           " in the same order, but it is reached only "
-                           "when " +
+        return fail(n, "every iteration must reach this call of the "
+                       "collective '" +
+                           name + "' in the same order, but it is reached "
+                                  "only when " +
                            why +
                            " holds, and that depends on the iteration "
                            "(ADR 0086)"),
                false;
+      // The call runs once for every iteration, so what it does not
+      // gather must be the same in each. A buffer outside the spread is
+      // the same buffer, whatever its cells hold.
+      std::vector<size_t> gathered = gatheredOf(*collectiveSig(name));
+      for (size_t k = 1; k < n.kids.size(); ++k) {
+        const Node &arg = *n.kids[k];
+        if (llvm::is_contained(gathered, k - 1))
+          continue;
+        bool buffer = arg.kind == NodeKind::Name && arg.text != sc.var &&
+                      !p.locals.count(arg.text);
+        if (!buffer && !uniformExpr(arg, sc, p))
+          return fail(arg, "'" + name +
+                               "' runs once for every iteration, so this "
+                               "argument must be the same in each, and it "
+                               "depends on the iteration; gather it with "
+                               "@collective(...) to pass one per iteration "
+                               "(ADR 0086)"),
+                 false;
+      }
       if (!all(1, why))
         return false;
       ++p.phase;
@@ -12424,7 +12540,7 @@ class Gen {
     }
     case NodeKind::While:
       // Its condition would have to be uniform and change, and in v0 only
-      // an all_reduce result is uniform and nothing can assign one.
+      // a collective's result is uniform and nothing can assign one.
       if (holdsCollective(n, p))
         return fail(n, "a while loop cannot hold a collective yet: use a "
                        "for loop over a uniform range (ADR 0086)"),
@@ -12433,9 +12549,9 @@ class Gen {
     case NodeKind::LetIn: {
       const Node &value = *n.kids[3];
       if (holdsCollective(value, p) && !isCollective(value))
-        return fail(value, "only an all_reduce itself can be bound here: "
-                           "code that holds a collective cannot compute a "
-                           "value yet (ADR 0086)"),
+        return fail(value, "only a collective's call itself can be bound "
+                           "here: code that holds a collective cannot "
+                           "compute a value yet (ADR 0086)"),
                false;
       if (!walkProtocol(value, sc, p, why))
         return false;
@@ -13683,6 +13799,7 @@ class Gen {
   std::optional<unsigned> variadic_;
   const Node *variadicNode_ = nullptr;
   const Node *lower_ = nullptr; // the function's @lower (ADR 0065)
+  const Node *collective_ = nullptr; // its @collective (ADR 0086)
   // `@deref` on the item being generated, or null.
   const Node *deref_ = nullptr;
   std::string solver_;  // @solver(...) on it (ADR 0036)

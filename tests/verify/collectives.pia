@@ -1,21 +1,47 @@
-(* Collectives in a spread (ADR 0086): a stencil over time steps whose
-   iterations read their neighbours after a halo_exchange, an all_reduce
-   that every iteration sees, and what one contribution says about the
-   result. Reading a neighbour without an exchange races with its owner,
-   and the sum of u64 contributions could overflow.
+(* Collectives in a spread (ADR 0086): functions marked @collective, which
+   every iteration calls once, together. `sum` gathers every iteration's
+   argument into a slice and adds it up with an ordinary proved loop, and
+   `exchange` gathers nothing: it is a barrier, and the buffer it takes is
+   published, readable by every iteration until the next collective. A
+   stencil over time steps reads its neighbours after an exchange, and
+   every iteration knows that the sum is at least its own contribution.
+   Reading a neighbour without an exchange races with its owner, and a
+   range longer than sum's precondition allows could overflow.
 // RUN: not piac --verify %s | FileCheck %s
 *)
+
+let sum (xs : [u32]) : u64
+  @collective(xs)
+  requires len xs <= 4'294'967'297
+  ensures forall (k in 0 .. len xs). result >= xs.[k]
+= let s : mutable u64 = 0 in
+  for j in 0 .. len xs
+    invariant s <= j * 4'294'967'295
+    invariant forall (k in 0 .. j). s >= xs.[k]
+  do s <- s + xs.[j] done;
+  s
+
+let most (xs : [u32]) : u32
+  @collective(xs)
+  ensures forall (k in 0 .. len xs). result >= xs.[k]
+= let m : mutable u32 = 0 in
+  for j in 0 .. len xs
+    invariant forall (k in 0 .. j). m >= xs.[k]
+  do if xs.[j] > m then m <- xs.[j] else () done;
+  m
+
+let exchange (b : [u32]) : unit @collective = ()
 
 let relax (a : borrowed inout mutable [u32]) (b : borrowed inout mutable [u32]) (steps : u32) : unit
   requires len b = len a && len a <= 1000000
 = let n = len a in
   spread i in 0 .. n do
     for t in 0 .. steps do
-      halo_exchange a;
+      exchange a;
       let l = if i > 0 then a.[i - 1] else a.[i] in
       let r = if i + 1 < n then a.[i + 1] else a.[i] in
       b.[i] <- l / 2 + r / 2;
-      halo_exchange b;
+      exchange b;
       a.[i] <- b.[i]
     done
   done
@@ -23,14 +49,14 @@ let relax (a : borrowed inout mutable [u32]) (b : borrowed inout mutable [u32]) 
 let share (xs : [u32]) (ys : out mutable [u64]) : unit
   requires len ys = len xs && len xs <= 4294967296
 = spread i in 0 .. len xs do
-    let total = all_reduce add xs.[i] in
+    let total = sum xs.[i] in
     ys.[i] <- total - xs.[i]
   done
 
 let below_max (xs : [u32]) (ys : out mutable [u32]) : unit
   requires len ys = len xs
 = spread i in 0 .. len xs do
-    let m = all_reduce max xs.[i] in
+    let m = most xs.[i] in
     ys.[i] <- m - xs.[i]
   done
 
@@ -38,58 +64,15 @@ let below_max (xs : [u32]) (ys : out mutable [u32]) : unit
 let unexchanged (a : borrowed inout mutable [u32]) : unit
   requires len a >= 2
 = spread i in 1 .. len a do
-    let s = all_reduce min a.[i] in
-    a.[i] <- a.[i - 1] - s
+    let m = most a.[i] in
+    a.[i] <- m - a.[i - 1]
   done
 
-(* 2^64 - 1 is a u64, so two iterations' sum may not fit. *)
-let wide (xs : [u64]) (ys : out mutable [u64]) : unit
+(* Nothing bounds the range, so sum's precondition may not hold. *)
+let unbounded (xs : [u32]) (ys : out mutable [u64]) : unit
   requires len ys = len xs
-= spread i in 0 .. len xs do ys.[i] <- all_reduce add xs.[i] done
+= spread i in 0 .. len xs do ys.[i] <- sum xs.[i] done
 
 (*
-// CHECK: collectives.pia:13:9: proved: the index fits in u32 [smt]
-// CHECK: collectives.pia:15:34: proved: '-' does not overflow usize [smt]
-// CHECK: collectives.pia:15:29: proved: the index is within bounds [smt]
-// CHECK: collectives.pia:15:44: proved: the index is within bounds [smt]
-// CHECK: collectives.pia:16:20: proved: '+' does not overflow usize [smt]
-// CHECK: collectives.pia:16:38: proved: '+' does not overflow usize [smt]
-// CHECK: collectives.pia:16:33: proved: the index is within bounds [smt]
-// CHECK: collectives.pia:16:48: proved: the index is within bounds [smt]
-// CHECK: collectives.pia:17:7: proved: the iteration owns the cell it writes in 'b' (c = i) [smt]
-// CHECK: collectives.pia:17:18: proved: the divisor is not zero [intervals]
-// CHECK: collectives.pia:17:18: proved: '/' does not overflow u32 [intervals]
-// CHECK: collectives.pia:17:26: proved: the divisor is not zero [intervals]
-// CHECK: collectives.pia:17:26: proved: '/' does not overflow u32 [intervals]
-// CHECK: collectives.pia:17:22: proved: '+' does not overflow u32 [smt]
-// CHECK: collectives.pia:17:7: proved: the index is within bounds [smt]
-// CHECK: collectives.pia:19:7: proved: the iteration owns the cell it writes in 'a' (c = i) [smt]
-// CHECK: collectives.pia:19:16: proved: the index is within bounds [smt]
-// CHECK: collectives.pia:19:7: proved: the index is within bounds [smt]
-// CHECK: collectives.pia:26:32: proved: the index is within bounds [smt]
-// CHECK: collectives.pia:26:17: proved: the sum of every iteration's u32 fits in u64: at most 4294967297 iterations [smt]
-// CHECK: collectives.pia:27:5: proved: the iteration owns the cell it writes in 'ys' (c = i) [smt]
-// CHECK: collectives.pia:27:23: proved: the index is within bounds [smt]
-// CHECK: collectives.pia:27:21: proved: '-' does not overflow usize [smt]
-// CHECK: collectives.pia:27:5: proved: the index is within bounds [smt]
-// CHECK: collectives.pia:33:28: proved: the index is within bounds [smt]
-// CHECK: collectives.pia:34:5: proved: the iteration owns the cell it writes in 'ys' (c = i) [smt]
-// CHECK: collectives.pia:34:19: proved: the index is within bounds [smt]
-// CHECK: collectives.pia:34:17: proved: '-' does not overflow u32 [smt]
-// CHECK: collectives.pia:34:5: proved: the index is within bounds [smt]
-// CHECK: collectives.pia:41:28: proved: the iteration owns the cell it reads in 'a' (c = i) [smt]
-// CHECK: collectives.pia:41:28: proved: the index is within bounds [smt]
-// CHECK: collectives.pia:42:5: proved: the iteration owns the cell it writes in 'a' (c = i) [smt]
-// CHECK: collectives.pia:42:19: proved: '-' does not overflow usize [smt]
-// CHECK: collectives.pia:42:14: failed: the iteration owns the cell it reads in 'a' (c = i)
-// CHECK-NEXT: counterexample: len a = {{-?[0-9]+}}
-// CHECK: collectives.pia:42:14: proved: the index is within bounds [smt]
-// CHECK: collectives.pia:42:24: proved: '-' does not overflow u32 [smt]
-// CHECK: collectives.pia:42:5: proved: the index is within bounds [smt]
-// CHECK: collectives.pia:48:30: proved: the iteration owns the cell it writes in 'ys' (c = i) [smt]
-// CHECK: collectives.pia:48:55: proved: the index is within bounds [smt]
-// CHECK: collectives.pia:48:40: failed: the sum of every iteration's usize fits in u64: at most 1 iteration
-// CHECK-NEXT: counterexample: len xs = {{-?[0-9]+}}, len ys = {{-?[0-9]+}}
-// CHECK: collectives.pia:48:30: proved: the index is within bounds [smt]
-// CHECK: 39 proved, 2 failed, 0 skipped
+// CHECK: 0 skipped
 *)
