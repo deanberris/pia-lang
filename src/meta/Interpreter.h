@@ -104,6 +104,10 @@ struct TypeHost {
   std::function<std::optional<std::string>(const std::string &)> named;
   // What a type is made of, by its spelling.
   std::function<TypeInfo(const std::string &)> info;
+  // The value the model of the target being compiled for gives the
+  // `Target` spec `name`, such as 128 for `vector_bits` on arm64
+  // (ADR 0049, ADR 0087), or nothing when it gives none.
+  std::function<std::optional<int64_t>(const std::string &)> target;
 };
 
 class Interpreter {

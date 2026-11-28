@@ -49,18 +49,31 @@ bool isTypeLevelMetaItem(const Node &item) {
     return false;
   const Node &params = *item.kids[0];
   if (params.kids.empty()) return false;
-  for (const NodePtr &p : params.kids)
+  // A type, or a `usize`: a type's value argument, `k` in `simd t k`
+  // (ADR 0087).
+  bool types = false;
+  for (const NodePtr &p : params.kids) {
     if (p->kind != NodeKind::Param || p->kids.empty() ||
-        p->kids[0]->kind != NodeKind::Annot ||
-        p->kids[0]->kids[1]->kind != NodeKind::TypeKind)
+        p->kids[0]->kind != NodeKind::Annot)
       return false;
+    const Node &pt = *p->kids[0]->kids[1];
+    if (pt.kind == NodeKind::TypeKind)
+      types = true;
+    else if (!(pt.kind == NodeKind::TypeName && pt.text == "usize"))
+      return false;
+  }
+  if (!types)
+    return false;
   const Node &ret = *item.kids[1];
   if (ret.kind != NodeKind::RetAnnot || ret.kids.empty() ||
       ret.kids[0]->kind != NodeKind::Annot)
     return false;
   const Node &t = *ret.kids[0]->kids[1];
+  // It makes a type, decides a constraint, or gives a type's value
+  // argument, as `natural t` gives `simd t (natural t)` its lanes.
   return t.kind == NodeKind::TypeKind ||
-         (t.kind == NodeKind::TypeName && t.text == "bool");
+         (t.kind == NodeKind::TypeName &&
+          (t.text == "bool" || t.text == "usize"));
 }
 
 namespace {

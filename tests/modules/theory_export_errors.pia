@@ -1,0 +1,31 @@
+(* What an interface cannot export as a theory (ADR 0088, section 1): a
+   theory the module does not declare, a status written by hand, which
+   piac --emit=interface records, and a theory that names a type the
+   interface does not list, which importers could not form.
+// RUN: not piac --emit=interface -o %t %s 2>&1 | FileCheck %s
+// RUN: not piac --verify --no-lint %s 2>&1 | FileCheck --check-prefix=VERIFY %s
+*)
+module Lib.Bad : Bad
+
+interface Bad = sig
+(* CHECK: theory_export_errors.pia:[[@LINE+3]]:3: error: the interface 'Bad' lists the theory 'Missing', which this module does not declare
+   VERIFY: theory_export_errors.pia:[[@LINE+2]]:3: error: the module 'Lib.Bad' does not meet 'Bad': no theory 'Missing'
+*)
+  let theory Missing
+(* CHECK: theory_export_errors.pia:[[@LINE+2]]:21: error: in an interface, write 'let theory Stated' without a status; piac --emit=interface records whether it is modelled or trusted
+*)
+  let theory Stated @modelled
+  let theory Private
+end
+
+let theory Stated = sig
+  let sort s
+end
+
+let secret = type { v : u8 }
+
+(* CHECK: theory_export_errors.pia:[[@LINE+2]]:1: error: the theory 'Private' is exported with its declaration, which uses 'secret', which the interface 'Bad' does not list
+*)
+let theory Private = sig
+  let sort hidden = secret
+end
