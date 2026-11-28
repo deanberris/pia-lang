@@ -1,0 +1,53 @@
+(* @derive(json_dom) on variants (ADR 0045, step 7): a document conforms
+   when it has one constructor's JSON, null, a bool, an integer in its
+   payload's range, or an object that conforms to its record payload.
+   check decides it, from_dom is that constructor with that payload, and
+   to_dom's document is valid and conforms, all proved where derived.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Option.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Spec.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Lex.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Read.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Write.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Derive.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Mem/Alloc.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Dom.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Shape.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+// CHECK-NOT: failed
+// CHECK: {{[0-9]+}} proved, 0 failed, 0 skipped
+*)
+import Pia.Core.Order.Ops
+import Pia.Core.Option.Optional as O
+import Pia.Text.Json.Spec.Grammar
+import Pia.Text.Json.Lex.Lexer
+import Pia.Text.Json.Read.Reader
+import Pia.Text.Json.Write.Writer
+import Pia.Text.Json.Derive.Derive as Json
+import Pia.Mem.Alloc.Allocators
+import Pia.Text.Json.Dom.Document
+import Pia.Text.Json.Shape.Shapes
+
+let pt = type { x : i8 @json(name = "px"); y : u16 } @derive(json, json_dom)
+
+(* Every kind of constructor, and two numbers told apart by range. *)
+let reading = type
+  | Missing
+  | Flag of bool
+  | Small of int{0..9}
+  | Big of int{100..999}
+  | At of pt
+  @derive(json, json_dom)
+
+(* A reading from a document, or that it is not one. *)
+let get (s : [u8]) (v : Pia.Text.Json.Dom.json) : result reading Pia.Text.Json.Shape.nonconforming =
+  if check_json_reading s v then Ok (from_dom_json_reading s v) else Err Nonconforming
+
+(* A document that is null reads as Missing: no other constructor's
+   JSON is null, which revealing the kinds shows. *)
+let missing (s : [u8]) (v : Pia.Text.Json.Dom.json) : bool
+  requires conforms_json_reading s v
+  requires Pia.Text.Json.Shape.is_null v
+  ensures result
+  with Pia.Text.Json.Shape.is_null, Pia.Text.Json.Shape.is_bool, Pia.Text.Json.Shape.int_in
+= match from_dom_json_reading s v with | Missing -> true | _ -> false

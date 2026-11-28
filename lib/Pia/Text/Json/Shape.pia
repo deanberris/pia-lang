@@ -76,8 +76,13 @@ interface Shapes = sig
   (** No member but the one at i is called name. *)
   let only : (s : [u8]) -> (items : [Pia.Text.Json.Dom.member]) -> (name : [u8]) -> (i : usize) -> bool
     ensures result = (forall (j in 0 .. len items). key_is s items.[j].key name ==> j = i)
-  (** @derive(json_dom): a record's conforms, check and from_dom. *)
+  (** @derive(json_dom): a record's or a variant's conforms, check,
+      from_dom and to_dom. *)
   let meta derive_json_dom : list
+  (** derive_json_dom for a record. *)
+  let meta json_dom_record : list
+  (** derive_json_dom for a variant. *)
+  let meta json_dom_variant : list
   (** How deep a document of the record named rn nests. *)
   let meta json_depth_of : int
   (** The position of the member called name, or that none is. *)
@@ -344,7 +349,8 @@ let only (s : [u8]) (items : [Pia.Text.Json.Dom.member]) (name : [u8]) (i : usiz
    nested object, which that record's own conforms, check and from_dom
    take; `json_is_<t> s v x` says x holds what each member says. An
    option of such a record is that record, null, or missing.
-   Not yet: variants, and an array of records. *)
+   A variant is one of its constructors' JSON (json_dom_variant).
+   Not yet: a tagged variant, and an array of records. *)
 (* How deep a document of the record named rn nests: the object, and
    inside it an array field's array or a nested record's own depth. *)
 let meta json_depth_of (rn : string) : int =
@@ -364,6 +370,130 @@ let meta json_depth_of (rn : string) : int =
   add 1 inner
 
 let meta derive_json_dom (t : type_decl) : list =
+  if eq (kind (nth (children (nth (children t) 3)) 0)) "Variants" then json_dom_variant t
+  else json_dom_record t
+
+(* A variant, untagged (ADR 0045, section 2): a document conforms when it
+   has one constructor's JSON, null for one with no payload, a bool, an
+   integer in its payload's range, or an object that conforms to its
+   record payload, which derives json_dom too. @derive(json) has proved
+   at derive time that no two constructors share a JSON shape, so
+   from_dom takes the first that fits, and `json_is_<t> s v x` says x is
+   that constructor with that payload. *)
+let meta json_dom_variant (t : type_decl) : list =
+  let tn = name t in
+  let shape = let (f) => concat "Pia.Text.Json.Shape." f in
+  let ints = [ "u8"; "u16"; "u32"; "u64"; "usize"; "i8"; "i16"; "i32"; "i64"; "isize" ] in
+  let is_int_type = let (ty) =>
+    if eq (kind ty) "RangeType" then true
+    else if eq (kind ty) "TypeName" then fold (let (h) (n) => or h (eq n (name ty))) false ints
+    else false in
+  let is_bool_type = let (ty) => if eq (kind ty) "TypeName" then eq (name ty) "bool" else false in
+  let tagged = fold (let (acc) (a) =>
+      if eq (nth a 0) "json" then
+        fold (let (acc2) (arg) => or acc2 (eq (nth arg 0) "tag")) acc (nth a 1)
+      else acc) false (attrs t) in
+  let vs = if tagged then fail (concat "@derive(json_dom): '" (concat tn "' has a tag, which @derive(json_dom) cannot read yet")) else variants t in
+  let cidx = range (length vs) in
+  let cname = let (i) => nth (nth vs i) 0 in
+  let payload = let (i) => nth (nth vs i) 1 in
+  let sort = let (i) =>
+    let p = payload i in
+    if eq (kind p) "Unit" then "null"
+    else if is_bool_type p then "bool"
+    else if is_int_type p then "number"
+    else if eq (kind p) "TypeName" then "object"
+    else fail (concat "@derive(json_dom): the payload of '" (concat (cname i) "' has a type that @derive(json_dom) cannot read yet")) in
+  let bounds = let (i) =>
+    let b = range_of (payload i) in
+    if gt (nth b 1) 9223372036854775807 then
+      fail (concat "@derive(json_dom): the payload of '" (concat (cname i) "' may be above the largest i64, which a document's conformance cannot state yet"))
+    else b in
+  (* Constructor i's JSON, of the document e. *)
+  let ok = let (i) (e) =>
+    let k = sort i in
+    if eq k "null" then `( $(shape "is_null") $e )
+    else if eq k "bool" then `( $(shape "is_bool") $e )
+    else if eq k "number" then (let l = nth (bounds i) 0 in let h = nth (bounds i) 1 in `( $(shape "int_in") $!s $e $l $h ))
+    else (let cn = concat "conforms_json_" (name (payload i)) in `( $cn $!s $e )) in
+  (* Deciding it. *)
+  let chk = let (i) =>
+    let k = sort i in
+    if eq k "null" then `( $(shape "check_null") $!v )
+    else if eq k "bool" then `( $(shape "check_bool") $!v )
+    else if eq k "number" then
+      (let l = nth (bounds i) 0 in let h = nth (bounds i) 1 in
+       `( (match $(shape "read_int") $!s $!v $l $h with | Ok _ -> true | Err _ -> false) ))
+    else (let ch = concat "check_json_" (name (payload i)) in `( $ch $!s $!v )) in
+  (* The value, given that it holds. *)
+  let val = let (i) =>
+    let c = cname i in
+    let k = sort i in
+    if eq k "null" then `( $c )
+    else if eq k "bool" then `( $c ($(shape "bool_value") $!v) )
+    else if eq k "number" then
+      (let l = nth (bounds i) 0 in let h = nth (bounds i) 1 in
+       let pt = payload i in
+       `( (match $(shape "read_int") $!s $!v $l $h with
+           | Ok $!x -> (let $!y : $pt = $!x in $c $!y)
+           | Err _ -> (let $!z : $pt = $l in $c $!z)) ))
+    else (let fr = concat "from_dom_json_" (name (payload i)) in `( $c ($fr $!s $!v) )) in
+  (* What x being constructor i says of the document, else acc. *)
+  let is_arm = let (acc) (i) =>
+    let c = cname i in
+    let k = sort i in
+    if eq k "null" then `( match $!x with | $c -> $(ok i `( $!v )) | _ -> $acc )
+    else if eq k "bool" then
+      `( match $!x with | $c $!p -> $(ok i `( $!v )) && $!p = ($!v = Pia.Text.Json.Dom.Bool true) | _ -> $acc )
+    else if eq k "number" then
+      (let l = nth (bounds i) 0 in let h = nth (bounds i) 1 in
+       `( match $!x with | $c $!p -> $(ok i `( $!v )) && $!p = $(shape "int_value") $!s $!v $l $h | _ -> $acc ))
+    else (let ri = concat "json_is_" (name (payload i)) in
+          `( match $!x with | $c $!p -> $(ok i `( $!v )) && $ri $!s $!v $!p | _ -> $acc )) in
+  let cname_fn = concat "conforms_json_" tn in
+  let any_ok = fold (let (acc) (i) => `( $acc || $(ok i `( $!v )) )) `( false ) cidx in
+  let conforms_fn =
+    `( let spec $cname_fn ($!s : [u8]) ($!v : Pia.Text.Json.Dom.json) : bool = $any_ok ) in
+  let chname = concat "check_json_" tn in
+  let any_check = fold (let (acc) (i) => `( $acc || $(chk i) )) `( false ) cidx in
+  let check_fn =
+    `( let $chname ($!s : [u8]) ($!v : Pia.Text.Json.Dom.json) : bool
+         ensures $!result = $cname_fn $!s $!v
+       = $any_check ) in
+  let isname = concat "json_is_" tn in
+  let is_fn =
+    `( let spec $isname ($!s : [u8]) ($!v : Pia.Text.Json.Dom.json) ($!x : $t) : bool =
+         $(fold is_arm `( false ) (reverse cidx)) ) in
+  let last = sub (length vs) 1 in
+  let pick = fold (let (acc) (i) => `( if $(chk i) then $(val i) else $acc )) (val last) (reverse (range last)) in
+  let fname = concat "from_dom_json_" tn in
+  let from_fn =
+    `( let $fname ($!s : [u8]) ($!v : Pia.Text.Json.Dom.json) : $t
+         requires $cname_fn $!s $!v
+         ensures $isname $!s $!v $!result
+       = $pick ) in
+  (* to_dom, as for a record: @derive(json)'s writer, then parse and
+     check. A record payload nests as deep as the record. *)
+  let room = concat "json_room_" tn in
+  let depth = fold (let (acc) (i) =>
+      if eq (sort i) "object" then (let d = json_depth_of (name (payload i)) in if gt d acc then d else acc) else acc) 1 cidx in
+  let wname = concat "write_json_" tn in
+  let tname = concat "to_dom_json_" tn in
+  let to_fn =
+    `( let $tname ($!x : $t) ($!text : borrowed inout mutable [u8]) ($!values : inout mutable Pia.Mem.Alloc.bump Pia.Text.Json.Dom.json) ($!members : inout mutable Pia.Mem.Alloc.bump Pia.Text.Json.Dom.member) : result Pia.Text.Json.Dom.json Pia.Text.Json.Shape.to_dom_error
+         ensures (match $!result with
+           | Ok $!d -> Pia.Text.Json.Dom.valid_dom $!text $!d && $cname_fn $!text $!d
+           | Err _ -> true)
+       = if len $!text < $room then Err NoRoom
+         else
+           (let $!n = $wname $!text 0 $!x in
+            for $!k in $!n .. len $!text do $!text.[$!k] <- 0x20 done;
+            match Pia.Text.Json.Dom.parse $!text $depth $!values $!members with
+            | Err $!e -> Err (Unparsed $!e)
+            | Ok $!d -> if $chname $!text $!d then Ok $!d else Err Unconforming) ) in
+  [ conforms_fn; check_fn; is_fn; from_fn; to_fn ]
+
+let meta json_dom_record (t : type_decl) : list =
   let tn = name t in
   let shape = let (f) => concat "Pia.Text.Json.Shape." f in
   let fs = fields t in

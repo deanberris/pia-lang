@@ -181,7 +181,7 @@ $ piac --verify --iface-path=. count.pia
 
 ## A document's shape: `@derive(json, json_dom)`
 
-`@derive(json_dom)`, from `Pia.Text.Json.Shape`, says when a document has a record's shape, and converts it. It sits beside `@derive(json)`, whose member names it shares and whose writer `to_dom` uses, so that `@derive(json)` alone needs no document. For a record `t` of integers, range types and bools, options and fixed arrays of them, and other records with `@derive(json, json_dom)` and options of them, it writes:
+`@derive(json_dom)`, from `Pia.Text.Json.Shape`, says when a document has a record's or a variant's shape, and converts it. It sits beside `@derive(json)`, whose member names it shares and whose writer `to_dom` uses, so that `@derive(json)` alone needs no document. For a record `t` of integers, range types and bools, options and fixed arrays of them, and other records with `@derive(json, json_dom)` and options of them, it writes:
 
 | Function | What it does |
 | --- | --- |
@@ -219,4 +219,6 @@ $ piac --verify --iface-path=. shape.pia
 102 proved, 0 failed, 0 skipped
 ```
 
-`to_dom` writes its value with `@derive(json)`'s writer, parses the text back and checks it, so the document it returns is proved valid and conforming. That the writer's text always parses and conforms, so that its `Unparsed` and `Unconforming` errors never happen, is not proved yet. Variants and recursive user types come next ([ADR 0045](adr/0045-json-derived-codecs-and-conforming-dom.md), steps 5, 7 and 8).
+A variant takes `@derive(json, json_dom)` too, untagged: a document conforms when it has one constructor's JSON, `null` for a constructor with no payload, a bool, an integer in its payload's range, or an object that conforms to its record payload. `@derive(json)` has already proved that no two constructors share a JSON shape, so `from_dom` takes the first that fits, and `json_is_<t> s v x`, which it ensures, says x is that constructor with that payload ([tests/std/json_shape_variants.pia](../tests/std/json_shape_variants.pia)). The kinds are opaque, so a function that relies on two of them differing reveals them, `with Pia.Text.Json.Shape.is_null, Pia.Text.Json.Shape.is_bool`.
+
+`to_dom` writes its value with `@derive(json)`'s writer, parses the text back and checks it, so the document it returns is proved valid and conforming. That the writer's text always parses and conforms, so that its `Unparsed` and `Unconforming` errors never happen, is not proved yet. Tagged variants and recursive user types come next ([ADR 0045](adr/0045-json-derived-codecs-and-conforming-dom.md), steps 7 and 8).
