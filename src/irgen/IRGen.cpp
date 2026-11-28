@@ -11681,7 +11681,12 @@ class Gen {
                 return f.buf == at;
               });
         }
-      if (!indexed && !measured && !passed)
+      // `halo_exchange b` names the buffer, and reads or writes none of it
+      // (ADR 0086).
+      bool exchanged = parent && isCollective(*parent) &&
+                       parent->kids[0]->text == "halo_exchange" &&
+                       parent->kids[0].get() != &n;
+      if (!indexed && !measured && !passed && !exchanged)
         return &n;
     }
     // Contracts are erased, so what they read cannot race.
