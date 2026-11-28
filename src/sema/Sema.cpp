@@ -530,6 +530,14 @@ mlir::Type TypeResolver::resolve(const Node &type) {
           }
           return ArrayType::get(&ctx_, v->second.value.getZExtValue(), elem);
         }
+      // In an instance of a function generic over `(k : usize)`, `k` is
+      // bound to its argument, `int{4..4}`, so `[f32; k]` is `[f32; 4]`
+      // there, as it is in the signature (ADR 0074).
+      if (len.kind == NodeKind::Name || len.kind == NodeKind::TypeName)
+        if (auto single = mlir::dyn_cast_or_null<IntType>(typeParam(len.text));
+            single && single.getLo() == single.getHi() &&
+            !single.getLo().isNegative())
+          return ArrayType::get(&ctx_, single.getLo().getZExtValue(), elem);
       auto lit = len.kind == NodeKind::IntLit ? parseIntLiteral(len.text)
                                               : std::nullopt;
       if (!lit || !lit->suffix.empty()) {

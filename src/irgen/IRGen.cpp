@@ -9224,7 +9224,17 @@ class Gen {
   // Stand-in types for the type parameters of `sig`.
   std::map<std::string, Type> standIns(const sema::FuncSig &sig) {
     std::map<std::string, Type> bound;
+    unsigned values = 0;
     for (const std::string &t : sig.typeParams) {
+      // A value parameter, `k` in `simd f32 k`, stands for a value, one
+      // per parameter, so `simd f32 k` is not an instance of `simd u8 k`.
+      // 2^32 and up: no program spells such an extent, and a type that
+      // lowers to it is still within MLIR's limits.
+      if (llvm::is_contained(sig.valueParams, t)) {
+        llvm::APInt v(kWidth, (uint64_t(1) << 32) + values++);
+        bound[t] = IntType::get(&ctx_, v, v);
+        continue;
+      }
       bound[t] = RecordType::get(&ctx_, t, {}, {});
       standIns_.insert(bound[t]);
     }
