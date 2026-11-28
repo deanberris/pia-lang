@@ -1415,7 +1415,16 @@ void addFrameLemmas(Node &program, Diagnostics &diags) {
     if (measure)
       cs->add(clone(*measure));
     item->add(std::move(cs));
-    item->add(b.body(value));
+    // An imported spec function's frame lemma was proved in its module, so
+    // here it is an import: its contract, a fact at each use, and no body
+    // to prove again.
+    size_t from = fn.flags.find("from:");
+    if (from != std::string::npos) {
+      item->flags = "lemma import " + fn.flags.substr(from);
+      item->add(makeNode(NodeKind::None, l));
+    } else {
+      item->add(b.body(value));
+    }
     if (!b.ok)
       continue;
     program.kids.insert(program.kids.begin() + i + 1, std::move(item));

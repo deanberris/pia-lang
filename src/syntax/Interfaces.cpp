@@ -38,6 +38,9 @@ canonical(const std::vector<Token> &tokens, size_t first,
       else if (depth == 1 && t.kind == K::Let &&
                !(i + 1 < tokens.size() && tokens[i + 1].kind == K::LParen))
         out += "\n  ";
+      // `reads` is a keyword only first on its line (ADR 0060).
+      else if (t.kind == K::Reads)
+        out += "\n    ";
       else if (prev->loc.offset + prev->text.size() != t.loc.offset)
         out += " ";
     }
@@ -438,7 +441,10 @@ std::string canonicalItem(const std::vector<Token> &tokens, uint32_t start,
       opened = true;
       prev = nullptr;
     }
-    if (prev && prev->loc.offset + prev->text.size() != t.loc.offset)
+    // `reads` is a keyword only first on its line (ADR 0060).
+    if (prev && t.kind == K::Reads)
+      out += "\n  ";
+    else if (prev && prev->loc.offset + prev->text.size() != t.loc.offset)
       out += " ";
     out += t.text;
     prev = &t;

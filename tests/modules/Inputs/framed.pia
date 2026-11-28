@@ -1,0 +1,22 @@
+(* A spec function with a footprint, exported with its definition, for
+   reads_export.pia. *)
+module Num.Framed : Framed
+
+interface Framed = sig
+  let spec total : (xs : [u8]) -> (lo : usize) -> (hi : usize) -> u64
+    requires lo <= hi && hi <= len xs && hi - lo <= 1000
+    reads xs.[lo .. hi]
+  let put : (xs : borrowed inout mutable [u8]) -> (i : usize) -> (v : u8) -> unit
+    requires i < len xs
+    ensures xs.[i] = v
+    ensures forall (k in 0 .. len xs). k <> i ==> xs.[k] = old (xs.[k])
+end
+
+let spec total (xs : [u8]) (lo : usize) (hi : usize) : u64
+  requires lo <= hi && hi <= len xs && hi - lo <= 1000
+  reads xs.[lo .. hi]
+  decreases hi - lo
+= if lo = hi then 0 else total xs lo (hi - 1) +| xs.[hi - 1]
+
+let put (xs : borrowed inout mutable [u8]) (i : usize) (v : u8) : unit
+= xs.[i] <- v

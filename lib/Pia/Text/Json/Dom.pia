@@ -59,6 +59,30 @@ interface Document = sig
   let spec key_ok : (s : [u8]) -> (sp : span) -> bool @opaque
   (** Every number, string and key of v is a token of its kind in s. *)
   let spec valid_dom : (s : [u8]) -> (v : json) -> bool @opaque
+  (** The builders, each with what makes its value valid: what a document
+      built straight from the text it was written to, not parsed, needs. *)
+  let leaf : (s : [u8]) -> (v : json) -> json
+    requires (match v with | JNull -> true | Bool _ -> true | _ -> false)
+    ensures valid_dom s result && result = v
+  let num : (s : [u8]) -> (sp : span) -> json
+    requires Pia.Text.Json.Spec.token_at s Pia.Text.Json.Spec.Number sp.start sp.stop
+    ensures valid_dom s result && result = Num sp
+  let str : (s : [u8]) -> (sp : span) -> json
+    requires Pia.Text.Json.Spec.token_at s Pia.Text.Json.Spec.String sp.start sp.stop
+    ensures valid_dom s result && result = Str sp
+  let arr : (s : [u8]) -> (cells : borrowed mutable [json]) -> json
+    requires forall (j in 0 .. len cells). valid_dom s cells.[j]
+    ensures valid_dom s result
+    ensures (match result with | Arr a -> a.items = cells | _ -> false)
+  let obj : (s : [u8]) -> (cells : borrowed mutable [member]) -> json
+    requires forall (j in 0 .. len cells). key_ok s cells.[j].key
+    requires forall (j in 0 .. len cells). valid_dom s cells.[j].value
+    ensures valid_dom s result
+    ensures (match result with | Obj o -> o.items = cells | _ -> false)
+  (** A string token is a key. *)
+  let lemma key_token : (s : [u8]) -> (sp : span) -> unit
+    requires Pia.Text.Json.Spec.token_at s Pia.Text.Json.Spec.String sp.start sp.stop
+    ensures key_ok s sp
   (** The whole of s as a document nested at most max_depth deep. *)
   let parse : (s : [u8]) -> (max_depth : int{0..255}) -> (values : inout mutable Pia.Mem.Alloc.bump json) -> (members : inout mutable Pia.Mem.Alloc.bump member) -> result json dom_error
     ensures (match result with | Ok v -> valid_dom s v | Err _ -> true)
@@ -193,19 +217,20 @@ let leaf (s : [u8]) (v : json) : json
 
 let num (s : [u8]) (sp : span) : json
   requires Pia.Text.Json.Spec.token_at s Pia.Text.Json.Spec.Number sp.start sp.stop
-  ensures valid_dom s result
+  ensures valid_dom s result && result = Num sp
   with valid_dom
 = Num sp
 
 let str (s : [u8]) (sp : span) : json
   requires Pia.Text.Json.Spec.token_at s Pia.Text.Json.Spec.String sp.start sp.stop
-  ensures valid_dom s result
+  ensures valid_dom s result && result = Str sp
   with valid_dom
 = Str sp
 
 let arr (s : [u8]) (cells : borrowed mutable [json]) : json
   requires forall (j in 0 .. len cells). valid_dom s cells.[j]
   ensures valid_dom s result
+  ensures (match result with | Arr a -> a.items = cells | _ -> false)
   with valid_dom
 = Arr { items = cells }
 
@@ -213,8 +238,15 @@ let obj (s : [u8]) (cells : borrowed mutable [member]) : json
   requires forall (j in 0 .. len cells). key_ok s cells.[j].key
   requires forall (j in 0 .. len cells). valid_dom s cells.[j].value
   ensures valid_dom s result
+  ensures (match result with | Obj o -> o.items = cells | _ -> false)
   with valid_dom
 = Obj { items = cells }
+
+let lemma key_token (s : [u8]) (sp : span) : unit
+  requires Pia.Text.Json.Spec.token_at s Pia.Text.Json.Spec.String sp.start sp.stop
+  ensures key_ok s sp
+  with key_ok
+= ()
 
 (* A member's key and the colon after it, from pos: the key's span, and
    the position after the colon. *)

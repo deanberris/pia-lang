@@ -5,6 +5,7 @@
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Spec.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Lex.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Mem/Alloc.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Write.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Dom.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Shape.pia
 // RUN: FileCheck --check-prefix=IFACE %s < %t/Pia.Text.Json.Shape.Shapes.piai

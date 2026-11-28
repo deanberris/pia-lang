@@ -19,6 +19,11 @@
      Pia.Text.Json.Write writes, digits worth a value by Spec.magnitude
      and names between quotes, is these integers and keys, the first step
      of proving that a derived to_dom never fails.
+   - `put_int` and `put_bool`, which write one member and state what they
+     wrote as framed values (nrun, dval, alldig, kbytes) that the members
+     after it keep, and `int_member`, `bool_member` and `key_unlike`, which
+     make them keys and numbers once the text is done: a derived to_dom of
+     integers and bools builds its document from them, with no parse.
 
    key_is, int_in, int_value and is_bool are opaque (ADR 0063): a derived
    type's goals combine them without their bodies, which only the
@@ -34,6 +39,7 @@ import Pia.Text.Json.Spec.Grammar as Spec
 import Pia.Text.Json.Lex.Lexer
 import Pia.Mem.Alloc.Allocators
 import Pia.Text.Json.Dom.Document as Dom
+import Pia.Text.Json.Write.Writer
 
 interface Shapes = sig
   (** A document that does not have the shape asked for. *)
@@ -118,6 +124,108 @@ interface Shapes = sig
     requires s.[sp.start] = 0x22 && s.[sp.stop - 1] = 0x22
     requires forall (i in 0 .. len name). s.[sp.start + 1 + i] = name.[i]
     ensures str_is s (Pia.Text.Json.Dom.Str sp) name
+  (** Spec's num_run and digits_value, with their bytes as their
+      footprint, so that a write past them keeps them. *)
+  let spec nrun : (s : [u8]) -> (i : usize) -> (j : usize) -> int{0..9}
+    requires i <= j && j <= len s
+    reads s.[i .. j]
+  let spec dval : (acc : u64) -> (s : [u8]) -> (i : usize) -> (j : usize) -> u64
+    requires i <= j && j <= len s
+    reads s.[i .. j]
+  (** Name's bytes from the k-th, at at, and digits from i to j. *)
+  let spec kbytes : (s : [u8]) -> (at : usize) -> (name : [u8]) -> (k : usize) -> bool
+    requires k <= len name && at <= len s && len name <= len s - at
+    reads s.[at + k .. at + len name]
+  let spec alldig : (s : [u8]) -> (i : usize) -> (j : usize) -> bool
+    requires i <= j && j <= len s
+    reads s.[i .. j]
+  (** A number just written from i to j, a minus first when neg, stated so. *)
+  let lemma framed_number : (s : [u8]) -> (i : usize) -> (j : usize) -> (neg : bool) -> unit
+    requires i < j && j <= len s
+    requires forall (m in i .. j). (m = i && neg) || Pia.Text.Json.Spec.is_digit s.[m]
+    ensures nrun s i j = Pia.Text.Json.Spec.num_run s i j
+    ensures dval 0 s i j = Pia.Text.Json.Spec.digits_value 0 s i j
+    ensures dval 0 s (i + 1) j = Pia.Text.Json.Spec.digits_value 0 s (i + 1) j
+    ensures neg = false ==> alldig s i j
+    ensures alldig s (i + 1) j
+  (** A key just written as name, stated so. *)
+  let lemma framed_key : (s : [u8]) -> (sp : Pia.Text.Json.Dom.span) -> (name : [u8]) -> unit
+    requires sp.start < sp.stop && sp.stop <= len s && sp.stop - sp.start = len name + 2
+    requires forall (i in 0 .. len name). s.[sp.start + 1 + i] = name.[i]
+    ensures kbytes s (sp.start + 1) name 0
+  (** A written number, then a comma or a closing brace, is a number
+      token and the integer v. *)
+  let lemma written_int : (s : [u8]) -> (sp : Pia.Text.Json.Dom.span) -> (lo : i64) -> (hi : i64) -> (v : i64) -> unit
+    requires sp.start < sp.stop && sp.stop < len s
+    requires s.[sp.stop] = 0x2C || s.[sp.stop] = 0x7D
+    requires Pia.Text.Json.Spec.num_accepting (nrun s sp.start sp.stop)
+    requires v >= 0 ==> alldig s sp.start sp.stop
+    requires sp.start + 1 <= sp.stop && alldig s (sp.start + 1) sp.stop
+    requires lo <= v && v <= hi
+    requires v >= 0 ==> dval 0 s sp.start sp.stop = v
+    requires v < 0 ==> sp.start + 1 < sp.stop && s.[sp.start] = 0x2D && dval 0 s (sp.start + 1) sp.stop = 0 - v
+    ensures Pia.Text.Json.Spec.token_at s Pia.Text.Json.Spec.Number sp.start sp.stop
+    ensures int_in s (Pia.Text.Json.Dom.Num sp) lo hi && int_value s (Pia.Text.Json.Dom.Num sp) lo hi = v
+  (** A key written as name, which needs no escape, is name and a key. *)
+  let lemma written_name : (s : [u8]) -> (sp : Pia.Text.Json.Dom.span) -> (name : [u8]) -> unit
+    requires sp.start < sp.stop && sp.stop <= len s && sp.stop - sp.start = len name + 2
+    requires s.[sp.start] = 0x22 && s.[sp.stop - 1] = 0x22
+    requires kbytes s (sp.start + 1) name 0
+    requires forall (m in 0 .. len name). 0x20 <= name.[m] && name.[m] <= 0x7E && name.[m] <> 0x22 && name.[m] <> 0x5C
+    ensures key_is s sp name && Pia.Text.Json.Dom.key_ok s sp
+  (** A key that is a is not b, which differs in length or at d. *)
+  let lemma key_unlike : (s : [u8]) -> (sp : Pia.Text.Json.Dom.span) -> (a : [u8]) -> (b : [u8]) -> (d : usize) -> unit
+    requires key_is s sp a
+    requires len a <> len b || (d < len a && d < len b && a.[d] <> b.[d])
+    ensures key_is s sp b = false
+  (** One member, `"name":v` and then a comma, or a closing brace when it
+      is the last, stated as framed values and bytes that later members keep. *)
+  let put_int : (text : borrowed inout mutable [u8]) -> (pos : usize) -> (name : [u8]) -> (v : i64) -> (last : bool) -> usize
+    requires len name <= 1000000 && pos <= len text && len text - pos >= len name + 24
+    requires forall (m in 0 .. len name). 0x20 <= name.[m] && name.[m] <= 0x7E && name.[m] <> 0x22 && name.[m] <> 0x5C
+    ensures pos + len name + 4 < result && result <= pos + len name + 24
+    ensures text.[pos] = 0x22 && text.[pos + len name + 1] = 0x22 && kbytes text (pos + 1) name 0
+    ensures Pia.Text.Json.Spec.num_accepting (nrun text (pos + len name + 3) (result - 1))
+    ensures v >= 0 ==> alldig text (pos + len name + 3) (result - 1) && dval 0 text (pos + len name + 3) (result - 1) = v
+    ensures alldig text (pos + len name + 4) (result - 1)
+    ensures v < 0 ==> pos + len name + 4 < result - 1 && text.[pos + len name + 3] = 0x2D && dval 0 text (pos + len name + 4) (result - 1) = 0 - v
+    ensures text.[result - 1] = (if last then 0x7D else 0x2C)
+    ensures forall (k in 0 .. len text). k < pos || result <= k ==> text.[k] = old (text.[k])
+  let put_bool : (text : borrowed inout mutable [u8]) -> (pos : usize) -> (name : [u8]) -> (v : bool) -> (last : bool) -> usize
+    requires len name <= 1000000 && pos <= len text && len text - pos >= len name + 9
+    requires forall (m in 0 .. len name). 0x20 <= name.[m] && name.[m] <= 0x7E && name.[m] <> 0x22 && name.[m] <> 0x5C
+    ensures pos + len name + 4 < result && result <= pos + len name + 9
+    ensures text.[pos] = 0x22 && text.[pos + len name + 1] = 0x22 && kbytes text (pos + 1) name 0
+    ensures forall (k in 0 .. len text). k < pos || result <= k ==> text.[k] = old (text.[k])
+  (** What put_int and put_bool wrote, once the text is done: the key is
+      name and a key, and an integer's value is the number token v. *)
+  let lemma int_member : (s : [u8]) -> (pos : usize) -> (name : [u8]) -> (lo : i64) -> (hi : i64) -> (v : i64) -> (fin : usize) -> unit
+    requires len name <= 1000000 && pos + len name + 4 < fin && fin <= len s
+    requires forall (m in 0 .. len name). 0x20 <= name.[m] && name.[m] <= 0x7E && name.[m] <> 0x22 && name.[m] <> 0x5C
+    requires s.[pos] = 0x22 && s.[pos + len name + 1] = 0x22 && kbytes s (pos + 1) name 0
+    requires Pia.Text.Json.Spec.num_accepting (nrun s (pos + len name + 3) (fin - 1))
+    requires v >= 0 ==> alldig s (pos + len name + 3) (fin - 1) && dval 0 s (pos + len name + 3) (fin - 1) = v
+    requires alldig s (pos + len name + 4) (fin - 1)
+    requires v < 0 ==> pos + len name + 4 < fin - 1 && s.[pos + len name + 3] = 0x2D && dval 0 s (pos + len name + 4) (fin - 1) = 0 - v
+    requires s.[fin - 1] = 0x2C || s.[fin - 1] = 0x7D
+    requires lo <= v && v <= hi
+    ensures key_is s { start = pos; stop = pos + len name + 2 } name && Pia.Text.Json.Dom.key_ok s { start = pos; stop = pos + len name + 2 }
+    ensures Pia.Text.Json.Spec.token_at s Pia.Text.Json.Spec.Number (pos + len name + 3) (fin - 1)
+    ensures int_in s (Pia.Text.Json.Dom.Num { start = pos + len name + 3; stop = fin - 1 }) lo hi
+    ensures int_value s (Pia.Text.Json.Dom.Num { start = pos + len name + 3; stop = fin - 1 }) lo hi = v
+  let lemma bool_member : (s : [u8]) -> (pos : usize) -> (name : [u8]) -> unit
+    requires len name <= 1000000 && pos + len name + 2 <= len s
+    requires forall (m in 0 .. len name). 0x20 <= name.[m] && name.[m] <= 0x7E && name.[m] <> 0x22 && name.[m] <> 0x5C
+    requires s.[pos] = 0x22 && s.[pos + len name + 1] = 0x22 && kbytes s (pos + 1) name 0
+    ensures key_is s { start = pos; stop = pos + len name + 2 } name && Pia.Text.Json.Dom.key_ok s { start = pos; stop = pos + len name + 2 }
+  (** A bool is a bool. *)
+  let lemma written_bool : (b : bool) -> unit
+    ensures is_bool (Pia.Text.Json.Dom.Bool b)
+  (** Spaces from from to the end, the bytes before it kept. *)
+  let fill_ws : (s : borrowed inout mutable [u8]) -> (from : usize) -> unit
+    requires from <= len s
+    ensures forall (k in 0 .. len s). k < from ==> s.[k] = old (s.[k])
+    ensures forall (k in from .. len s). s.[k] = 0x20
   (** @derive(json_dom): a record's or a variant's conforms, check,
       from_dom and to_dom. *)
   let meta derive_json_dom : list
@@ -444,6 +552,183 @@ let lemma written_str (s : [u8]) (sp : Pia.Text.Json.Dom.span) (name : [u8]) : u
   ensures str_is s (Pia.Text.Json.Dom.Str sp) name
   with str_is
 = written_key s sp name
+
+(* ---- A document built from the text it was written to ----
+   A derived to_dom writes each token and builds its member from the
+   spans it wrote, with no parse. What a write said must still hold when
+   the text is done, after the writes that follow it. A byte's value
+   does, by each writer's frame; a recursive spec function's value over
+   the old text does not, so the number automaton and the digits' value
+   are stated by nrun and dval, Spec's num_run and digits_value with
+   their bytes as their footprint (ADR 0060, section 3), which a later
+   write past them keeps. *)
+
+let spec nrun (s : [u8]) (i : usize) (j : usize) : int{0..9}
+  requires i <= j && j <= len s
+  reads s.[i .. j]
+  decreases j - i
+= if i < j then Pia.Text.Json.Spec.num_step (nrun s i (j - 1)) s.[j - 1] else 0
+
+let lemma nrun_is (s : [u8]) (i : usize) (j : usize) : unit
+  requires i <= j && j <= len s
+  ensures nrun s i j = Spec.num_run s i j
+  decreases j - i
+= if i < j then nrun_is s i (j - 1)
+
+let spec dval (acc : u64) (s : [u8]) (i : usize) (j : usize) : u64
+  requires i <= j && j <= len s
+  reads s.[i .. j]
+  decreases j - i
+= if i < j then dval (Pia.Text.Json.Spec.digit_step acc s.[i]) s (i + 1) j else acc
+
+let lemma dval_is (acc : u64) (s : [u8]) (i : usize) (j : usize) : unit
+  requires i <= j && j <= len s
+  ensures dval acc s i j = Spec.digits_value acc s i j
+  decreases j - i
+= if i < j then dval_is (Spec.digit_step acc s.[i]) s (i + 1) j
+
+(* Name's bytes from the k-th, at at, and digits from i to j: what the
+   writer's quantified facts say, as framed values that later writes keep
+   cheaply, where a quantified fact must be carried through each of
+   them. *)
+let spec kbytes (s : [u8]) (at : usize) (name : [u8]) (k : usize) : bool
+  requires k <= len name && at <= len s && len name <= len s - at
+  reads s.[at + k .. at + len name]
+  decreases len name - k
+= if k < len name then s.[at + k] = name.[k] && kbytes s at name (k + 1) else true
+
+let lemma kbytes_of (s : [u8]) (at : usize) (name : [u8]) (k : usize) : unit
+  requires k <= len name && at <= len s && len name <= len s - at
+  requires forall (m in k .. len name). s.[at + m] = name.[m]
+  ensures kbytes s at name k
+  decreases len name - k
+= if k < len name then kbytes_of s at name (k + 1)
+
+let lemma kbytes_all (s : [u8]) (at : usize) (name : [u8]) (k : usize) : unit
+  requires k <= len name && at <= len s && len name <= len s - at
+  requires kbytes s at name k
+  ensures forall (m in k .. len name). s.[at + m] = name.[m]
+  decreases len name - k
+= if k < len name then kbytes_all s at name (k + 1)
+
+let spec alldig (s : [u8]) (i : usize) (j : usize) : bool
+  requires i <= j && j <= len s
+  reads s.[i .. j]
+  decreases j - i
+= if i < j then Pia.Text.Json.Spec.is_digit s.[i] && alldig s (i + 1) j else true
+
+let lemma alldig_of (s : [u8]) (i : usize) (j : usize) : unit
+  requires i <= j && j <= len s
+  requires forall (m in i .. j). Spec.is_digit s.[m]
+  ensures alldig s i j
+  decreases j - i
+= if i < j then alldig_of s (i + 1) j
+
+let lemma alldig_all (s : [u8]) (i : usize) (j : usize) : unit
+  requires i <= j && j <= len s
+  requires alldig s i j
+  ensures forall (m in i .. j). Spec.is_digit s.[m]
+  decreases j - i
+= if i < j then alldig_all s (i + 1) j
+
+(* The bytes from i to j, as the writer just wrote a number there, with
+   a minus first when neg. *)
+let lemma framed_number (s : [u8]) (i : usize) (j : usize) (neg : bool) : unit
+  requires i < j && j <= len s
+  requires forall (m in i .. j). (m = i && neg) || Spec.is_digit s.[m]
+  ensures nrun s i j = Spec.num_run s i j
+  ensures dval 0 s i j = Spec.digits_value 0 s i j
+  ensures dval 0 s (i + 1) j = Spec.digits_value 0 s (i + 1) j
+  ensures neg = false ==> alldig s i j
+  ensures alldig s (i + 1) j
+= nrun_is s i j; dval_is 0 s i j; dval_is 0 s (i + 1) j;
+  alldig_of s (i + 1) j;
+  if neg = false then alldig_of s i j
+
+(* A key the writer just wrote as name. *)
+let lemma framed_key (s : [u8]) (sp : Pia.Text.Json.Dom.span) (name : [u8]) : unit
+= kbytes_of s (sp.start + 1) name 0
+
+(* A number the writer wrote, followed by a comma or a closing brace, is
+   a number token, and the integer v. *)
+let lemma written_int (s : [u8]) (sp : Pia.Text.Json.Dom.span) (lo : i64) (hi : i64) (v : i64) : unit
+= nrun_is s sp.start sp.stop;
+  if v < 0 then (dval_is 0 s (sp.start + 1) sp.stop; alldig_all s (sp.start + 1) sp.stop; written_neg s sp lo hi v)
+  else (dval_is 0 s sp.start sp.stop; alldig_all s sp.start sp.stop; written_nat s sp lo hi v)
+
+(* Bytes that are name's, from at, are characters, from the k-th. *)
+let lemma plain_name (s : [u8]) (at : usize) (name : [u8]) (k : usize) : unit
+  requires k <= len name && at <= len s && len name <= len s - at
+  requires forall (m in 0 .. len name). s.[at + m] = name.[m]
+  requires forall (m in 0 .. len name). 0x20 <= name.[m] && name.[m] <= 0x7E && name.[m] <> 0x22 && name.[m] <> 0x5C
+  ensures Spec.chars s (at + k) (at + len name)
+  decreases len name - k
+= if k < len name then plain_name s at name (k + 1)
+
+(* A key written as name, which needs no escape, is name and a key. *)
+let lemma written_name (s : [u8]) (sp : Pia.Text.Json.Dom.span) (name : [u8]) : unit
+= kbytes_all s (sp.start + 1) name 0;
+  written_key s sp name;
+  plain_name s (sp.start + 1) name 0;
+  Pia.Text.Json.Dom.key_token s sp
+
+(* A key that is a is not b, which is shorter or longer or differs at d. *)
+let lemma key_unlike (s : [u8]) (sp : Pia.Text.Json.Dom.span) (a : [u8]) (b : [u8]) (d : usize) : unit
+  with key_is
+= ()
+
+(* A comma after a member, or a closing brace after the last: one call,
+   so that the facts before it are kept by one frame, not merged from two
+   branches. *)
+let close_member (text : borrowed inout mutable [u8]) (pos : usize) (last : bool) : usize
+  requires pos < len text
+  ensures result = pos + 1 && text.[pos] = (if last then 0x7D else 0x2C)
+  ensures forall (k in 0 .. len text). k <> pos ==> text.[k] = old (text.[k])
+= text.[pos] <- (if last then 0x7D else 0x2C);
+  pos + 1
+
+(* One member, `"name":v` and then a comma, or a closing brace when it
+   is the last: what it wrote, stated as framed values and bytes that the
+   members written after it keep. *)
+let put_int (text : borrowed inout mutable [u8]) (pos : usize) (name : [u8]) (v : i64) (last : bool) : usize
+= let a = Pia.Text.Json.Write.write_key text pos name in
+  framed_key text { start = pos; stop = a } name;
+  let b = Pia.Text.Json.Write.write_colon text a in
+  assert text.[pos] = 0x22 && text.[a - 1] = 0x22 && kbytes text (pos + 1) name 0;
+  let e = Pia.Text.Json.Write.write_i64 text b v in
+  assert text.[pos] = 0x22 && text.[a - 1] = 0x22 && kbytes text (pos + 1) name 0;
+  framed_number text b e (v < 0);
+  close_member text e last
+
+let put_bool (text : borrowed inout mutable [u8]) (pos : usize) (name : [u8]) (v : bool) (last : bool) : usize
+= let a = Pia.Text.Json.Write.write_key text pos name in
+  framed_key text { start = pos; stop = a } name;
+  let b = Pia.Text.Json.Write.write_colon text a in
+  let e = Pia.Text.Json.Write.write_bool text b v in
+  close_member text e last
+
+(* What put_int wrote, once the text is done: its key is name and a key,
+   and its value the number token v. *)
+let lemma int_member (s : [u8]) (pos : usize) (name : [u8]) (lo : i64) (hi : i64) (v : i64) (fin : usize) : unit
+= written_name s { start = pos; stop = pos + len name + 2 } name;
+  written_int s { start = pos + len name + 3; stop = fin - 1 } lo hi v
+
+let lemma bool_member (s : [u8]) (pos : usize) (name : [u8]) : unit
+= written_name s { start = pos; stop = pos + len name + 2 } name
+
+(* A bool is a bool. *)
+let lemma written_bool (b : bool) : unit
+  with is_bool
+= ()
+
+(* Spaces from from to the end, and the bytes before it kept. *)
+let fill_ws (s : borrowed inout mutable [u8]) (from : usize) : unit
+= for k in from .. len s
+    invariant forall (m in 0 .. len s). m < from ==> s.[m] = old (s.[m])
+    invariant forall (m in from .. k). s.[m] = 0x20
+  do
+    s.[k] <- 0x20
+  done
 
 let check_str (s : [u8]) (v : Pia.Text.Json.Dom.json) (name : [u8]) : bool
   with str_is
@@ -1143,20 +1428,23 @@ let meta json_dom_record (t : type_decl) : list =
        = match $!v with
          | Obj $!o -> $(record_of from_member)
          | _ -> $(record_of lowest) ) in
-  (* to_dom: @derive(json)'s writer writes the value into text, spaces
-     fill the rest, and the document is parsed back and checked. Its Ok
-     is proved valid and conforming by parse's and check's contracts; that
-     the writer's text always conforms, so that Unparsed and Unconforming
-     never happen, is not proved yet: it needs the writer's digits stated
-     as Shape's. The room is the writer's, computed as json_record does. *)
-  (* The writer's room, which @derive(json) emits as json_room_<t>. *)
+  (* to_dom. A record of integers and bools is written member by member
+     with Shape's put_int and put_bool, and its document is built from the
+     spans they wrote, with no parse: it is proved valid, conforming, and
+     x's, and it fails only for want of room or memory. The writer states
+     what each member wrote as framed values and bytes, which the members
+     after it keep, and once the text is done int_member and bool_member
+     make them its key and its number, and key_unlike tells the keys
+     apart. Any other record is written by @derive(json)'s writer, then
+     parsed back and checked: valid and conforming when it succeeds. *)
+  let flat = fold (let (acc) (f) => and acc (eq (or (is_opt f) (or (is_arr f) (is_rec f))) false)) true fs in
   let room = concat "json_room_" tn in
   (* The object, and what nests inside it: an array field's array, a
      nested record's own depth. *)
   let depth = json_depth_of tn in
   let wname = concat "write_json_" tn in
   let tname = concat "to_dom_json_" tn in
-  let to_fn =
+  let to_parse =
     `( let $tname ($!x : $t) ($!text : borrowed inout mutable [u8]) ($!values : inout mutable Pia.Mem.Alloc.bump Pia.Text.Json.Dom.json) ($!members : inout mutable Pia.Mem.Alloc.bump Pia.Text.Json.Dom.member) : result Pia.Text.Json.Dom.json Pia.Text.Json.Shape.to_dom_error
          ensures (match $!result with
            | Ok $!v -> Pia.Text.Json.Dom.valid_dom $!text $!v && $cname $!text $!v
@@ -1168,6 +1456,103 @@ let meta json_dom_record (t : type_decl) : list =
             match Pia.Text.Json.Dom.parse $!text $depth $!values $!members with
             | Err $!e -> Err (Unparsed $!e)
             | Ok $!v -> if $chname $!text $!v then Ok $!v else Err Unconforming) ) in
+  let pos_of = let (i) => if eq i 0 then "json_dom_at" else concat "json_dom_after_" (nth fs (sub i 1)) in
+  let kb = let (i) => bytes (nth keys i) in
+  let klen = let (i) => length (kb i) in
+  (* The room: the braces, and each member's name, quotes and colon, and
+     its value with the comma after it, at most 20 bytes for an integer. *)
+  let flat_room = fold (let (acc) (i) => add acc (add (klen i) (if bool_field (nth fs i) then 9 else 24))) 2 idx in
+  (* Where the names of members i and j first differ, or 0 when their
+     lengths do. *)
+  let differ = let (i) (j) =>
+    if ne (klen i) (klen j) then 0
+    else fold (let (acc) (k) => if lt acc (klen i) then acc else (if ne (nth (kb i) k) (nth (kb j) k) then k else acc))
+           (klen i) (range (klen i)) in
+  (* Member i's key and value, from the positions r where each member
+     starts and the last ends. *)
+  let kspan = let (r) (i) => let l = klen i in `( { start = $r.[$i]; stop = $r.[$i] + $l + 2 } ) in
+  let vspan = let (r) (i) => let l = klen i in let j = add i 1 in
+    `( { start = $r.[$i] + $l + 3; stop = $r.[$j] - 1 } ) in
+  let last = sub nf 1 in
+  (* json_write_dom_<t>: the text, member by member, and what it says once
+     done, stated at each member's positions. A function of its own, so
+     that to_dom's goals see these facts and not the writes'. *)
+  let wdname = concat "json_write_dom_" tn in
+  let pos_names = map pos_of (range (add nf 1)) in
+  let nposs = add nf 1 in
+  let order = fold (let (acc) (i) =>
+      let l = klen i in let j = add i 1 in
+      `( $acc && $!result.[$i] < $!result.[$j] && $!result.[$j] - $!result.[$i] > $l + 4 )) `( $!result.[$nf] <= len $!text ) idx in
+  let field_ens = let (i) =>
+    let f = nth fs i in
+    let kn = kname i in
+    let k = kspan `( $!result ) i in
+    let keyf = `( $(shape "key_is") $!text $k $kn && Pia.Text.Json.Dom.key_ok $!text $k ) in
+    let others = fold (let (acc) (j) =>
+        if eq i j then acc else (let kj = kname j in `( $acc && $(shape "key_is") $!text $k $kj = false ))) `( true ) idx in
+    if bool_field f then `( $keyf && $others )
+    else
+      (let l = lo i in let h = hi i in
+       let lk = klen i in let j = add i 1 in
+       let v = vspan `( $!result ) i in
+       `( $keyf && $others
+          && Pia.Text.Json.Spec.token_at $!text Pia.Text.Json.Spec.Number ($!result.[$i] + $lk + 3) ($!result.[$j] - 1)
+          && $(shape "int_in") $!text (Pia.Text.Json.Dom.Num $v) $l $h
+          && $(shape "int_value") $!text (Pia.Text.Json.Dom.Num $v) $l $h = $!x.$f )) in
+  let all_ens = fold (let (acc) (i) => `( $acc && $(field_ens i) )) order idx in
+  let puts = map (let (i) =>
+      let f = nth fs i in
+      let kn = kname i in
+      let p = pos_of i in
+      let q = pos_of (add i 1) in
+      let lst = if eq i last then `( true ) else `( false ) in
+      let put = if bool_field f then shape "put_bool" else shape "put_int" in
+      [ q; `( $put $!text $p $kn $!x.$f $lst ) ]) idx in
+  let facts = map (let (i) =>
+      let f = nth fs i in
+      let kn = kname i in
+      let p = pos_of i in
+      let q = pos_of (add i 1) in
+      if bool_field f then `( $(shape "bool_member") $!text $p $kn )
+      else (let l = lo i in let h = hi i in `( $(shape "int_member") $!text $p $kn $l $h $!x.$f $q ))) idx in
+  let unlike = fold (let (acc) (i) => concat acc (fold (let (acc2) (j) =>
+      if eq i j then acc2
+      else (let ki = kname i in let kj = kname j in let d = differ i j in
+            let p = pos_of i in let l = klen i in
+            concat acc2 [ `( $(shape "key_unlike") $!text { start = $p; stop = $p + $l + 2 } $ki $kj $d ) ])) [] idx)) [] idx in
+  let wstmts = concat facts unlike in
+  let wdone = fold (let (acc) (st) => `( $st; $acc )) `( [ $pos_names ] ) (reverse wstmts) in
+  let wfilled = `( $(shape "fill_ws") $!text $(pos_of nf); $wdone ) in
+  let wbody = fold (let (acc) (b) => let q = nth b 0 in let e = nth b 1 in `( let $q = $e in $acc )) wfilled (reverse puts) in
+  let at0 = pos_of 0 in
+  let wd_fn =
+    `( let $wdname ($!x : $t) ($!text : borrowed inout mutable [u8]) : [usize; $nposs]
+         requires len $!text >= $flat_room
+         ensures $all_ens
+       = (let $at0 = Pia.Text.Json.Write.write_lbrace $!text 0 in
+          $wbody) ) in
+  let stores = map (let (i) =>
+      let f = nth fs i in
+      let v = if bool_field f then `( Pia.Text.Json.Dom.leaf $!text (Pia.Text.Json.Dom.Bool $!x.$f) )
+              else `( Pia.Text.Json.Dom.num $!text $(vspan `( $!q ) i) ) in
+      `( $!cells.[$i] <- { key = $(kspan `( $!q ) i); value = $v } )) idx in
+  let bools = fold (let (acc) (i) => let f = nth fs i in
+      if bool_field f then concat acc [ `( $(shape "written_bool") $!x.$f ) ] else acc) [] idx in
+  let tstmts = concat bools stores in
+  let tdone = fold (let (acc) (st) => `( $st; $acc )) `( Ok (Pia.Text.Json.Dom.obj $!text $!cells) ) (reverse tstmts) in
+  let to_flat =
+    `( let $tname ($!x : $t) ($!text : borrowed inout mutable [u8]) ($!values : inout mutable Pia.Mem.Alloc.bump Pia.Text.Json.Dom.json) ($!members : inout mutable Pia.Mem.Alloc.bump Pia.Text.Json.Dom.member) : result Pia.Text.Json.Dom.json Pia.Text.Json.Shape.to_dom_error
+         ensures (match $!result with
+           | Ok $!v -> Pia.Text.Json.Dom.valid_dom $!text $!v && $cname $!text $!v && $isname $!text $!v $!x
+           | Err $!e -> $!e = NoRoom || $!e = Unparsed Pia.Text.Json.Dom.NoMemory)
+       = if len $!text < $flat_room then Err NoRoom
+         else
+           (match Pia.Mem.Alloc.alloc $!members $nf with
+            | Err _ -> Err (Unparsed Pia.Text.Json.Dom.NoMemory)
+            | Ok $!cells ->
+              (let $!q = $wdname $!x $!text in
+               $tdone)) ) in
+  let to_fns = if and flat (gt nf 0) then [ wd_fn; to_flat ] else [ to_parse ] in
   concat (concat (concat key_consts (fold (let (acc) (i) => concat acc (field_fns i)) [] idx)) known_fns)
-    [ conforms_fn; check_fn; is_fn; from_fn; to_fn ]
+    (concat [ conforms_fn; check_fn; is_fn; from_fn ] to_fns)
 
