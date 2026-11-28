@@ -227,16 +227,20 @@ Dean (2026-11-28): a box needs a theory that checks an instance keeps its invari
 - Axioms: `holds_t b ==> full b`, and `holds_t b ==> not holds_u b` for two types `t` and `u`, so a box holds at most one type.
 - `widen` and `box.make` ensure `holds_t result`. The empty box ensures `not full result`.
 - `take b d` and `consume<t> b` ensure, on `Ok`, `not full b` (and `d` full), and on `Err`, `full b = old (full b)` with every `holds` unchanged: a mismatch leaves the state as it was.
-- A call through a box requires `full b`. This is a goal, but it is nearly always discharged from what is already known: a parameter is full by the invariant below, and a local is full after `widen`, so code that never empties a box states nothing.
+- A call through a box requires `full b`, a goal discharged from the box's stated or tracked state.
 
-**The invariant in a scope.** `full` is `box c`'s record invariant ([ADR 0074](0074-library-types-tensors.md), step 1): a function may assume it of every box it is given, and inside its body the verifier tracks the state through the theory as it does any spec function. So a box may be emptied and refilled within a scope, and each use is checked against the state at that point. The move checker keeps its error for a local used after `take` (clearer than a failed goal), and the theory covers everything else: parameters, results, fields and slice elements.
+**Every contract states the state** (Dean, 2026-11-28, on a card, over a default of `full`). There is no default invariant. A function that takes a box states its state in a `requires` (`requires full b`), and one that hands a box out, as a result, an `inout` or `out` parameter, or a store into a buffer the caller sees, states the state it leaves in an `ensures` (`ensures full result`, `ensures not full b`, `ensures holds_square result`). A box in a signature with no such clause is an error that names the clause to add. So the state of every box is explicit at every boundary, and the caller learns it from the contract alone.
 
-**Where it escapes, the postcondition is deterministic.** Where a box leaves a function, as a result, an `inout` or `out` parameter, or a store into a buffer the caller sees, the verifier proves the box's state there. By default that is the invariant, `full`. A function that hands a box back empty, or holding a known type, says so in its `ensures` (`ensures not full b`, `ensures holds_square result`), and that clause replaces the invariant for that box: the verifier proves it on every path, so the state the caller receives is the one the contract names and never a "maybe". A state that differs between paths has to be stated as a condition, as `take` does (`match result with | Ok -> not full b | Err _ -> ...`). Callers then know the state from the contract alone, as with any postcondition, and an empty box in a slice element is described by a quantified `ensures` over the slice.
+**The invariant in a scope.** Inside a body the verifier tracks a box's state through the theory as it does any spec function, starting from the `requires`. A box may be emptied and refilled within a scope, and each use is checked against the state at that point. The move checker keeps its error for a local used after `take` (clearer than a failed goal), and the theory covers everything else: parameters, results, fields and slice elements.
 
-**Soundness.** The empty box is the only value that breaks the invariant, and it is made only inside `take` and `consume`, whose contracts state that the box is empty. So no function ever assumes `full` of an empty box: a caller assumes the invariant only where the callee's contract does not replace it.
+**Where it escapes, the postcondition is deterministic.** Where a box leaves a function, the verifier proves the state its `ensures` names on every path, so the state the caller receives is the one the contract names and never a "maybe". A state that differs between paths is stated as a condition, as `take` does (`match result with | Ok -> not full b | Err _ -> ...`). An empty box in a slice element is described by a quantified clause over the slice.
+
+**Soundness.** The empty box is made only inside `take` and `consume`, whose contracts state that the box is empty, and every other function states the states it relies on and leaves, so no proof assumes a state the contracts do not give it.
+
+**Migration.** Box signatures without a state clause were accepted before, so this is a breaking change: a migration rule (ADR 0073) adds `requires full b` for each box parameter and `ensures full result` for a box result, which is what every such program assumed.
 
 Implementation:
 
 1. `full` and `holds_t` in `erased_C`, with the axioms; `widen`, `take`, `consume` and the empty box state them; calls through a box require `full`.
-2. `full` as `box_C`'s record invariant, and an `ensures` that names a box's state replacing it at that escape.
+2. The state clause required on every box in a signature, with the migration rule that adds `full`.
 3. Quantified states over buffers of boxes, with `vec (box c)` (the amendment's step 3).
