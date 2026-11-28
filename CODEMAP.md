@@ -227,7 +227,7 @@ Each module is a `pia_library` in the `BUILD.bazel` next to it, with its tests i
 | `tests/dialect` | ODS round trips | |
 | `tests/repl`, `tests/lsp` | end to end over pipes | `tests/repl` runs in shards |
 | `tests/docs` | `doc_examples_test.py`: every doc, case study and skill example | its markers are `<!-- example: -->`, `<!-- expect: fail -->` and `<!-- untested: -->` |
-| `tests/lean` | lemmas proved in Lean (ADR 0061): `--emit=lean`, receipts from `pia_lean_proof`, stale receipts, the trust report and certificate lines, `native_decide` only in `@trusted` files, machine integers as `Int` with their ranges (`bytes.pia`); `CallRule.lean`, the verifier's call rule proved sound, modular and incomplete (ADR 0076) | `sums_proof` runs Lean on `Proofs.lean`, `native_proof` on `Native.lean`, `bytes_proof` on `Bytes.lean`; `call_rule_test` checks `CallRule.lean` |
+| `tests/lean` | lemmas proved in Lean (ADR 0061): `--emit=lean`, receipts from `pia_lean_proof`, stale receipts, the trust report and certificate lines, `native_decide` only in `@trusted` files, machine integers as `Int` with their ranges (`bytes.pia`), slices as `Slice'` (`slices.pia`); `CallRule.lean`, the verifier's call rule proved sound, modular and incomplete (ADR 0076) | `sums_proof` runs Lean on `Proofs.lean`, `native_proof` on `Native.lean`, `bytes_proof` on `Bytes.lean`, `slices_proof` on `Slices.lean`; `call_rule_test` checks `CallRule.lean` |
 | `tests/smoke` | the tools start | |
 | `tests/lit` | `run_lit.sh` and `lit.bzl`, the lit runner | |
 
