@@ -23,18 +23,20 @@ Four things are open:
 
 ### 1. `@collective`: a function every iteration calls once, over every iteration's contribution
 
-`@collective` after a function's return type makes it a collective. `@collective(xs)` names its **gathered** parameters, each a slice `[t]`:
+**Index types** (Dean, 2026-11-28). `range` is the type of a spread's positions: a record of two `usize` bounds, `lo <= hi`, whose positions are `lo <= i < hi`. A spread's loop variable is a position of its range, of type `index r` for the range `r` it runs over. `[t; r]`, for a parameter `(r : range)`, is an array indexed by the positions of `r`: it has `r.hi - r.lo` elements, and `xs.[k]` is the element at position `k`, so a goal says `r.lo <= k` and the bounds goal that `k < r.hi`. In this ADR, ranges and the arrays over them are for collectives: a function that takes a `range` must be a `@collective`, and a gathered parameter must be an array over one. Written `index r` types, `for` loops over a range and tiles over a grid are a later ADR.
+
+`@collective` after a function's return type makes it a collective. `@collective(xs)` names its **gathered** parameters, each an array `[t; r]` over a range parameter:
 
 ```ocaml
-let sum (xs : [u32]) : u64
+let sum (r : range) (xs : [u32; r]) : u64
   @collective(xs)
   requires len xs <= 4'294'967'297
-  ensures forall k in 0 .. len xs -> result >= xs.[k]
+  ensures forall (k in r.lo .. r.hi). result >= xs.[k]
 = ... (* an ordinary proved loop that adds xs up *)
 ```
 
-- **At a call** in a spread body over `lo .. hi`, an iteration passes a `t` for each gathered parameter, as in `sum x`. The function is called once for the whole spread: its gathered parameter is the slice of every iteration's argument, `hi - lo` long, iteration `i`'s at index `i - lo`, and every iteration gets the one result. This is the introspection the compiler gives a library: the spread's context, as the slice of what each iteration contributed.
-- **How the argument binds.** At the call, the verifier knows that `len xs = hi - lo` and that `xs.[i - lo]` is the iteration's own argument. This is how an argument binds to a gathered parameter, as a plain argument binds to its parameter, so neither fact is trusted, and the body sees an ordinary slice indexed from 0.
+- **At a call** in a spread body, an iteration passes a `t` for each gathered parameter, as in `sum x`, and nothing for a range parameter: the call passes the spread's own range there. The function is called once for the whole spread: its gathered parameter holds every iteration's argument, iteration `i`'s at position `i`, and every iteration gets the one result. This is the introspection the compiler gives a library: the spread's range, as a value, and what each iteration contributed, as an array over it.
+- **How the argument binds.** At the call, the verifier knows that the array has a cell for each position of the range and that the iteration's own argument is at its position. In the collective, the same two facts are what `[t; r]` says. They are how an argument binds to a gathered parameter, as a plain argument binds to its parameter, so neither is trusted.
 - **Every other parameter** is passed as written, and must be the same in every iteration (uniform, section 3), since there is one call.
 - **The body is the meaning.** It is proved against the contract like any function's, and codegen runs it (section 5), so a collective adds nothing to the trust report. A `@lower` on it is an ordinary lowering ([ADR 0065](0065-lowerings-written-in-pia.md)): an atomic form that skips the gathered buffer, trusted as every lowering is until ADR 0065 proves them.
 - **`@collective` with no names** is a collective with nothing gathered: a barrier. A buffer the spread writes, passed to it as a `borrowed` (read-only) argument, is **published**: until the next collective, every iteration may read every cell of it, and none may write it. In shared memory there is nothing to copy.
@@ -71,7 +73,7 @@ The check is keyed on the attribute, so the compiler knows no collective by name
 The verifier still sees one arbitrary iteration of the body, as in ADR 0060, and every collective is a barrier in it:
 
 - At a collective, and on entering and leaving an `if` or `for` that contains one, every cell that another iteration owns of every buffer the spread writes is forgotten (ADR 0060's havoc), since the others may have written it.
-- At a call, each gathered argument is a fresh slice of length `hi - lo`, a spec buffer ([ADR 0058](0058-spec-buffers.md)), of which the iteration knows one cell: its own argument, at `xs.[i - lo]`. The precondition is a goal over it, so `sum`'s `len xs <= 2^32 + 1` is a goal on the spread's range. The result is fresh, the postcondition is assumed of it, and so `sum x >= x` follows from `sum`'s contract.
+- At a call, each gathered argument is a fresh array over the spread's range, a spec buffer ([ADR 0058](0058-spec-buffers.md)), of which the iteration knows one cell: its own argument, at its position `i`. The precondition is a goal over it, so `sum`'s `len xs <= 2^32 + 1` is a goal on the spread's range. The result is fresh, the postcondition is assumed of it, and so `sum x >= x` follows from `sum`'s contract.
 - After a call that publishes `b`, reads of `b` need no ownership goal and writes of `b` are rejected, until the next collective; a compound statement that contains a collective ends the window.
 
 ADR 0060's other rules stand: the body writes only cells it owns, and assigns no variable declared outside it.
@@ -87,7 +89,7 @@ So that phases can be separate loops, a value computed in one phase and used in 
 ### Alternatives
 
 - **Collective names in the compiler** (this ADR's first draft): `all_reduce` and `halo_exchange` known to IRGen, each reduction an atomic on one cell. No buffer, but a builtin per collective, and a new collective is a compiler change.
-- **Index types** (Dean, 2026-11-28): `index r`, the positions `lo <= i < hi` of a range `r`, with the spread variable an `index r` and a gathered parameter `[t; r]` indexed by it, so the offset `i - lo` is in the type rather than in the call's binding. For collectives it changes nothing a body can prove, since the offset appears only in code the compiler makes at the call. Index types get their own ADR, aimed at tiles and halo rows, which are ranges over a grid.
+- **Gathered slices without index types**: `xs : [t]`, with the iteration's argument at `xs.[i - lo]` and `len xs` the count. It needs no new type, but the offset would be the compiler's rule rather than the type's, and nothing would carry over to tiles.
 - **A trusted contract**: the library function's body is what one iteration would return alone, and its contract states the whole result, trusted. It has no buffer, but a reduction would be on the trust report for a fact its body can prove once it sees the contributions.
 - **Worker threads and barriers.** One thread per iteration and a barrier runtime over pthreads: what the design's word "worker" suggests, and the only way to run a collective inside a non-uniform loop. But it is a new trusted runtime, codegen would have to outline and pack the body, and the range would have to be no larger than the threads available. Phases need neither, and every program the protocol check accepts can be split.
 - **Comparing two iterations in Z3** for matching collectives: general, but the body twice, as ADR 0060 rejected for ownership.
@@ -95,7 +97,7 @@ So that phases can be separate loops, a value computed in one phase and used in 
 
 ## Consequences
 
-- A collective is a Pia function, proved like any other. The compiler knows only `@collective`: the gathered slice, the protocol check, the barrier and the phases.
+- A collective is a Pia function, proved like any other. The compiler knows only `range`, arrays over a range and `@collective`: the gathered array, the protocol check, the barrier and the phases.
 - A spread can loop over time steps with an `exchange` and a `sum` in each, and the compiler proves that every iteration reaches them in the same order.
 - A mismatched collective, under a condition on the loop variable, is a compile error at the call, naming the condition.
 - No new runtime: phases run on the async runtime ADR 0060 already trusts.
@@ -105,6 +107,6 @@ So that phases can be separate loops, a value computed in one phase and used in 
 
 ## Steps
 
-1. `@collective`, gathered parameters, the protocol check, publishing, and the goals and facts of section 4 in IRGen and the verifier; phases and gathered buffers in codegen; `Pia.Par`. Tests in `tests/verify/collectives.pia`, `tests/irgen/collective_errors.pia`, `tests/codegen/collectives.pia` and `tests/std/par.pia`.
+1. `range` and arrays over a range, `@collective`, gathered parameters, the protocol check, publishing, and the goals and facts of section 4 in IRGen and the verifier; phases and gathered buffers in codegen; `Pia.Par`. Tests in `tests/verify/collectives.pia`, `tests/irgen/collective_errors.pia`, `tests/codegen/collectives.pia` and `tests/std/par.pia`.
 2. `sediment_step` with an `exchange` and a `sum` on CPU threads, in the docs.
 3. An atomic `@lower` for `sum`, `least`, `most`, `any` and `every`, and float sums with floats (M11).
