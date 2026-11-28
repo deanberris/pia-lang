@@ -1886,11 +1886,12 @@ class Gen {
                  "cost; a cost clause belongs on code");
         return false;
       }
-      if (c->text != "iterations" && c->text != "calls") {
+      if (!isEventCounter(c->text) && !isCountedFunction(c->text)) {
         fail(*c, "'" + c->text +
-                     "' is not a counter yet: a cost clause "
-                     "counts 'iterations' or 'calls', and the calls of a "
-                     "function come later (ADR 0062)");
+                     "' is not a counter: a cost clause counts "
+                     "'iterations', 'calls' or the calls of a function of "
+                     "this module, and function parameters and concept "
+                     "requirements come later (ADR 0062)");
         return false;
       }
       for (const Counter &k : costs_)
@@ -1917,6 +1918,68 @@ class Gen {
       b_.getBlock()->getParentOp()->setAttr("pia.costs", b_.getUnitAttr());
     }
     return true;
+  }
+
+  static bool isEventCounter(llvm::StringRef counter) {
+    return counter == "iterations" || counter == "calls";
+  }
+
+  // Whether `name` is a function of this module that code calls, whose
+  // calls a cost clause can count (ADR 0062, section 2).
+  bool isCountedFunction(const std::string &name) {
+    for (const auto &[symbol, sig] : sigs_)
+      if (sig.item && sig.item->text == name && !hasFlag(*sig.item, "spec") &&
+          !hasFlag(*sig.item, "lemma"))
+        return true;
+    return false;
+  }
+
+  // Whether a call of `sig` is itself an event on `counter`: every call of
+  // code is one on `calls`, and a call of `f` one on `f`.
+  static bool isEvent(const sema::FuncSig &sig, const std::string &counter) {
+    if (counter == "calls")
+      return true;
+    return !isEventCounter(counter) && sig.item && sig.item->text == counter;
+  }
+
+  // Whether running `r` may call the function `counter`: a call of it, a
+  // call of a function that may, or a call through a reference, which may
+  // be to anything. A callee that cannot spends nothing on it, loops and
+  // recursion included.
+  bool mayReach(mlir::Region &r, const std::string &counter,
+                std::set<std::string> &seen) {
+    bool found = false;
+    r.walk([&](mlir::Operation *op) {
+      if (found)
+        return mlir::WalkResult::interrupt();
+      if (mlir::isa<mlir::func::CallIndirectOp>(op)) {
+        found = true;
+        return mlir::WalkResult::interrupt();
+      }
+      auto call = mlir::dyn_cast<mlir::func::CallOp>(op);
+      if (!call)
+        return mlir::WalkResult::advance();
+      std::string g = call.getCallee().str();
+      if (sourceName(g) == counter || mayReach(g, counter, seen)) {
+        found = true;
+        return mlir::WalkResult::interrupt();
+      }
+      return mlir::WalkResult::advance();
+    });
+    return found;
+  }
+
+  bool mayReach(const std::string &symbol, const std::string &counter,
+                std::set<std::string> &seen) {
+    if (!seen.insert(symbol).second)
+      return false;
+    auto f = module_.lookupSymbol<mlir::func::FuncOp>(symbol);
+    // A function of another module or of C cannot call one of this
+    // module's by name; one it was given is a reference, called here.
+    if (!f || f.isExternal() || f->hasAttr("pia.extern") ||
+        f->hasAttr(PiaDialect::getImportAttrName()))
+      return false;
+    return mayReach(f.getBody(), counter, seen);
   }
 
   // At the return: what the body spent is within the bound, a contract
@@ -1979,7 +2042,7 @@ class Gen {
         c->setAttr("pia.cost_caller", b_.getStringAttr(costSymbol_));
         costSites_[c] = n.loc;
       }
-      if (k.name == "calls")
+      if (isEvent(sig, k.name))
         part = addCost(l, part, counterConst(l, 1));
       k.spent->value = addCost(l, k.spent->value, part);
     }
@@ -2033,6 +2096,13 @@ class Gen {
     // A C function has no loop of Pia's: its call is the event.
     if (f->hasAttr("pia.extern"))
       return 0;
+    // A callee that cannot call the counted function spends nothing on it,
+    // whatever loops or recursion it has.
+    if (!isEventCounter(counter)) {
+      std::set<std::string> seen;
+      if (!mayReach(symbol, counter, seen))
+        return 0;
+    }
     if (f->hasAttr(PiaDialect::getImportAttrName()) || f.isExternal()) {
       why = "is defined in another module";
       return std::nullopt;
@@ -2060,6 +2130,12 @@ class Gen {
         if (op.getName().getDialectNamespace() == "pia_contract")
           continue;
         if (mlir::isa<mlir::scf::ForOp, mlir::scf::WhileOp>(op)) {
+          std::set<std::string> seen;
+          bool reaches = isEventCounter(counter);
+          for (mlir::Region &inner : op.getRegions())
+            reaches = reaches || mayReach(inner, counter, seen);
+          if (!reaches)
+            continue;
           why = "has a loop";
           return std::nullopt;
         }
@@ -2100,7 +2176,7 @@ class Gen {
             }
             part = *c;
           }
-          if (counter == "calls")
+          if (counter == "calls" || sourceName(g) == counter)
             part = satAdd(part, 1);
           total = satAdd(total, part);
           continue;
@@ -5113,7 +5189,8 @@ class Gen {
       // counter its cost clause bounds (ADR 0062).
       if (fn.text == "spent" && argc == 1 &&
           n.kids[1]->kind == NodeKind::Name &&
-          (n.kids[1]->text == "iterations" || n.kids[1]->text == "calls")) {
+          (isEventCounter(n.kids[1]->text) ||
+           isCountedFunction(n.kids[1]->text))) {
         const std::string &c = n.kids[1]->text;
         if (!spentOk_)
           return fail(n, "'spent " + c +

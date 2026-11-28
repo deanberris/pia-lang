@@ -648,6 +648,22 @@ let has (xs : [u32]) (v : u32) : bool
 
 `has` proves its bounds from `find`'s, without looking at its loop. A function that calls one with a loop and no bound cannot bound its own cost, and that is an error that names the callee.
 
+A counter can also be a function of the module: `costs less <= e` counts the calls of `less`, the way C++ states its complexity in comparisons. A callee that cannot call `less` at all adds nothing, whatever loops it has, so only the code on the way to `less` needs a bound:
+
+```ocaml
+let less (a : u32) (b : u32) : bool = a < b
+
+let count_below (xs : [u32]) (v : u32) : usize
+  ensures result <= len xs
+  costs less <= len xs
+=
+  let n : mutable usize = 0 in
+  for i in 0..len xs invariant n <= i && spent less <= i do
+    if less xs.[i] v then n <- n + 1
+  done;
+  n
+```
+
 ## Function values
 
 A nameless `let` is a function literal, a lambda: there is no `fun` keyword. A parameter with a function type, `(p : u8 -> bool)`, takes a lambda or the name of a top-level function. Each call compiles to its own copy of the function with the argument called directly, so a lambda costs what writing its body in the loop would ([ADR 0044](adr/0044-function-values-and-lambdas.md)).
