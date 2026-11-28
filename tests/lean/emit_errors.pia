@@ -1,8 +1,8 @@
-(* What the Lean translation does not support yet (ADR 0061, step 3): only
-   int, bool, machine integers and records of int and bool, no division,
-   no quantifier in a spec function's
-   body, and a lemma proved in Lean states only `requires` and `ensures`. A definition no `by lean` lemma uses is not translated, so
-   `unused` is no error.
+(* What the Lean translation does not support yet (ADR 0061, step 3): no
+   slice of slices, no record field of a machine type, no division, no
+   quantifier in a spec function's body, and a lemma proved in Lean states
+   only `requires` and `ensures`. A definition no `by lean` lemma uses is
+   not translated, so `unused` is no error.
 // RUN: not piac --emit=lean %s 2>&1 | FileCheck %s
 *)
 
@@ -15,7 +15,7 @@ let lemma half_small (n : int) : unit
   ensures half n <= n
 = by lean Proofs.half_small
 
-let lemma first (xs : [u8]) : unit
+let lemma first (xs : [[u8]]) : unit
   ensures len xs >= 0
 = by lean Proofs.first
 
@@ -39,7 +39,7 @@ let lemma counted (n : int) : unit
 
 (* Expected errors.
 // CHECK: error: the operator 'div' has no Lean translation yet (ADR 0061, step 3)
-// CHECK: error: the Lean translation supports int, bool, machine integers and records of int and bool, not this type yet (ADR 0061, step 3)
+// CHECK: error: a slice of slices has no Lean translation yet (ADR 0061, step 3)
 // CHECK: error: a record field of a machine integer or range type has no Lean translation yet (ADR 0061, step 3)
 // CHECK: error: a quantifier in a spec function's body has no Lean translation yet (ADR 0061, step 3)
 // CHECK: error: a lemma proved in Lean states only 'requires' and 'ensures'
