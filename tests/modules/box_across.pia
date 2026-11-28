@@ -20,8 +20,7 @@ let late (to : borrowed mutable [timeout]) (x : u8) : result u8 Raise.io_error
   requires len to = 1
   ensures (match result with | Ok v -> v = x | Err _ -> true)
 = if x = 3 then
-    (to.[0] <- { ms = 30 };
-     let b : box timeout = { slot = to; state = 1 } in
+    (let b : box timeout = { slot = to; state = 1 } in
      Err (Cxx (widen b)))
   else Ok x
 

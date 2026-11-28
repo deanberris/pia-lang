@@ -29,7 +29,6 @@ let fail (nf : borrowed mutable [not_found]) (x : u8) : result u8 io_error
   ensures (match result with | Ok v -> v = x | Err _ -> true)
 = if x = 0 then Err Closed
   else if x = 1 then
-    (nf.[0] <- { id = 4 };
-     let b : box not_found = { slot = nf; state = 1 } in
+    (let b : box not_found = { slot = nf; state = 1 } in
      Err (Cxx (widen b)))
   else Ok x
