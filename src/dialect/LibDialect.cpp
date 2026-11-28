@@ -26,8 +26,8 @@ LogicalResult CallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     return emitOpError() << "'" << getCallee()
                          << "' is not a function in the module";
   FunctionType type = fn.getFunctionType();
-  if (type.getInputs() != getArgs().getTypes() ||
-      type.getResults() != getResultTypes())
+  if (!llvm::equal(type.getInputs(), getArgs().getTypes()) ||
+      !llvm::equal(type.getResults(), getResultTypes()))
     return emitOpError() << "has the types " << getArgs().getTypes() << " -> "
                          << getResultTypes() << ", but '" << getCallee()
                          << "' has " << type;

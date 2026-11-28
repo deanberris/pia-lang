@@ -511,9 +511,9 @@ void markLibCalls(mlir::ModuleOp module,
   });
   for (mlir::func::CallOp call : calls) {
     mlir::OpBuilder b(call);
-    auto op = b.create<lib::CallOp>(call.getLoc(), call.getResultTypes(),
-                                    call.getCalleeAttr(), call.getOperands(),
-                                    mlir::UnitAttr());
+    auto op = lib::CallOp::create(b, call.getLoc(), call.getResultTypes(),
+                                  call.getCalleeAttr(), call.getOperands(),
+                                  mlir::UnitAttr());
     for (mlir::NamedAttribute a : call->getDiscardableAttrs())
       op->setAttr(a.getName(), a.getValue());
     call.replaceAllUsesWith(op.getResults());
@@ -602,8 +602,8 @@ void expandLibCalls(mlir::ModuleOp module) {
   for (lib::CallOp call : calls) {
     mlir::OpBuilder b(call);
     auto expanded =
-        b.create<mlir::func::CallOp>(call.getLoc(), call.getCalleeAttr(),
-                                     call.getResultTypes(), call.getArgs());
+        mlir::func::CallOp::create(b, call.getLoc(), call.getCalleeAttr(),
+                                   call.getResultTypes(), call.getArgs());
     for (mlir::NamedAttribute a : call->getDiscardableAttrs())
       expanded->setAttr(a.getName(), a.getValue());
     call.replaceAllUsesWith(expanded.getResults());
