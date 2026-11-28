@@ -27,6 +27,13 @@ std::map<std::string, std::string> &uncallable() {
   return reasons;
 }
 
+// By function name, for the functions flagged "box_op", whose bodies are a
+// box's own ops; like uncallable(), it outlives the program's clone.
+std::map<std::string, BoxOp> &boxOps() {
+  static std::map<std::string, BoxOp> ops;
+  return ops;
+}
+
 // The generic type items whose first parameter is `@unsized`.
 std::set<std::string> unsizedTypes(const Node &program) {
   std::set<std::string> out;
@@ -151,7 +158,8 @@ std::vector<uint32_t> contractEnds(const std::vector<const Node *> &cs,
 std::string erasedSource(const std::string &cname, const Node &concept,
                          const std::string &box, Text &text,
                          std::map<std::string, std::string> &whyNot,
-                         const std::vector<std::string> *closed,
+                         const std::vector<std::string> *closed, int words,
+                         std::map<std::string, BoxOp> &ops,
                          syntax::Diagnostics &diags) {
   const std::string m = mangle(cname);
   const std::string theory = "erased_" + m;
@@ -282,16 +290,22 @@ std::string erasedSource(const std::string &cname, const Node &concept,
   }
   src += "end\n\n";
   // The box: before the module's widened types are known, a stand-in; then
-  // a tagged union of them (ADR 0046, step 5), so a call through a box is
-  // a switch on the tag, and a direct call where the tag is known.
-  auto ctor = [&](const std::string &t) { return "Box_" + m + "_" + t; };
+  // one cache line of words (the cache-line amendment): the descriptor's
+  // address, then the object.
   if (!closed || closed->empty()) {
     src += "let " + boxType + " = type { tag : u8 }\n\n";
   } else {
-    src += "let " + boxType + " = type";
-    for (const std::string &t : *closed) src += " | " + ctor(t) + " of " + t;
-    src += "\n\n";
+    src += "let " + boxType + " = type {";
+    for (int w = 0; w < words; ++w)
+      src += std::string(w ? ";" : "") + " w" + std::to_string(w) + " : u64";
+    src += " }\n\n";
   }
+  // The requirements a box can call, in the concept's order: the
+  // descriptor's entries.
+  std::vector<const Requirement *> callable;
+  for (const Requirement &q : reqs)
+    if (q.why.empty())
+      callable.push_back(&q);
   for (const Requirement &q : reqs) {
     std::string recv;
     for (const Param &p : q.params)
@@ -319,21 +333,34 @@ std::string erasedSource(const std::string &cname, const Node &concept,
     };
     std::map<std::string, std::string> onSelf = outside;
     onSelf[recv] = self;
-    // The call through the box: a switch on what it holds, whose result
-    // the verifier takes to be the erased requirement's, so a caller is
-    // told the contract and no more. The assumption is the use check's at
-    // widen (box_trusted). Before the widened types are known, a stand-in.
-    src += "let " + theory + "_call_" + q.name + params(q, boxType) + " : " +
-           q.result + requires(onSelf) + "\n  ensures result = " + theory +
-           "." + q.name + "_of" + args(q, self) + "\n= ";
+    // The call through the box: through the descriptor in code; to the
+    // verifier, a proxy whose result is the erased requirement's, so a
+    // caller is told the contract and no more. The use check at widen
+    // justifies it. Before the widened types are known, a stand-in.
+    const std::string call = theory + "_call_" + q.name;
+    src += "let " + call + params(q, boxType) + " : " + q.result +
+           requires(onSelf) + "\n  ensures result = " + theory + "." + q.name +
+           "_of" + args(q, self) + "\n= abort ()\n\n";
     if (closed && !closed->empty()) {
-      src += "let r : " + q.result + " = match " + self + " with";
-      for (const std::string &t : *closed)
-        src += "\n    | " + ctor(t) + " v -> " + q.name + args(q, "v");
-      src += " in\n  assume r = " + theory + "." + q.name + "_of" +
-             args(q, self) + ";\n  r\n\n";
-    } else {
-      src += "abort ()\n\n";
+      BoxOp op;
+      op.kind = BoxOp::Call;
+      op.entry = static_cast<int>(
+          std::find(callable.begin(), callable.end(), &q) - callable.begin());
+      op.words = words;
+      ops[call] = op;
+      // Each type's thunk: the requirement called on a value of it, which
+      // the descriptor's entry calls with the object it loads.
+      for (const std::string &t : *closed) {
+        std::map<std::string, std::string> onValue;
+        onValue[recv] = self;
+        std::string ps;
+        for (const Param &p : q.params)
+          ps += " (" + (p.receiver ? self : p.name) + " : " +
+                (p.receiver ? t : p.type) + ")";
+        src += "let " + theory + "_thunk_" + q.name + "_" + t + ps + " : " +
+               q.result + requires(onValue) + "\n= " + q.name + args(q, self) +
+               "\n\n";
+      }
     }
     std::map<std::string, std::string> onBox = outside;
     std::string ps;
@@ -352,9 +379,20 @@ std::string erasedSource(const std::string &cname, const Node &concept,
   } else {
     src += "let " + theory + "_check (t : type where " + cname + " t) (b : " +
            box + " t) : unit = ()\n\n";
-    for (const std::string &t : *closed)
+    for (const std::string &t : *closed) {
+      // The object, packed into the box with its descriptor.
+      const std::string pack = theory + "_pack_" + t;
+      BoxOp op;
+      op.kind = BoxOp::Pack;
+      op.descriptor = "pia$t$" + t + "$" + m;
+      for (const Requirement *q : callable)
+        op.thunks.push_back(theory + "_thunk_" + q->name + "_" + t);
+      ops[pack] = op;
+      src +=
+          "let " + pack + " (v : " + t + ") : " + boxType + "\n= abort ()\n\n";
       src += "let widen (b : " + box + " " + t + ") : " + boxType + full +
-             "\n= " + theory + "_check b;\n  " + ctor(t) + " b.slot.[0]\n\n";
+             "\n= " + theory + "_check b;\n  " + pack + " b.slot.[0]\n\n";
+    }
   }
   return src;
 }
@@ -411,9 +449,16 @@ std::string boxUncallable(const Node &item) {
   return it == uncallable().end() ? "" : it->second;
 }
 
+BoxOp boxOp(const Node &item) {
+  if (item.flags.find("box_op") == std::string::npos)
+    return {};
+  auto it = boxOps().find(item.text);
+  return it == boxOps().end() ? BoxOp{} : it->second;
+}
+
 void expandErasedBoxes(
     Node &program, std::string_view source, syntax::Diagnostics &diags,
-    const std::map<std::string, std::vector<std::string>> *widened) {
+    const std::map<std::string, std::vector<std::string>> *widened, int words) {
   std::set<std::string> unsized = unsizedTypes(program);
   std::map<std::string, const Node *> cs = concepts(program);
   std::set<std::string> used;
@@ -475,11 +520,12 @@ void expandErasedBoxes(
   std::string box = *unsized.begin();
   for (const std::string &c : used) {
     std::map<std::string, std::string> whyNot;
+    std::map<std::string, BoxOp> ops;
     const std::vector<std::string> *closed = nullptr;
     if (widened)
       if (auto w = widened->find(c); w != widened->end()) closed = &w->second;
-    std::string src =
-        erasedSource(c, *cs.at(c), box, text, whyNot, closed, diags);
+    std::string src = erasedSource(c, *cs.at(c), box, text, whyNot, closed,
+                                   words, ops, diags);
     if (diags.hasErrors()) return;
     syntax::Diagnostics local;
     NodePtr extra = syntax::parseProgram(src, local);
@@ -492,10 +538,15 @@ void expandErasedBoxes(
     for (NodePtr &k : extra->kids) {
       if (k->kind == NodeKind::FileAttr) continue;
       // Its axioms hold of every type `widen` boxes, by the use check.
-      if (k->kind == NodeKind::Theory) k->flags = "box";
-      if (k->kind == NodeKind::LetItem &&
-          k->text.rfind("erased_" + mangle(c) + "_call_", 0) == 0)
-        k->flags += k->flags.empty() ? "box_trusted" : " box_trusted";
+      // Once it boxes a type, that type is a model of them.
+      if (k->kind == NodeKind::Theory)
+        k->flags = closed && !closed->empty() ? "box modelled" : "box";
+      // A function whose body is a box's own op: a proxy to the verifier.
+      if (k->kind == NodeKind::LetItem)
+        if (auto o = ops.find(k->text); o != ops.end()) {
+          boxOps()[k->text] = o->second;
+          k->flags += k->flags.empty() ? "box_op" : " box_op";
+        }
       if (k->kind == NodeKind::LetItem &&
           (k->text == "widen" || k->text == "erased_" + mangle(c) + "_check"))
         k->flags += k->flags.empty() ? "box_widen" : " box_widen";

@@ -334,6 +334,7 @@ jobs:
           fi
 
       - name: Build
+        id: build
         timeout-minutes: 300
         run: env -u ANDROID_HOME -u ANDROID_SDK_ROOT -u ANDROID_NDK_HOME bazel build --config=ci --keep_going //...
 
@@ -459,6 +460,27 @@ jobs:
         with:
           name: test-logs-linux
           path: testlogs/
+          if-no-files-found: ignore
+
+      # When the build works and a test fails, the piac it built lets a
+      # session without Bazel (a cloud session) rerun the failing proofs.
+      - name: Keep piac for debugging
+        if: failure() && steps.build.outcome == 'success'
+        run: |
+          mkdir -p "${{ runner.temp }}/debug-piac"
+          cp -L bazel-bin/tools/piac/piac "${{ runner.temp }}/debug-piac/piac"
+          chmod 755 "${{ runner.temp }}/debug-piac/piac"
+          strip "${{ runner.temp }}/debug-piac/piac"
+          tar -czf "${{ runner.temp }}/debug-piac.tar.gz" -C "${{ runner.temp }}/debug-piac" piac
+
+      - name: Upload piac for debugging
+        if: failure() && steps.build.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-piac-linux
+          path: ${{ runner.temp }}/debug-piac.tar.gz
+          retention-days: 3
+          compression-level: 0
           if-no-files-found: ignore
 
   # The proof build-time benchmark (ADR 0032), gated on Linux. The corpus

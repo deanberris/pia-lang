@@ -386,6 +386,41 @@ struct LenLowering : mlir::OpConversionPattern<LenOp> {
   }
 };
 
+// A box's own ops (ADR 0046) take the object and the box as values: each
+// record operand or result becomes its leaves, in order, and the op keeps
+// its attributes, so codegen sees the object's fields and the box's words.
+template <typename Op> struct FlattenLowering : mlir::OpConversionPattern<Op> {
+  using mlir::OpConversionPattern<Op>::OpConversionPattern;
+  mlir::LogicalResult matchAndRewrite(
+      Op op, typename mlir::OpConversionPattern<Op>::OneToNOpAdaptor adaptor,
+      mlir::ConversionPatternRewriter &rw) const override {
+    llvm::SmallVector<Value> operands = flatten(adaptor.getOperands());
+    llvm::SmallVector<Type> types;
+    llvm::SmallVector<unsigned> counts;
+    for (Type t : op->getResultTypes()) {
+      size_t before = types.size();
+      if (mlir::failed(this->getTypeConverter()->convertType(t, types)))
+        return mlir::failure();
+      counts.push_back(types.size() - before);
+    }
+    mlir::OperationState state(op->getLoc(), op->getName());
+    state.addOperands(operands);
+    state.addTypes(types);
+    state.addAttributes(op->getAttrs());
+    mlir::Operation *flat = rw.create(state);
+    llvm::SmallVector<llvm::SmallVector<Value>> results;
+    unsigned next = 0;
+    for (unsigned n : counts) {
+      llvm::SmallVector<Value> group;
+      for (unsigned i = 0; i < n; ++i)
+        group.push_back(flat->getResult(next++));
+      results.push_back(std::move(group));
+    }
+    rw.replaceOpWithMultiple(op, std::move(results));
+    return mlir::success();
+  }
+};
+
 bool hasRecords(mlir::ModuleOp module) {
   bool found = false;
   module.walk([&](mlir::Operation *op) {
@@ -574,10 +609,10 @@ mlir::LogicalResult scalarizeRecordsIn(mlir::ModuleOp module) {
 
   mlir::RewritePatternSet patterns(ctx);
   patterns.add<RecordLowering, FieldLowering, ArbitraryLowering, EmptyLowering,
-               OldLowering,
-               LoadLowering,
-               StoreLowering, SliceLowering, LenLowering, RecMakeLowering,
-               RecPayloadLowering>(types, ctx);
+               OldLowering, LoadLowering, StoreLowering, SliceLowering,
+               LenLowering, RecMakeLowering, RecPayloadLowering,
+               FlattenLowering<BoxPackOp>, FlattenLowering<BoxCallOp>>(types,
+                                                                       ctx);
   mlir::populateFunctionOpInterfaceTypeConversionPattern<mlir::func::FuncOp>(
       patterns, types);
   mlir::populateCallOpTypeConversionPattern(patterns, types);

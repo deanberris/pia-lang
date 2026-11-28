@@ -1151,6 +1151,11 @@ class Gen {
     // contract, not the body (ADR 0071, section 3).
     if (proxies_.count(sig.name))
       fn->setAttr("pia.proxy", b_.getUnitAttr());
+    // A box's pack and calls (ADR 0046, the cache-line amendment): their
+    // bodies are the box's own ops, and callers see only their contracts,
+    // which the use check at widen justifies.
+    if (boxOp(item).kind != BoxOp::None)
+      fn->setAttr("pia.proxy", b_.getUnitAttr());
     if (references_.count(sig.name))
       fn->setAttr("pia.reference", b_.getUnitAttr());
     if (auto e = exports_.find(sig.name); e != exports_.end()) {
@@ -1271,6 +1276,8 @@ class Gen {
       if (auto m = theoryInfo_.modelled.find(theory);
           m != theoryInfo_.modelled.end())
         fn->setAttr("pia.modelled", b_.getStringAttr(m->second));
+      else if (theoryInfo_.boxModelled.count(theory))
+        fn->setAttr("pia.modelled", b_.getStringAttr("widen"));
     }
     // A model's items, and the lemmas that check it, see its definitions;
     // nothing else does (sealing).
@@ -1593,9 +1600,11 @@ class Gen {
     // as a spread iteration `b` would (ADR 0060).
     if (!owns_.empty() && !footprintScope(item))
       return;
-    R body = isExtern ? genForeign(bodyNode, foreign, sig, entry)
-             : isSpec ? genContractExpr(bodyNode, sig.result)
-                      : genExpr(*bodyPtr, sig.result);
+    BoxOp box = boxOp(item);
+    R body = box.kind != BoxOp::None ? genBoxOp(bodyNode, box, sig, entry)
+             : isExtern              ? genForeign(bodyNode, foreign, sig, entry)
+             : isSpec                ? genContractExpr(bodyNode, sig.result)
+                                     : genExpr(*bodyPtr, sig.result);
     spread_.reset();
     if (!body) return;
     if (!isSpec && !ghost_) {
@@ -10668,6 +10677,36 @@ class Gen {
     return TV{op.getResult(0), sig.result};
   }
 
+  // The body of a box's pack or of a call through it (ADR 0046): one
+  // `pia.box_pack` or `pia.box_call` of the parameters, which codegen
+  // lowers through the boxed type's descriptor.
+  R genBoxOp(const Node &body, const BoxOp &box, const sema::FuncSig &sig,
+             Block *entry) {
+    llvm::SmallVector<Type> results;
+    if (!isUnit(sig.result))
+      results.push_back(sig.result);
+    llvm::SmallVector<Value> args(entry->getArguments().begin(),
+                                  entry->getArguments().end());
+    mlir::Operation *op;
+    if (box.kind == BoxOp::Pack) {
+      llvm::SmallVector<mlir::Attribute> thunks;
+      for (const std::string &t : box.thunks)
+        thunks.push_back(b_.getStringAttr(t));
+      op = create<BoxPackOp>(loc(body), results,
+                             b_.getStringAttr(box.descriptor),
+                             b_.getArrayAttr(thunks), args)
+               .getOperation();
+    } else {
+      op =
+          create<BoxCallOp>(loc(body), results, b_.getI64IntegerAttr(box.entry),
+                            b_.getI64IntegerAttr(box.words), args)
+              .getOperation();
+    }
+    if (results.empty())
+      return unit();
+    return TV{op->getResult(0), sig.result};
+  }
+
   // `unsafe f x`: a call of a foreign function that has no contract. The
   // caller vouches for it; the verifier assumes nothing it does.
   R genUnsafe(const Node &n, Type expected) {
@@ -13295,8 +13334,9 @@ generateInherited(const syntax::Node &programIn, std::string_view filename,
     return generateOnce(programIn, filename, ctx, diags, options);
   // A box over a concept (ADR 0046) becomes its own record and theory. A
   // first pass, with a stand-in for the box, finds the types the module
-  // widens to each concept; the second makes `box C` their tagged union
-  // (step 5), the module's closed world.
+  // widens to each concept; the second makes `box C` one cache line of the
+  // target (the cache-line amendment), with a pack function and thunks for
+  // each of those types.
   syntax::NodePtr first = syntax::clone(programIn);
   expandErasedBoxes(*first, options.source, diags);
   if (diags.hasErrors()) return nullptr;
@@ -13338,7 +13378,8 @@ generateInherited(const syntax::Node &programIn, std::string_view filename,
         byConcept[item->text] = w->second;
     }
   syntax::NodePtr second = syntax::clone(programIn);
-  expandErasedBoxes(*second, options.source, diags, &byConcept);
+  int words = targetModelFor(options.triple) == "arm64_macos" ? 16 : 8;
+  expandErasedBoxes(*second, options.source, diags, &byConcept, words);
   if (diags.hasErrors()) return nullptr;
   return generateOnce(*second, filename, ctx, diags, options);
 }

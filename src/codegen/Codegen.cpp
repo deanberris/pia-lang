@@ -1012,6 +1012,168 @@ struct EmbedLowering : mlir::OpConversionPattern<EmbedOp> {
   }
 };
 
+// A box over a concept (ADR 0046, the cache-line amendment) is one cache
+// line of 64-bit words: the first holds its descriptor's address, and the
+// object follows in its C layout, each field at its natural alignment.
+
+// The bytes a field of machine type `t` takes in an object, which is also
+// its alignment; 0 for a type an object cannot hold inline.
+int64_t boxFieldBytes(Type t) {
+  if (!t.isIntOrFloat())
+    return 0;
+  unsigned bits = t.getIntOrFloatBitWidth();
+  int64_t bytes = llvm::PowerOf2Ceil(std::max(1u, (bits + 7) / 8));
+  return bytes <= 8 ? bytes : 0;
+}
+
+// `p + bytes`, as an LLVM pointer.
+Value bytesAfter(OpBuilder &b, Location loc, Value p, int64_t bytes) {
+  auto ptr = mlir::LLVM::LLVMPointerType::get(b.getContext());
+  return make<mlir::LLVM::GEPOp>(
+      b, loc, ptr, b.getI8Type(), p,
+      llvm::ArrayRef<mlir::LLVM::GEPArg>{static_cast<int32_t>(bytes)});
+}
+
+// A stack slot for a box's words, so that its object has an address.
+Value boxSlot(OpBuilder &b, Location loc, int64_t words) {
+  auto ptr = mlir::LLVM::LLVMPointerType::get(b.getContext());
+  Value one = make<mlir::LLVM::ConstantOp>(b, loc, b.getI64Type(),
+                                           b.getI64IntegerAttr(1));
+  auto line = mlir::LLVM::LLVMArrayType::get(b.getI64Type(), words);
+  return make<mlir::LLVM::AllocaOp>(b, loc, ptr, line, one,
+                                    static_cast<unsigned>(words * 8));
+}
+
+// `pia.box_pack`: the descriptor's address and the object's fields stored
+// in a cache line, read back as its words. The descriptor is declared
+// here, with what addBoxEntries and defineBoxDescriptors need to define it.
+struct BoxPackLowering : mlir::OpConversionPattern<BoxPackOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(BoxPackOp op, OpAdaptor adaptor,
+                  mlir::ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    mlir::MLIRContext *ctx = rw.getContext();
+    auto ptr = mlir::LLVM::LLVMPointerType::get(ctx);
+    auto i64 = rw.getI64Type();
+    int64_t words = op.getNumResults();
+    llvm::SmallVector<Type> leaves;
+    llvm::SmallVector<int64_t> offsets;
+    int64_t end = 0, align = 1;
+    for (Value v : adaptor.getObject()) {
+      int64_t bytes = boxFieldBytes(v.getType());
+      if (bytes == 0)
+        return op.emitError()
+               << "a box over a concept holds integers, floats, bools and "
+                  "records of them for now, not "
+               << v.getType();
+      end = llvm::alignTo(end, bytes);
+      offsets.push_back(end);
+      leaves.push_back(v.getType());
+      end += bytes;
+      align = std::max(align, bytes);
+    }
+    int64_t size = llvm::alignTo(end, align);
+    int64_t room = (words - 1) * 8;
+    if (size > room)
+      return op.emitError()
+             << "this object takes " << size << " bytes, more than the " << room
+             << " a box's cache line holds inline; a larger object needs "
+                "a block through the box's lease, which is not built yet "
+                "(ADR 0046)";
+    auto module = op->getParentOfType<mlir::ModuleOp>();
+    llvm::StringRef sym = op.getDescriptor();
+    if (!module.lookupSymbol<mlir::LLVM::GlobalOp>(sym)) {
+      llvm::SmallVector<Type> entries{i64, i64, ptr};
+      for (size_t i = 0; i < op.getThunks().size(); ++i)
+        entries.push_back(ptr);
+      auto type = mlir::LLVM::LLVMStructType::getLiteral(ctx, entries);
+      mlir::OpBuilder::InsertionGuard guard(rw);
+      rw.setInsertionPointToStart(module.getBody());
+      auto g = make<mlir::LLVM::GlobalOp>(rw, loc, type, /*isConstant=*/true,
+                                          mlir::LLVM::Linkage::External, sym,
+                                          mlir::Attribute());
+      g->setAttr("pia.box_thunks", op.getThunks());
+      g->setAttr("pia.box_leaves", rw.getTypeArrayAttr(leaves));
+      g->setAttr("pia.box_offsets", rw.getDenseI64ArrayAttr(offsets));
+      g->setAttr("pia.box_size", rw.getI64IntegerAttr(size));
+      g->setAttr("pia.box_align", rw.getI64IntegerAttr(align));
+    }
+    Value slot = boxSlot(rw, loc, words);
+    Value zero =
+        make<mlir::LLVM::ConstantOp>(rw, loc, i64, rw.getI64IntegerAttr(0));
+    for (int64_t w = 1; w < words; ++w)
+      make<mlir::LLVM::StoreOp>(rw, loc, zero,
+                                bytesAfter(rw, loc, slot, w * 8));
+    Value desc = make<mlir::LLVM::AddressOfOp>(rw, loc, ptr, sym);
+    make<mlir::LLVM::StoreOp>(rw, loc, desc, slot);
+    for (auto [v, off] : llvm::zip_equal(adaptor.getObject(), offsets))
+      make<mlir::LLVM::StoreOp>(rw, loc, v, bytesAfter(rw, loc, slot, 8 + off));
+    llvm::SmallVector<Value> out;
+    for (int64_t w = 0; w < words; ++w)
+      out.push_back(make<mlir::LLVM::LoadOp>(rw, loc, i64,
+                                             bytesAfter(rw, loc, slot, w * 8)));
+    rw.replaceOp(op, out);
+    return mlir::success();
+  }
+};
+
+// `pia.box_call`: the requirement's entry, loaded from the descriptor the
+// box's first word points to, called with the object's address and the
+// other arguments. Where LLVM sees which descriptor the box holds, the
+// loads fold and the call is direct.
+struct BoxCallLowering : mlir::OpConversionPattern<BoxCallOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(BoxCallOp op, OpAdaptor adaptor,
+                  mlir::ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    auto ptr = mlir::LLVM::LLVMPointerType::get(rw.getContext());
+    int64_t words = op.getWords();
+    mlir::ValueRange args = adaptor.getArgs();
+    if (static_cast<int64_t>(args.size()) < words)
+      return mlir::failure();
+    llvm::SmallVector<Type> results;
+    if (mlir::failed(
+            getTypeConverter()->convertTypes(op.getResultTypes(), results)))
+      return mlir::failure();
+    if (results.size() > 1 ||
+        (results.size() == 1 && !boxFieldBytes(results.front())))
+      return op.emitError() << "a call through a box returns one integer, "
+                               "float or bool for now";
+    Value slot = boxSlot(rw, loc, words);
+    for (int64_t w = 0; w < words; ++w)
+      make<mlir::LLVM::StoreOp>(rw, loc, args[w],
+                                bytesAfter(rw, loc, slot, w * 8));
+    Value desc = make<mlir::LLVM::LoadOp>(rw, loc, ptr, slot);
+    // The size, the alignment and the drop come first.
+    Value fn = make<mlir::LLVM::LoadOp>(
+        rw, loc, ptr,
+        bytesAfter(rw, loc, desc,
+                   8 * (3 + static_cast<int64_t>(op.getEntry()))));
+    llvm::SmallVector<Type> params{ptr};
+    llvm::SmallVector<Value> operands{fn, bytesAfter(rw, loc, slot, 8)};
+    for (Value a : args.drop_front(words)) {
+      if (!boxFieldBytes(a.getType()))
+        return op.emitError() << "a call through a box passes integers, "
+                                 "floats and bools for now, not "
+                              << a.getType();
+      params.push_back(a.getType());
+      operands.push_back(a);
+    }
+    Type result = results.empty()
+                      ? Type(mlir::LLVM::LLVMVoidType::get(rw.getContext()))
+                      : results.front();
+    auto fnType = mlir::LLVM::LLVMFunctionType::get(result, params);
+    auto call = make<mlir::LLVM::CallOp>(rw, loc, fnType, operands);
+    if (results.empty())
+      rw.eraseOp(op);
+    else
+      rw.replaceOp(op, call.getResult());
+    return mlir::success();
+  }
+};
+
 struct ViewLowering : mlir::OpConversionPattern<ViewOp> {
   using OpConversionPattern::OpConversionPattern;
   LogicalResult
@@ -2087,6 +2249,104 @@ void eraseContracts(mlir::ModuleOp module) {
       f.erase();
 }
 
+// The entries of each box descriptor (ADR 0046, the cache-line amendment):
+// for each requirement, a function that takes the object's address and
+// the requirement's other arguments, loads the object's fields from their
+// offsets, and calls the type's thunk, the Pia function that calls the
+// requirement on a value. Named `<descriptor>$<k>`.
+static LogicalResult addBoxEntries(mlir::ModuleOp module) {
+  OpBuilder b(module.getContext());
+  auto ptr = mlir::LLVM::LLVMPointerType::get(module.getContext());
+  llvm::SmallVector<mlir::LLVM::GlobalOp> descriptors;
+  for (auto g : module.getOps<mlir::LLVM::GlobalOp>())
+    if (g->hasAttr("pia.box_thunks"))
+      descriptors.push_back(g);
+  for (mlir::LLVM::GlobalOp g : descriptors) {
+    auto thunks = g->getAttrOfType<mlir::ArrayAttr>("pia.box_thunks");
+    auto leaves = g->getAttrOfType<mlir::ArrayAttr>("pia.box_leaves");
+    auto offsets = g->getAttrOfType<mlir::DenseI64ArrayAttr>("pia.box_offsets");
+    Location loc = g.getLoc();
+    for (auto [k, t] : llvm::enumerate(thunks)) {
+      llvm::StringRef name = mlir::cast<mlir::StringAttr>(t).getValue();
+      auto thunk = module.lookupSymbol<mlir::func::FuncOp>(name);
+      if (!thunk)
+        return g.emitError() << "the box's thunk '" << name << "' is missing";
+      mlir::FunctionType ft = thunk.getFunctionType();
+      unsigned n = leaves.size();
+      bool same = ft.getNumInputs() >= n;
+      for (unsigned i = 0; same && i < n; ++i)
+        same =
+            ft.getInput(i) == mlir::cast<mlir::TypeAttr>(leaves[i]).getValue();
+      if (!same)
+        return g.emitError() << "the box's thunk '" << name
+                             << "' does not take the object's fields";
+      llvm::SmallVector<Type> inputs{ptr};
+      for (Type a : ft.getInputs().drop_front(n))
+        inputs.push_back(a);
+      b.setInsertionPointToEnd(module.getBody());
+      auto entry = make<mlir::func::FuncOp>(
+          b, loc, (g.getSymName() + "$" + llvm::Twine(k)).str(),
+          b.getFunctionType(inputs, ft.getResults()));
+      entry.setPrivate();
+      mlir::Block *body = entry.addEntryBlock();
+      b.setInsertionPointToStart(body);
+      llvm::SmallVector<Value> callArgs;
+      for (unsigned i = 0; i < n; ++i)
+        callArgs.push_back(make<mlir::LLVM::LoadOp>(
+            b, loc, mlir::cast<mlir::TypeAttr>(leaves[i]).getValue(),
+            bytesAfter(b, loc, body->getArgument(0), offsets[i])));
+      for (unsigned i = 1; i < body->getNumArguments(); ++i)
+        callArgs.push_back(body->getArgument(i));
+      auto call = make<mlir::func::CallOp>(b, loc, thunk, callArgs);
+      make<mlir::func::ReturnOp>(b, loc, call.getResults());
+    }
+  }
+  return mlir::success();
+}
+
+// Defines each box descriptor once its entries are LLVM functions: the
+// object's size and alignment, its drop (none yet), and the entries.
+static void defineBoxDescriptors(mlir::ModuleOp module) {
+  mlir::MLIRContext *ctx = module.getContext();
+  OpBuilder b(ctx);
+  auto ptr = mlir::LLVM::LLVMPointerType::get(ctx);
+  auto i64 = b.getI64Type();
+  for (auto g : module.getOps<mlir::LLVM::GlobalOp>()) {
+    auto thunks = g->getAttrOfType<mlir::ArrayAttr>("pia.box_thunks");
+    if (!thunks)
+      continue;
+    Location loc = g.getLoc();
+    mlir::Block *init = b.createBlock(&g.getInitializerRegion());
+    b.setInsertionPointToStart(init);
+    Value v = make<mlir::LLVM::UndefOp>(b, loc, g.getType());
+    auto word = [&](llvm::StringRef attr) -> Value {
+      return make<mlir::LLVM::ConstantOp>(
+          b, loc, i64,
+          b.getI64IntegerAttr(
+              g->getAttrOfType<mlir::IntegerAttr>(attr).getInt()));
+    };
+    v = make<mlir::LLVM::InsertValueOp>(b, loc, v, word("pia.box_size"),
+                                        llvm::ArrayRef<int64_t>{0});
+    v = make<mlir::LLVM::InsertValueOp>(b, loc, v, word("pia.box_align"),
+                                        llvm::ArrayRef<int64_t>{1});
+    v = make<mlir::LLVM::InsertValueOp>(b, loc, v,
+                                        make<mlir::LLVM::ZeroOp>(b, loc, ptr),
+                                        llvm::ArrayRef<int64_t>{2});
+    for (size_t k = 0; k < thunks.size(); ++k) {
+      Value f = make<mlir::LLVM::AddressOfOp>(
+          b, loc, ptr, (g.getSymName() + "$" + llvm::Twine(k)).str());
+      v = make<mlir::LLVM::InsertValueOp>(
+          b, loc, v, f, llvm::ArrayRef<int64_t>{static_cast<int64_t>(3 + k)});
+    }
+    make<mlir::LLVM::ReturnOp>(b, loc, v);
+    g.setLinkage(mlir::LLVM::Linkage::Internal);
+    for (llvm::StringRef a :
+         {"pia.box_thunks", "pia.box_leaves", "pia.box_offsets", "pia.box_size",
+          "pia.box_align"})
+      g->removeAttr(a);
+  }
+}
+
 // A `spread` (ADR 0060) reaches codegen as an `scf.for` marked
 // `pia.spread`, so that the verifier sees an ordinary loop. Its iterations
 // own disjoint cells, which the verifier proved, so here it becomes an
@@ -2263,21 +2523,22 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
       [&](mlir::Operation *op) { return types.isLegal(op); });
 
   mlir::RewritePatternSet patterns(ctx);
-  patterns.add<
-      ConstantLowering, ArithLowering<AddOp, Arith::Add>,
-      ArithLowering<SubOp, Arith::Sub>, ArithLowering<MulOp, Arith::Mul>,
-      ArithLowering<DivOp, Arith::Div>, ArithLowering<RemOp, Arith::Rem>,
-      ArithLowering<BAndOp, Arith::BAnd>, ArithLowering<BOrOp, Arith::BOr>,
-      ArithLowering<BXorOp, Arith::BXor>, ArithLowering<ShlOp, Arith::Shl>,
-      ArithLowering<ShrOp, Arith::Shr>, BitLowering<ClzOp>, BitLowering<CtzOp>,
-      BitLowering<PopcountOp>, BitLowering<BSwapOp>, RotateLowering<RotlOp>,
-      RotateLowering<RotrOp>, ConvertLowering, CmpLowering, ToIndexLowering,
-      FromIndexLowering, LenLowering, LoadLowering, StoreLowering,
-      SliceLowering, EmptyLowering, ErasedLowering, RegionLowering,
-      CopyLowering, ViewLowering, AtAddressLowering, AddressLowering,
-      AbortLowering, ConstArrayLowering, EmbedLowering, ForeignLowering,
-      RecMakeLowering, RecTagLowering, RecPayloadLowering,
-      FunctionConstantLowering, CallIndirectLowering>(types, ctx);
+  patterns
+      .add<ConstantLowering, ArithLowering<AddOp, Arith::Add>,
+           ArithLowering<SubOp, Arith::Sub>, ArithLowering<MulOp, Arith::Mul>,
+           ArithLowering<DivOp, Arith::Div>, ArithLowering<RemOp, Arith::Rem>,
+           ArithLowering<BAndOp, Arith::BAnd>, ArithLowering<BOrOp, Arith::BOr>,
+           ArithLowering<BXorOp, Arith::BXor>, ArithLowering<ShlOp, Arith::Shl>,
+           ArithLowering<ShrOp, Arith::Shr>, BitLowering<ClzOp>,
+           BitLowering<CtzOp>, BitLowering<PopcountOp>, BitLowering<BSwapOp>,
+           RotateLowering<RotlOp>, RotateLowering<RotrOp>, ConvertLowering,
+           CmpLowering, ToIndexLowering, FromIndexLowering, LenLowering,
+           LoadLowering, StoreLowering, SliceLowering, EmptyLowering,
+           ErasedLowering, RegionLowering, CopyLowering, ViewLowering,
+           AtAddressLowering, AddressLowering, AbortLowering,
+           ConstArrayLowering, EmbedLowering, ForeignLowering, RecMakeLowering,
+           RecTagLowering, RecPayloadLowering, FunctionConstantLowering,
+           CallIndirectLowering, BoxPackLowering, BoxCallLowering>(types, ctx);
   // Floats and integers (M11).
   patterns.add<IntToFloatLowering, FloatToIntLowering,
                BitcastLowering<ToBitsOp>, BitcastLowering<FromBitsOp>>(types,
@@ -2293,6 +2554,8 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
                                                              target);
   if (mlir::failed(
           mlir::applyPartialConversion(module, target, std::move(patterns))))
+    return mlir::failure();
+  if (mlir::failed(addBoxEntries(module)))
     return mlir::failure();
   // Spreads placed on the GPU become kernels and shim calls first; the
   // rest run on all cores (ADR 0068, step 3).
@@ -2633,6 +2896,7 @@ LogicalResult lowerToLLVM(mlir::ModuleOp module, bool exportsOnly) {
   pm.addPass(mlir::createConvertFuncToLLVMPass());
   pm.addPass(mlir::createReconcileUnrealizedCastsPass());
   if (mlir::failed(pm.run(module))) return mlir::failure();
+  defineBoxDescriptors(module);
 
   std::map<std::string, std::string> cNames;
   for (const Entry &e : entries) {

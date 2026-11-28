@@ -1,9 +1,10 @@
 (* tests/verify/box_error_payload.pia, compiled and run (ADR 0046,
    2026-11-27 note): an error set whose `Cxx` case carries a
    `box Exception`, filled with a not_found or an overflow, passed on by
-   `?` and handled by calling `code` through the box. In this module
-   `box Exception` is the tagged union of the two types it widens (ADR
-   0046, step 5), so the handler's call is a switch on the tag.
+   `?` and handled by calling `code` through the box. A `box Exception`
+   is one cache line holding its type's descriptor and the object (ADR
+   0046, the cache-line amendment), so the handler's call loads `code`'s
+   entry from the descriptor.
    box_error_payload_test.c checks each case. Every goal is proved.
 *)
 module BoxErrorPayload : Run
