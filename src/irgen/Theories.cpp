@@ -261,7 +261,10 @@ void flattenTheories(Node &program, syntax::Diagnostics &diags,
     for (const NodePtr &m : item->kids)
       if (m->kind == NodeKind::LetItem && hasFlag(*m, "axiom")) axioms = true;
     // A box's theory (ADR 0046) is justified by the use check at `widen`.
-    if (axioms && !trusted && !modelled.count(t.name) && item->flags != "box")
+    bool box = hasFlag(*item, "box");
+    if (box && hasFlag(*item, "modelled") && info)
+      info->boxModelled.insert(t.name);
+    if (axioms && !trusted && !modelled.count(t.name) && !box)
       diags.error(item->loc,
                   "the theory '" + t.name + "' has axioms and no model, so its "
                   "axioms are trusted: give it a model, 'let model m : " +

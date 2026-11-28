@@ -19,7 +19,10 @@ cc_library(
     copts = PIA_COPTS,
     strip_include_prefix = "/src",
     visibility = ["//visibility:public"],
-    deps = ["//src/syntax"],
+    deps = [
+        "//src/migrate",
+        "//src/syntax",
+    ],
 )
 
 # The deep check: IRGen's errors and the verifier's goals for a document.

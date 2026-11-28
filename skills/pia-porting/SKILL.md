@@ -134,4 +134,6 @@ Zig is the nearest in spirit: explicit allocators, `defer`, error sets, no shado
 
 ## After the port
 
+Porting older Pia (from an earlier piac) is a migration, not a port: run `piac migrate --from=<its piac version>` first ([docs/migrations.md](../../docs/migrations.md)), then act on what it suggests.
+
 Run `piac --verify` (`piac-verify`) or send the functions to a REPL (`pia-mcp`, `pia-repl`). Each failed goal is one of: a porting artifact, defined behaviour that is meant (`@overflow(wrap)`), an assumption the original made silently (a `requires`), or a bug. Then take the lints' advice (`pia-idioms`) and move constant bounds into types.

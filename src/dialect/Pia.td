@@ -688,6 +688,43 @@ def Pia_AtAddressOp : Pia_Op<"at_address", [Pure]> {
   }];
 }
 
+def Pia_BoxPackOp : Pia_Op<"box_pack", [Pure]> {
+  let summary = "put an object in a box over a concept's inline storage";
+  let description = [{
+    The body of the function a `widen` into `box c` calls (ADR 0046, the
+    cache-line amendment). The operands are the object, the result is the
+    box: one word holding the address of `descriptor`, the constant
+    describing the object's type, and the object in its C layout in the
+    words after it. `thunks` names, in the concept's order, the Pia
+    function that calls each requirement on a value of the type; codegen
+    makes the descriptor from them. The verifier never looks inside: the
+    function is a proxy, and the box's contents are abstract.
+  }];
+  let arguments = (ins StrAttr:$descriptor, ArrayAttr:$thunks,
+                       Variadic<AnyType>:$object);
+  let results = (outs Variadic<AnyType>:$box);
+  let assemblyFormat = [{
+    $descriptor $thunks `(` $object `)` attr-dict `:` functional-type($object, $box)
+  }];
+}
+
+def Pia_BoxCallOp : Pia_Op<"box_call"> {
+  let summary = "call a requirement through a box over a concept";
+  let description = [{
+    The body of a requirement's call through a `box c` (ADR 0046): the
+    first `words` operands are the box, the rest the requirement's other
+    arguments. Codegen loads the requirement's entry, number `entry`, from
+    the descriptor the box's first word points to, and calls it with the
+    address of the object in the box. The verifier never looks inside: the
+    function is a proxy with the requirement's contract.
+  }];
+  let arguments = (ins I64Attr:$entry, I64Attr:$words, Variadic<AnyType>:$args);
+  let results = (outs Variadic<AnyType>:$results);
+  let assemblyFormat = [{
+    $entry $words `(` $args `)` attr-dict `:` functional-type($args, $results)
+  }];
+}
+
 def Pia_AbortOp : Pia_Op<"abort"> {
   let summary = "stop the program; proved unreachable in proof mode";
   let description = [{
