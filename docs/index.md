@@ -134,6 +134,7 @@ average_fixed.pia:2:3: proved: the postcondition holds [smt]
 - [A tour of Pia](tour.md): the language as it is today, every example tested
 - [How verification works](verification.md): goals, intervals, Z3 and counterexamples
 - [Status and roadmap](status.md): what works, what does not yet, and what is next
+- [Roadmap to 1.0](roadmap.md): the releases to 1.0 and the demo that completes each
 - [Language design](design.md): the whole language as designed
 - [Architecture Decision Records](adr/README.md): why Pia is the way it is
 

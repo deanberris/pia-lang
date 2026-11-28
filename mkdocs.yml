@@ -97,6 +97,7 @@ nav:
       - "zlib gzip extra field": cases/zlib-gzip-extra.pia.md
       - "giflib background colour": cases/giflib-background.pia.md
   - Status and roadmap: status.md
+  - Roadmap to 1.0: roadmap.md
   - Design:
       - Language design: design.md
       - Grammar: grammar.md
@@ -194,3 +195,9 @@ nav:
       - adr/0077-definitions-inherit-interface-contracts.md
       - adr/0078-pia-lib-ops-with-proved-substitutions.md
       - adr/0079-pia-module-format.md
+      - adr/0080-release-0-1-0-gates.md
+      - adr/0081-release-0-2-0-gates.md
+      - adr/0082-release-0-3-0-gates.md
+      - adr/0083-release-0-4-0-gates.md
+      - adr/0084-release-0-5-0-gates.md
+      - adr/0085-release-1-0-gates.md

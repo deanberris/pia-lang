@@ -2,7 +2,7 @@
 
 Date: 2026-11-24
 
-Status: Accepted (2026-11-24, with Dean's answers to its questions below)
+Status: Accepted (2026-11-24, with Dean's answers to its questions below). Section 6 and answer 2 amended by [ADR 0080](0080-release-0-1-0-gates.md): the GPU matmuls complete the 0.1.x series rather than gate the 0.1.0 tag.
 
 ## Context
 
