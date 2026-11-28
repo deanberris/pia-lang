@@ -62,6 +62,20 @@ std::string mangle(const std::string &c) {
   return out;
 }
 
+// How generated source names the concept `c`. An imported one is `M.C`,
+// which the parser would read as a field of `M`, so it is spelled as one
+// identifier and named back by renameConcept once parsed.
+std::string conceptRef(const std::string &c) {
+  return c.find('.') == std::string::npos ? c : "pia_concept_" + mangle(c);
+}
+
+void renameConcept(Node &n, const std::string &c) {
+  if ((n.kind == NodeKind::Name || n.kind == NodeKind::TypeName) &&
+      n.text == conceptRef(c))
+    n.text = c;
+  for (NodePtr &k : n.kids) renameConcept(*k, c);
+}
+
 // The text of a type as written, for the types requirements use.
 std::string typeText(const Node &t, std::string *why) {
   switch (t.kind) {
@@ -391,10 +405,10 @@ std::string erasedSource(const std::string &cname, const Node &concept,
   // The use check, the constraint `C t`, at each instance of widen.
   std::string full = "\n  requires len b.slot = 1 && b.state = 1";
   if (!closed) {
-    src += "let widen (t : type where " + cname + " t) (b : " + box + " t) : " +
+    src += "let widen (t : type where " + conceptRef(cname) + " t) (b : " + box + " t) : " +
            boxType + full + "\n= { tag = 0 }\n";
   } else {
-    src += "let " + theory + "_check (t : type where " + cname + " t) (b : " +
+    src += "let " + theory + "_check (t : type where " + conceptRef(cname) + " t) (b : " +
            box + " t) : unit = ()\n\n";
     for (const std::string &t : *closed) {
       // The object, packed into the box with its descriptor.
@@ -487,16 +501,11 @@ void expandErasedBoxes(
   // A box is one cache line whose layout is the target's and whose
   // descriptor's is the concept's (the cache-line amendment), so another
   // module that sees the concept makes the same box: an interface may show
-  // one, and a module may box values of a concept it imports. To C
-  // (@abi(c)) the box is a type of its own, an opaque block of that size.
+  // one, and a module may box values of a concept it imports. The interface
+  // lists the box as a type of its own, as `box C` reads in its artifact;
+  // to C (@abi(c)) it is an opaque block of that size.
   for (NodePtr &item : program.kids) {
     if (item->kind != NodeKind::Interface) continue;
-    bool c = false;
-    for (const NodePtr &k : item->kids)
-      if (k->kind == NodeKind::Attrs)
-        for (const NodePtr &a : k->kids) c |= a->text == "abi";
-    if (!c)
-      continue;
     std::set<std::string> shown;
     for (const NodePtr &k : item->kids)
       if (k->kind == NodeKind::SigVal || k->kind == NodeKind::SigType)
@@ -565,6 +574,7 @@ void expandErasedBoxes(
     }
     for (NodePtr &k : extra->kids) {
       if (k->kind == NodeKind::FileAttr) continue;
+      renameConcept(*k, c);
       // Its axioms hold of every type `widen` boxes, by the use check. The
       // box's theory is consistent when its shape's is, which the verifier
       // checks, so only the shape's is checked.
