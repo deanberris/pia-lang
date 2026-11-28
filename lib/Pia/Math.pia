@@ -1,0 +1,158 @@
+(* Pia.Math: floating-point functions written and proved in Pia (#487).
+
+   `sqrt` is IEEE 754's square root, which the standard requires to be
+   correctly rounded. Its body is an integer algorithm over the float's
+   bits, proved to give the correctly rounded result, so no float axiom
+   and no libm is involved. `@lower` gives it its machine form, MLIR's
+   `math.sqrt`, one instruction (`fsqrt` on arm64, `sqrtss` on x86-64),
+   and a call of it is a `pia_lib.call` whose rule is substituted at the
+   call (ADR 0078). Until ADR 0065's refinement goal is built, the
+   lowering is a trusted item in `--trust-report`; `sqrt_soft` is the
+   same function without it, so a test can run both and compare them
+   with C (tests/std/math_test.c).
+
+   The contract is over the bits: a NaN in, or a negative number, gives a
+   NaN; zeros and infinity are their own roots; and for a positive finite
+   x the result is the float nearest its square root (`rounded32`). The
+   NaN's payload is not specified, since targets differ: arm64 gives
+   0x7fc00000 and x86-64 0xffc00000. f64 comes next, and needs arithmetic
+   wider than 64 bits for its significand's square. *)
+@trusted
+
+module Pia.Math : Sqrt
+
+interface Sqrt = sig
+  let spec mant32 : (b : u32) -> u64
+  let spec ex32 : (b : u32) -> u32
+  let spec sq : (x : u64) -> u64
+  let spec shift32 : (b : u32) -> (r : u32) -> u64
+  let spec rounded32 : (b : u32) -> (r : u32) -> bool
+  let spec nan32 : (b : u32) -> bool
+  let sqrt_soft : (x : f32) -> f32
+    ensures to_bits x = 0 || to_bits x = 2147483648 || to_bits x = 2139095040
+            ==> to_bits result = to_bits x
+    ensures nan32 (to_bits x) || to_bits x > 2147483648 ==> nan32 (to_bits result)
+    ensures 0 < to_bits x && to_bits x < 2139095040
+            ==> rounded32 (to_bits x) (to_bits result)
+  let sqrt : (x : f32) -> f32
+    ensures to_bits x = 0 || to_bits x = 2147483648 || to_bits x = 2139095040
+            ==> to_bits result = to_bits x
+    ensures nan32 (to_bits x) || to_bits x > 2147483648 ==> nan32 (to_bits result)
+    ensures 0 < to_bits x && to_bits x < 2139095040
+            ==> rounded32 (to_bits x) (to_bits result)
+end
+
+(* The significand of a positive finite f32 with bits b, its implicit bit
+   included, and its exponent field, 1 for a subnormal, so that b's value
+   is mant32 b * 2^(ex32 b - 150). *)
+let spec mant32 (b : u32) : u64 =
+  if b >> 23 = 0 then b & 8388607 else (b & 8388607) + 8388608
+let spec ex32 (b : u32) : u32 = if b >> 23 = 0 then 1 else b >> 23
+
+(* x squared. It is opaque, so that a goal compares squares as values and
+   the solver does not multiply 25-bit numbers; `squared` reveals it. *)
+let spec sq (x : u64) : u64 @opaque
+  requires x < 4294967296
+= x * x
+
+let lemma squared (x : u64) : unit
+  requires x < 4294967296
+  ensures sq x = x * x
+  with sq
+= ()
+
+(* The shift that scales b's significand to units of half r's last place,
+   squared: with it, b's value over r's last place squared, times four, is
+   mant32 b << shift32 b r. *)
+let spec shift32 (b : u32) (r : u32) : u64 =
+  if ex32 b + 152 >= 2 * (r >> 23) then ex32 b + 152 - 2 * (r >> 23) else 64
+
+(* r is the f32 nearest the square root of the positive finite f32 b: r is
+   a positive normal float, and b, in units of half r's last place,
+   squared, is between (2 m - 1)^2 and (2 m + 1)^2, where m is r's
+   significand. So the root is within half a last place of r, which is what
+   rounding to nearest means; a tie cannot happen, since the root of an
+   even number of such units is never an odd one. Just above a power of
+   two the float below is half as far away, so the lower bound there is a
+   quarter of a last place, and (4 m - 1)^2 with m = 2^23 is
+   1125899839733761. A sweep against C's sqrtf checks the statement itself
+   (tests/std/math_test.c). *)
+let spec rounded32 (b : u32) (r : u32) : bool =
+  if r >> 23 >= 1 && r < 2139095040 && shift32 b r < 50 then
+    if mant32 b <= 4611686018427387903 >> shift32 b r then
+      (if mant32 r = 8388608 then 1125899839733761 <= 4 * (mant32 b << shift32 b r)
+       else sq (2 * mant32 r - 1) <= mant32 b << shift32 b r) &&
+      mant32 b << shift32 b r <= sq (2 * mant32 r + 1)
+    else false
+  else false
+
+(* A NaN: every exponent bit set and a nonzero fraction. *)
+let spec nan32 (b : u32) : bool = b & 2139095040 = 2139095040 && b & 8388607 <> 0
+
+(* The significand of the root, in half units: n is in [2^48, 2^50), and the
+   result r has (2 r - 1)^2 <= n <= (2 r + 1)^2. The integer root lo, with
+   lo^2 <= n < (lo + 1)^2, is found by bisection, and r is lo rounded up to
+   even, halved. n is short of (2^25 - 1)^2, so r is short of 2^24 and the
+   result needs no carry into the exponent. The bounds stay contracts, as
+   in sqrt_pos32: in a range type every product and shift in the body would
+   be typed by the range. *)
+let root32 (n : u64) : u64 @allow(range_requires, range_ensures)
+  requires n >= 281474976710656 && n <= 1125899839733760
+  ensures 8388608 <= result && result < 16777216
+  ensures sq (2 * result - 1) <= n
+  ensures result = 8388608 ==> 1125899839733761 <= 4 * n
+  ensures n <= sq (2 * result + 1)
+= let lo : mutable u64 = 16777216 in
+  let hi : mutable u64 = 33554432 in
+  while hi - lo > 1
+    invariant 16777216 <= lo && lo < hi && hi <= 33554432
+    invariant lo * lo <= n && n < hi * hi
+    decreases hi - lo
+  do
+    let mid = lo + (hi - lo) / 2 in
+    let msq = mid * mid in
+    if msq <= n then lo <- mid else hi <- mid
+  done;
+  assert n < (lo + 1) * (lo + 1);
+  let r = (lo + 1) / 2 in
+  assert 2 * r = lo || 2 * r = lo + 1;
+  squared (2 * r - 1);
+  squared (2 * r + 1);
+  r
+
+(* The root of a positive finite f32's bits. Its significand m is shifted
+   left by d, which has the parity of its exponent so that the root's
+   exponent is whole, until n = m << d is in [2^48, 2^50); a subnormal
+   shifts further. The root's exponent field is then (e + 152 - d) / 2. *)
+let sqrt_pos32 (b : u32) : u32 @allow(range_requires)
+  requires 0 < b && b < 2139095040
+  ensures rounded32 b result
+= let m : u64 = if b >> 23 = 0 then b & 8388607 else (b & 8388607) + 8388608 in
+  let e : u32 = if b >> 23 = 0 then 1 else b >> 23 in
+  let d : mutable u64 = if e % 2 = 0 then 26 else 25 in
+  let n : mutable u64 = m << d in
+  while n < 281474976710656
+    invariant 25 <= d && d < 50 && d % 2 = e % 2
+    invariant n = m << d && n < 1125899906842624
+    decreases 50 - d
+  do
+    n <- n * 4;
+    d <- d + 2
+  done;
+  let s = root32 n in
+  let ey : u32 = (e + 152 - d) / 2 in
+  let w : u32 = ((ey << 23) | (s - 8388608)) in
+  w
+
+(* IEEE 754 square root of an f32, rounded to nearest, in Pia. Both
+   definitions take the interface's contract (ADR 0077). *)
+let sqrt_soft (x : f32) : f32
+= let b = to_bits x in
+  if b = 0 || b = 2147483648 || b = 2139095040 then x
+  else if b > 2139095040 then from_bits 2143289344
+  else from_bits (sqrt_pos32 b)
+
+(* The same function, compiled to the hardware instruction. *)
+let sqrt (x : f32) : f32
+  @lower("$result = math.sqrt $x : f32")
+= sqrt_soft x

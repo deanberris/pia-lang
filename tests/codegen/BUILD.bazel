@@ -81,6 +81,28 @@ cc_test(
     target_compatible_with = PIA_TARGETS,
 )
 
+# vectorise.pia, milestone M10: loops that vectorise with no licence,
+# against C bit for bit. Its lit checks (codegen_tests) see the vector code.
+genrule(
+    name = "vectorise_obj",
+    srcs = ["vectorise.pia"],
+    outs = ["vectorise.o"],
+    cmd = "$(location //tools/piac) --emit=obj " + PIAC_TARGET_FLAGS + " -o $@ $<",
+    target_compatible_with = PIA_TARGETS,
+    tools = ["//tools/piac"],
+)
+
+cc_test(
+    name = "vectorise_run_test",
+    srcs = [
+        "vectorise_test.c",
+        ":vectorise_obj",
+    ],
+    copts = ["-ffp-contract=off"],
+    linkopts = ["-lm"],
+    target_compatible_with = PIA_TARGETS,
+)
+
 # bits.pia, the bit operators (#48), against C over every u8 input.
 genrule(
     name = "bits_obj",

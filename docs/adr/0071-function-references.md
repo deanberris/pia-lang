@@ -2,7 +2,7 @@
 
 Date: 2026-11-27
 
-Status: Accepted (2026-11-27)
+Status: Accepted (2026-11-27). Amended 2026-11-28 (nullable references with a contract), Proposed.
 
 ## Context
 
@@ -129,3 +129,35 @@ Each step is a PR with lit tests in `tests/verify`, `tests/irgen` and `tests/cod
 - What a reference can do is exactly what its arrow says, so a caller proves what it would about any function with that arrow, and the referenced function is checked once, where the reference is made.
 - ADR 0044's promise still holds for functions passed without `borrowed`: they never become pointers.
 - A reference from C is trusted, the same trust an `extern` already carries, and the trust report shows it.
+
+## Amendment, 2026-11-28: a nullable reference with a contract is `option` of a distinct arrow type
+
+Dean (2026-11-28) chose this over two alternatives: writing contracts inside an arrow's parentheses, as in `option ((x : u8) -> u8 requires x < 100)`, and allowing no contracts on a nullable reference.
+
+Section 1 makes `option (u8 -> u8)` the nullable reference. An arrow with a contract cannot be a type argument as it stands. Two arrows that differ only in their contracts have the same function type at run time, so `option` of each would be one instance, and a reference proved against the weaker contract could be called as if it met the stronger one. The contract must be part of the type's identity, and [ADR 0064](0064-distinct-types.md) already gives a type an identity of its own:
+
+```ocaml
+let op = type (x : u8) -> u8 requires x < 100 ensures result > x
+
+let handlers = type { on_key : op; on_tick : option op }
+
+let run (h : option op) (y : u8) : u8 requires y < 100 ensures result >= y =
+  match h with
+  | Some f -> f y
+  | None -> y
+```
+
+- **A distinct arrow type is a one-field record.** `type e` is ADR 0064's `distinct`, which makes `{ raw#op : e } @distinct`. With `e` an arrow, the field is a function reference field, built in step 2 (#561). Its contracts are the ones written after the arrow, as for any field, so `op`'s contract is fixed where `op` is defined. Two distinct arrow types with the same contract are still different types, as with any distinct type.
+- **Converting is applying the type.** `op succ` makes an `op`, and checks `succ` against the arrow there, as storing into a field does. An `op` is never made implicitly from a function name: `let h : op = succ` is ADR 0064's error, which suggests `op succ`. Converting back, the arrow's machine type, has no use, because an `op` is already callable.
+- **An `op` is called like a function.** `f y` for `f : op` calls through its field, `f.raw#op y`, so it sees only `op`'s contract and compiles to an indirect call unless LLVM can see which function `f` holds. This is the only thing a distinct arrow type gets that other distinct types do not. Without it, every call would be through a field nobody can name.
+- **An alias of an arrow takes no contract.** `let op = (x : u8) -> u8 requires x < 100` would have the collision above, so it is an error that suggests `type`. An alias without contracts, `let unary = u8 -> u8`, stays an alias.
+- **`option` of a reference is one address.** A variant with two constructors, one with no payload and the other carrying only a function reference, perhaps inside one-field records such as a distinct arrow type, is laid out as one address. Zero means the payload-less constructor ([ADR 0030](0030-published-object-layouts.md)). Every function a reference can hold has a nonzero address, so the layout loses nothing. This changes codegen only: the verifier keeps the tag and the payload as it does for every variant. The same layout serves `option (u8 -> u8)` without a contract once a bare arrow can be a type argument.
+- **Bare arrows do not change.** A field, a `let` or a parameter of an arrow type keeps its contracts where they are written, as built in steps 1 and 2.
+
+No migration is needed: `type` before an arrow, and calling a value of a distinct type, are errors today.
+
+The rest of step 2 is in this order:
+
+- **2a.** Distinct arrow types: `type` over an arrow, conversion by `op f`, calls through an `op`, and the alias error. Tests go in `tests/verify` and `tests/irgen`.
+- **2b.** An arrow as a type argument and as a variant payload, `option (u8 -> u8)`.
+- **2c.** The one-address layout for `option` of a reference, with a run test from C that passes `NULL` and a Pia function through it.
