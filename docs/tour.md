@@ -848,7 +848,24 @@ let install (t : inout [handler; 4]) : unit =
   t.[2].f <- t.[1].f
 ```
 
-A variant carries a reference the same way, as a constructor's record payload, `| Run of step` with `step` such a record, and `option step` is a reference that may be missing. A stored reference takes and returns integers, bools and floats for now. Copies of a mutable reference into a local, `option (u8 -> u8)` as one nullable address, and references passed to C come later.
+A variant carries a reference the same way, as a constructor's record payload, `| Run of step` with `step` such a record. To give an arrow and its contract a name of their own, make it a type: `type` over an arrow is a new type ([ADR 0064](adr/0064-distinct-types.md)) whose contract is part of it, so `option op` is a reference with a contract that may be missing, and two arrows with different contracts are never one type. `op succ` makes an `op`, checking `succ` against the arrow there, and an `op` is called like a function:
+
+```ocaml
+let option = let (t : type) => type | None | Some of t
+
+let succ (x : u8) : u8 requires x < 255 ensures result = x + 1 = (x + 1)
+
+let op = type (x : u8) -> u8 requires x < 100 ensures result > x
+
+let run (h : option op) (y : u8) : u8 requires y < 100 ensures result >= y =
+  match h with
+  | Some f -> f y
+  | None -> y
+
+let start () : option op = Some (op succ)
+```
+
+A function's name is never an `op` by itself: `let h : op = succ` is an error that suggests `op succ`. A stored reference takes and returns integers, bools and floats for now. Copies of a mutable reference into a local, `option (u8 -> u8)` of a bare arrow, `option` laid out as one nullable address, and references passed to C come later.
 
 ## Parallel loops
 
