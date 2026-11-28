@@ -160,6 +160,35 @@ static void check(const char *name, const uint16_t *dem, long w, long h) {
     CHECK(basin2[i] == basin[i], "%s: drainage labels cell %ld %llu, want %llu",
           name, i, (unsigned long long)basin2[i], (unsigned long long)basin[i]);
   }
+  // docs/pull_spread.pia.md's step, one spread with collectives between
+  // the waves, leaves the same cells as docs/pull.pia.md's, which is
+  // proved equal to the sequential step, and sends as much off the map.
+  if (w >= 3) {
+    uint32_t *b0 = malloc(n * 4), *bq = malloc(n * 4), *fq = malloc(n * 4),
+             *nb = malloc(n * 4), *no = malloc(n * 4), *bs = malloc(n * 4),
+             *fs = calloc(n, 4), *wave = malloc(n * 4);
+    uint64_t *seen = malloc(n * 8), *gath = malloc(n * 8),
+             *gath2 = malloc(n * 8);
+    for (long i = 0; i < n; ++i)
+      bq[i] = bs[i] = 100 + rnd() % 400;
+    uint64_t gone_q = 0, gone_s = 0;
+    for (int step = 0; step < 3; ++step) {
+      memcpy(b0, bq, n * 4);
+      gone_q = pull_step(fill, n, down, n, acc2, n, order, n, pos, n, w, b0, n,
+                         bq, n, fq, n, seen, n, gath, n, nb, n, no, n, gone_q);
+      memcpy(b0, bs, n * 4);
+      gone_s += pull_step_spread(fill, n, down, n, acc2, n, order, n, pos, n, w,
+                                 b0, n, bs, n, fs, n, gath2, n, wave, n);
+    }
+    for (long i = 0; i < n; ++i)
+      CHECK(bs[i] == bq[i] && fs[i] == fq[i],
+            "%s: the one-spread step gives cell %ld bed %u load %u, want %u %u",
+            name, i, bs[i], fs[i], bq[i], fq[i]);
+    CHECK(gone_s == gone_q, "%s: the one-spread step sends %llu off, want %llu",
+          name, (unsigned long long)gone_s, (unsigned long long)gone_q);
+    free(b0), free(bq), free(fq), free(nb), free(no), free(bs), free(fs);
+    free(wave), free(seen), free(gath), free(gath2);
+  }
   free(acc2), free(rain), free(pend), free(basin2), free(order), free(pos);
   free(cnt), free(first), free(next), free(last), free(owner);
 

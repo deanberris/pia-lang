@@ -24,6 +24,7 @@ exports_files([
     "placed.pia.md",
     "pull.pia.md",
     "pull_gpu.pia.md",
+    "pull_spread.pia.md",
     "sediment.pia.md",
     "streams.pia.md",
     "tour.md",

@@ -73,6 +73,21 @@ let unbounded (xs : [u32]) (ys : out mutable [u64]) : unit
   requires len ys = len xs
 = spread i in 0 .. len xs do ys.[i] <- sum xs.[i] done
 
+(* A buffer an exchange published may be passed to a function that only
+   reads it: no iteration writes it until the next collective. *)
+let neighbour (a : [u32]) (k : usize) : u32
+  requires k < len a
+= a.[k]
+
+let smooth (a : borrowed inout mutable [u32]) (b : borrowed inout mutable [u32]) : unit
+  requires len b = len a
+= spread i in 0 .. len a do
+    exchange a;
+    b.[i] <- (if i > 0 then neighbour a (i - 1) else a.[i]) / 2;
+    exchange b;
+    a.[i] <- b.[i]
+  done
+
 (*
 // CHECK: 21:13: proved: '+' does not overflow usize
 // CHECK: 16:3: proved: the postcondition holds
@@ -82,5 +97,6 @@ let unbounded (xs : [u32]) (ys : out mutable [u64]) : unit
 // CHECK: 60:17: proved: '-' does not overflow u32
 // CHECK: 68:18: failed: the iteration owns the cell it reads in 'a' (c = i)
 // CHECK: 74:40: failed: the precondition of 'sum' holds
-// CHECK: 54 proved, 2 failed, 0 skipped
+// CHECK: 86:29: proved: the precondition of 'neighbour' holds
+// CHECK: 65 proved, 2 failed, 0 skipped
 *)

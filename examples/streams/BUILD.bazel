@@ -63,9 +63,21 @@ pia_library(
     target_compatible_with = PIA_TARGETS,
 )
 
+# The pull step as one spread over the cells, the waves in a loop inside it
+# with collectives between them (docs/pull_spread.pia.md, ADR 0086).
+pia_library(
+    name = "pull_spread",
+    src = "//docs:pull_spread.pia.md",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        ":pull",
+        "//lib/Pia:par",
+    ],
+)
+
 cc_library(
     name = "streams_pia",
-    srcs = [":basins_obj", ":gif", ":pull", ":sediment_obj", ":streams_obj"],
+    srcs = [":basins_obj", ":gif", ":pull", ":pull_spread", ":sediment_obj", ":streams_obj"],
     hdrs = ["pia_streams.h"],
     target_compatible_with = PIA_TARGETS,
 )
@@ -121,7 +133,10 @@ cc_test(
     name = "streams_test",
     srcs = ["streams_test.c"],
     target_compatible_with = PIA_TARGETS,
-    deps = [":streams_pia"],
+    deps = [
+        ":streams_pia",
+        "@llvm-project//mlir:mlir_async_runtime",
+    ],
 )
 
 # The demo itself runs too: it draws the terrain and writes both images.
