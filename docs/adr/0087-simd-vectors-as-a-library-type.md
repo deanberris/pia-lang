@@ -38,14 +38,14 @@ None of these is about SIMD in particular. Each is a gap in the library-type mec
 ```
 let simd = let (t : type where Lane t) (k : usize) => type {
   lanes : [t; k]
-} where k = 1 || k = 2 || k = 4 || k = 8 || k = 16 || k = 32 || k = 64
+} where Target.is_pow2 k && k * bits t <= Target.vector_bits
   @lower("vector<$k x $t>", lanes)
 ```
 
 - **The meaning is the array.** A `simd f32 4` is four `f32`s, and every contract about it is about `v.lanes.[i]`. The verifier needs nothing new: a record of a fixed array is already `k` values to it, as stdlib.md planned.
 - **The name is `simd`**, as in Rust's `Simd` and Mojo's `SIMD`, so that it does not collide with `Pia.Mem`'s growable `vec` (open question 1). design.md's `vec<T, k>` becomes `simd<T, k>`: the angle brackets are the same sugar for applying a generic type (grammar.md), and `simd f32 4` is the other spelling.
 - **`Lane t`** is a concept that every integer type, `bool`, `f32` and `f64` meet. `bool` lanes are what comparisons give and what `select` takes, and lower to `i1`.
-- **Widths**: `k` is a power of two, and `k * bits t` is at most 512 (open question 2). A vector wider than the target's registers is legal: LLVM splits it, so `simd f32 8` is two NEON registers on an M1 and one `ymm` on x86-64-v3. `Pia.Simd.natural t` is the lane count of one register on the target being compiled for, from `Pia.Target` (ADR 0049): 4 for `f32` on arm64 and 8 on x86-64-v3. A kernel written with `natural f32` lanes gets each target's register width with no `@target` branch.
+- **Widths depend on the target** (Dean, 2026-11-28). `k` is a power of two, and `k * bits t` is at most `Target.vector_bits`, the widest vector the CPU runs natively ([ADR 0049](0049-targets-are-theories.md)): 128 bits on arm64 (NEON) and 256 on x86-64-v3 (AVX2). The width is a proof obligation where the type is used, not a fixed table, so a new target or CPU level with wider vectors (AVX-512, SVE at a known length) allows wider `simd` types by changing its model alone. Target-generic code sees only the axiom `vector_bits >= 128`, so it may use up to 128 bits, which every target runs; a 256-bit `simd f32 8` is legal only under `@target(x86_64_linux)` or in the `then` of an `if Target.is x86_64_linux`, which `piac` folds. `Pia.Simd.natural t` is `Target.vector_bits / bits t`, the lane count of one register on the target being compiled for: 4 for `f32` on arm64 and 8 on x86-64-v3. A kernel written with `natural f32` lanes gets each target's register width with no `@target` branch, and its width obligation holds on every model by the definition.
 
 ### 2. A type lowered to `vector` is a value: `$a` is the vector, and `$result` may be one
 
@@ -110,4 +110,4 @@ Each step is one PR with its tests, docs and skill changes.
 ## Open questions
 
 1. **The name.** `simd t k` in `Pia.Simd` is proposed above, because `vec` is `Pia.Mem`'s growable vector. The alternatives are to keep `vec<T, k>` and rename `Pia.Mem`'s type (a breaking change with a migration rule), or to keep both and write the SIMD one `Simd.vec` wherever both are in scope.
-2. **Widths.** design.md allowed 64 or 128 bits, NEON's registers. Proposed: any power-of-two `k` up to 512 bits, with `natural t` for one register. 256 bits is AVX2's register, and LLVM splits a wider vector on a narrower target. The alternative is to keep 64 and 128 bits only, so that every vector is one NEON register.
+2. **Widths.** Resolved (Dean, 2026-11-28): what is supported depends on the target, not a fixed limit. `k * bits t <= Target.vector_bits`, so 128 bits everywhere and 256 bits on x86-64-v3 (section 1). design.md's fixed 64 or 128 bits and the earlier proposal of a fixed 512 bits are both dropped.
