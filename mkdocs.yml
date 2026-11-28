@@ -202,3 +202,4 @@ nav:
       - adr/0083-release-0-4-0-gates.md
       - adr/0084-release-0-5-0-gates.md
       - adr/0085-release-1-0-gates.md
+      - adr/0086-spread-collectives.md

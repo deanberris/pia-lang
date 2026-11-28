@@ -891,6 +891,51 @@ blur.pia:3:38: failed: the iteration owns the cell it reads in 'v' (c = i)
 
 A spread whose iteration `i` writes only cell `i` can run on the GPU instead: `@place(gpu)` after its range moves the body into a GPU kernel, and the proof stays the same. A placed spread can fail at run time, if there is no GPU or it runs out of memory, so it is a `result` the caller handles ([D8 directions and the picture on the GPU](placed.pia.md), [ADR 0068](adr/0068-gpu-compute-through-spirv-and-metal.md)).
 
+### Collectives
+
+A collective is a function that every iteration of a spread calls together, once ([ADR 0086](adr/0086-spread-collectives.md)). The compiler knows no collective by name: `@collective` after a function's return type makes it one, and `@collective(xs)` names its **gathered** parameters. A gathered parameter is an array over a `range`, `xs : [t; r]` for a parameter `(r : range)`: it has a cell for each position `r.lo <= k < r.hi`, and `xs.[k]` is the cell at position `k`. At a call in a spread body, an iteration passes a `t`, as in `sum xs.[i]`, and nothing for the range: the function runs once, on every iteration's argument, iteration `i`'s at position `i`, and every iteration gets the one result. Its body is an ordinary loop, proved against its contract. `@collective` with no names gathers nothing and is a barrier: a buffer the spread writes, passed to it, is **published**, so every iteration may read any cell of it, and none may write it, until the next collective. So a stencil can run many time steps in one spread, reading its neighbours' cells after each exchange:
+
+<!-- example: collectives.pia -->
+```ocaml
+let sum (r : range) (xs : [u32; r]) : u64
+  @collective(xs)
+  requires len xs <= 4'294'967'295
+  ensures forall (k in r.lo .. r.hi). result >= xs.[k]
+= let s : mutable u64 = 0 in
+  for j in r.lo .. r.hi
+    invariant forall (k in r.lo .. j). xs.[k] <= s
+    invariant s <= (j - r.lo) << 32
+  do s <- s + xs.[j] done;
+  s
+
+let exchange (b : [u32]) : unit @collective = ()
+
+let relax (a : borrowed inout mutable [u32]) (b : borrowed inout mutable [u32]) (steps : u32) : unit
+  requires len b = len a && len a <= 1000000
+= let n = len a in
+  spread i in 0 .. n do
+    for t in 0 .. steps do
+      exchange a;
+      let l = if i > 0 then a.[i - 1] else a.[i] in
+      let r = if i + 1 < n then a.[i + 1] else a.[i] in
+      b.[i] <- l / 2 + r / 2;
+      exchange b;
+      a.[i] <- b.[i]
+    done
+  done
+
+let share (xs : [u32]) (ys : out mutable [u64]) : unit
+  requires len ys = len xs && len xs <= 4294967295
+= spread i in 0 .. len xs do
+    let total = sum xs.[i] in
+    ys.[i] <- total - xs.[i]
+  done
+```
+
+In the spread, each iteration knows its own argument's cell of the gathered array, so `sum`'s postcondition says `total` is at least `xs.[i]`, which proves the subtraction, and `sum`'s precondition is a goal on the spread's range. `Pia.Par` defines the usual collectives this way: `sum`, `least`, `most`, `any`, `every` and `exchange` ([Library](library.md)).
+
+Every iteration must reach the same collectives in the same order, or the others would wait forever, and piac checks this as it reads the body: an `if` or `for` around a collective must have a condition or range that is the same in every iteration, computed from names bound before the spread, collective results and buffers no iteration writes, and so must every argument it does not gather. `if i = 0 then exchange a else ()` is a compile error at the collective, naming the condition. A value an iteration computes before a collective and uses after it is an error too, with a hint to keep it in a cell the iteration owns: codegen runs the code between collectives as its own parallel loop, so the join at its end is the barrier, and no new runtime is needed.
+
 ## Metaprograms
 
 A metaprogram is a function marked `let meta` that runs at compile time. It takes and returns values, and code is one kind of value: `` `( ... ) `` quotes code, and `$x` splices a value into it. Whatever a metaprogram produces is type checked and proved like code you wrote.
@@ -971,9 +1016,9 @@ let describe (v : dyn) : str =
   | _         -> "other"
 ```
 
-**Collectives and tiles.** `spread` and `@place(gpu)` are built; collectives such as `halo_exchange` and `all_reduce`, which the compiler will prove every worker reaches in the same order, tiled grids, and `@place(auto)`, which lets the compiler choose the device, are not:
+**Tiles.** `spread`, `@place(gpu)` and collectives (`@collective`) are built ([Collectives](#collectives)); tiled grids with halo rows, and `@place(auto)`, which lets the compiler choose the device, are not:
 
-<!-- untested: collectives, tiled grids and @place(auto) are not implemented yet -->
+<!-- untested: tiled grids and @place(auto) are not implemented yet -->
 ```ocaml
 let sediment_step (grid : borrowed in mutable tiled<cell, 256, 256, halo = 1>) : unit
   ensures total_mass grid = old (total_mass grid) - outflow grid

@@ -1,0 +1,59 @@
+(* Pia.Par (ADR 0086): the collectives, each a proved @collective function
+   over every iteration's argument. A spread that imports them proves from
+   their contracts alone: each iteration knows that the sum is at least its
+   own argument and that the least is at most it, and a stencil reads its
+   neighbours after an exchange.
+// RUN: FileCheck --check-prefix=LIB %s < %S/../../lib/Pia/par.goals
+// RUN: mkdir -p %t && piac --emit=interface -o %t %S/../../lib/Pia/Par.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Par.Collectives
+
+let share (xs : [u32]) (ys : out mutable [u64]) : unit
+  requires len ys = len xs && len xs <= 4294967295
+= spread i in 0 .. len xs do
+    let total = Pia.Par.sum xs.[i] in
+    ys.[i] <- total - xs.[i]
+  done
+
+let above (xs : [i32]) (ys : out mutable [i64]) : unit
+  requires len ys = len xs
+= spread i in 0 .. len xs do
+    let m = Pia.Par.least xs.[i] in
+    let d : i64 = xs.[i] in
+    let e : i64 = m in
+    ys.[i] <- d - e
+  done
+
+let flags (xs : [u8]) (ys : out mutable [u8]) : unit
+  requires len ys = len xs
+= spread i in 0 .. len xs do
+    let z = Pia.Par.any (xs.[i] = 0) in
+    let w = Pia.Par.every (xs.[i] > 0) in
+    ys.[i] <- if z && w then 2 else if z then 1 else 0
+  done
+
+let relax (a : borrowed inout mutable [u32]) (b : borrowed inout mutable [u32]) (steps : u32) : unit
+  requires len b = len a
+= let n = len a in
+  spread i in 0 .. n do
+    for t in 0 .. steps do
+      Pia.Par.exchange a;
+      let l = if i > 0 then a.[i - 1] else a.[i] in
+      let r = if i + 1 < n then a.[i + 1] else a.[i] in
+      b.[i] <- l / 2 + r / 2;
+      Pia.Par.exchange b;
+      a.[i] <- b.[i]
+    done
+  done
+
+(* The library proves every goal.
+// LIB-NOT: failed
+// LIB: 0 failed, 0 skipped
+*)
+
+(*
+// CHECK-NOT: error
+// CHECK-NOT: failed
+// CHECK: 0 failed, 0 skipped
+*)

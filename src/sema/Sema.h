@@ -310,6 +310,15 @@ class TypeResolver {
 
   mlir::Type usize() { return builtin("usize"); }
   mlir::Type i32() { return builtin("i32"); }
+  // `range` (ADR 0086): the positions `lo <= i < hi` a spread runs over,
+  // as a record of its bounds.
+  mlir::Type rangeType();
+  // The `(r : range)` parameters of the signature being resolved: in it,
+  // `[t; r]` is an array indexed by the positions of `r`, a slice of
+  // `r.hi - r.lo` elements (ADR 0086).
+  void setRangeParams(std::set<std::string> names) {
+    rangeParams_ = std::move(names);
+  }
   mlir::Type boolType();
   mlir::Type unitType();
   bool isUnit(mlir::Type t) const;
@@ -333,6 +342,7 @@ class TypeResolver {
   std::map<std::string, ValueArgs> valueArgs_; // by instance, `vec<u8, 4>`
   std::map<std::string, TypeLowering> lowerings_; // by record name
   ValueArgs values_; // the value parameters of the body being built
+  std::set<std::string> rangeParams_;
   std::map<std::string, Ctor> ctors_;
   llvm::DenseMap<mlir::Type, std::vector<Ctor>> variants_;
   std::map<std::string, GenericCtor> genericCtors_;
