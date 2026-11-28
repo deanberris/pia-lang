@@ -15,6 +15,10 @@
      number does not conform, from the same digit loop.
    - `is_bool v` and `bool_value v`.
    - `find s items name`: the member called name, or that there is none.
+   - `written_nat`, `written_neg`, `written_key` and `written_str`: what
+     Pia.Text.Json.Write writes, digits worth a value by Spec.magnitude
+     and names between quotes, is these integers and keys, the first step
+     of proving that a derived to_dom never fails.
 
    key_is, int_in, int_value and is_bool are opaque (ADR 0063): a derived
    type's goals combine them without their bodies, which only the
@@ -87,6 +91,33 @@ interface Shapes = sig
   (** Whether tag_is holds. *)
   let check_tag : (s : [u8]) -> (items : [Pia.Text.Json.Dom.member]) -> (tag : [u8]) -> (name : [u8]) -> bool
     ensures result = tag_is s items tag name
+  (** What Pia.Text.Json.Write writes reads back here: an integer v from
+      lo to hi, its digits from sp.start, is the number v. *)
+  let lemma written_nat : (s : [u8]) -> (sp : Pia.Text.Json.Dom.span) -> (lo : i64) -> (hi : i64) -> (v : i64) -> unit
+    requires sp.start < sp.stop && sp.stop <= len s
+    requires forall (m in sp.start .. sp.stop). Pia.Text.Json.Spec.is_digit s.[m]
+    requires 0 <= v && lo <= v && v <= hi
+    requires Pia.Text.Json.Spec.digits_value 0 s sp.start sp.stop = v
+    ensures int_in s (Pia.Text.Json.Dom.Num sp) lo hi && int_value s (Pia.Text.Json.Dom.Num sp) lo hi = v
+  (** A negative one, a minus and then the digits of 0 - v. *)
+  let lemma written_neg : (s : [u8]) -> (sp : Pia.Text.Json.Dom.span) -> (lo : i64) -> (hi : i64) -> (v : i64) -> unit
+    requires sp.start + 1 < sp.stop && sp.stop <= len s && s.[sp.start] = 0x2D
+    requires forall (m in sp.start + 1 .. sp.stop). Pia.Text.Json.Spec.is_digit s.[m]
+    requires v < 0 && lo <= v && v <= hi
+    requires Pia.Text.Json.Spec.digits_value 0 s (sp.start + 1) sp.stop = 0 - v
+    ensures int_in s (Pia.Text.Json.Dom.Num sp) lo hi && int_value s (Pia.Text.Json.Dom.Num sp) lo hi = v
+  (** A key written as name in quotes is name. *)
+  let lemma written_key : (s : [u8]) -> (sp : Pia.Text.Json.Dom.span) -> (name : [u8]) -> unit
+    requires sp.start < sp.stop && sp.stop <= len s && sp.stop - sp.start = len name + 2
+    requires s.[sp.start] = 0x22 && s.[sp.stop - 1] = 0x22
+    requires forall (i in 0 .. len name). s.[sp.start + 1 + i] = name.[i]
+    ensures key_is s sp name
+  (** And so is a string value. *)
+  let lemma written_str : (s : [u8]) -> (sp : Pia.Text.Json.Dom.span) -> (name : [u8]) -> unit
+    requires sp.start < sp.stop && sp.stop <= len s && sp.stop - sp.start = len name + 2
+    requires s.[sp.start] = 0x22 && s.[sp.stop - 1] = 0x22
+    requires forall (i in 0 .. len name). s.[sp.start + 1 + i] = name.[i]
+    ensures str_is s (Pia.Text.Json.Dom.Str sp) name
   (** @derive(json_dom): a record's or a variant's conforms, check,
       from_dom and to_dom. *)
   let meta derive_json_dom : list
@@ -171,6 +202,43 @@ let lemma stop (acc : u64) (s : [u8]) (k : usize) (max : u64) : unit
   with digits_fit, digits_int
 = ()
 
+(* ---- What the writer writes is what these read ----
+   Pia.Text.Json.Write states a written integer as its digits and
+   Spec.magnitude, the grammar's value; these say that such digits are
+   Shape's integer, so a derived to_dom can state its numbers conform. *)
+
+(* A digit step never makes the value smaller. *)
+let lemma written_grows (acc : u64) (s : [u8]) (k : usize) (j : usize) : unit
+  requires k <= j && j <= len s
+  ensures acc <= Spec.digits_value acc s k j
+  decreases j - k
+= if k < j then written_grows (Spec.digit_step acc s.[k]) s (k + 1) j
+
+(* A digit step that stays within max is the reader's. *)
+let lemma written_step (acc : u64) (b : u8) (max : u64) : unit
+  requires Spec.is_digit b && max <= 9223372036854775808
+  requires Spec.digit_step acc b <= max
+  ensures acc < max / 10 || (acc = max / 10 && b - 0x30 <= max % 10)
+  ensures Spec.digit_step acc b = acc * 10 + (b - 0x30)
+= ()
+
+(* Digits whose grammar value is within max fit, and are worth it. *)
+let lemma written_digits (acc : u64) (s : [u8]) (k : usize) (j : usize) (max : u64) : unit
+  requires k <= j && j <= len s && max <= 9223372036854775808
+  requires forall (m in k .. j). Spec.is_digit s.[m]
+  requires Spec.digits_value acc s k j <= max
+  ensures digits_fit acc s k j max
+  ensures digits_int acc s k j max = Spec.digits_value acc s k j
+  decreases j - k
+= if k < j then (
+    let next = Spec.digit_step acc s.[k] in
+    assert Spec.digits_value acc s k j = Spec.digits_value next s (k + 1) j;
+    written_grows next s (k + 1) j;
+    written_step acc s.[k] max;
+    advance acc s k j max;
+    written_digits next s (k + 1) j max)
+  else stop acc s k max
+
 (* The magnitude a negative integer from lo may have. *)
 let spec neg_limit (lo : i64) : u64 = if lo < 0 then 0 - lo else 0
 
@@ -204,6 +272,26 @@ let spec int_value (s : [u8]) (v : Pia.Text.Json.Dom.json) (lo : i64) (hi : i64)
        else 0)
     else 0
   | _ -> 0
+
+(* A written integer v from lo to hi, its digits from sp.start, is Shape's. *)
+let lemma written_nat (s : [u8]) (sp : Pia.Text.Json.Dom.span) (lo : i64) (hi : i64) (v : i64) : unit
+  requires sp.start < sp.stop && sp.stop <= len s
+  requires forall (m in sp.start .. sp.stop). Spec.is_digit s.[m]
+  requires 0 <= v && lo <= v && v <= hi
+  requires Spec.digits_value 0 s sp.start sp.stop = v
+  ensures int_in s (Pia.Text.Json.Dom.Num sp) lo hi && int_value s (Pia.Text.Json.Dom.Num sp) lo hi = v
+  with int_in, int_value
+= written_digits 0 s sp.start sp.stop hi
+
+(* And with a minus first, the digits after it worth 0 - v. *)
+let lemma written_neg (s : [u8]) (sp : Pia.Text.Json.Dom.span) (lo : i64) (hi : i64) (v : i64) : unit
+  requires sp.start + 1 < sp.stop && sp.stop <= len s && s.[sp.start] = 0x2D
+  requires forall (m in sp.start + 1 .. sp.stop). Spec.is_digit s.[m]
+  requires v < 0 && lo <= v && v <= hi
+  requires Spec.digits_value 0 s (sp.start + 1) sp.stop = 0 - v
+  ensures int_in s (Pia.Text.Json.Dom.Num sp) lo hi && int_value s (Pia.Text.Json.Dom.Num sp) lo hi = v
+  with int_in, int_value
+= written_digits 0 s (sp.start + 1) sp.stop (neg_limit lo)
 
 let spec is_bool (v : Pia.Text.Json.Dom.json) : bool @opaque =
   match v with
@@ -334,10 +422,28 @@ let only (s : [u8]) (items : [Pia.Text.Json.Dom.member]) (name : [u8]) (i : usiz
   done;
   ok
 
+(* A key written as name between quotes, byte for byte, is name. *)
+let lemma written_key (s : [u8]) (sp : Pia.Text.Json.Dom.span) (name : [u8]) : unit
+  requires sp.start < sp.stop && sp.stop <= len s && sp.stop - sp.start = len name + 2
+  requires s.[sp.start] = 0x22 && s.[sp.stop - 1] = 0x22
+  requires forall (i in 0 .. len name). s.[sp.start + 1 + i] = name.[i]
+  ensures key_is s sp name
+  with key_is
+= ()
+
 let spec str_is (s : [u8]) (v : Pia.Text.Json.Dom.json) (name : [u8]) : bool @opaque =
   match v with
   | Str sp -> key_is s sp name
   | _ -> false
+
+(* And so is a string value written so. *)
+let lemma written_str (s : [u8]) (sp : Pia.Text.Json.Dom.span) (name : [u8]) : unit
+  requires sp.start < sp.stop && sp.stop <= len s && sp.stop - sp.start = len name + 2
+  requires s.[sp.start] = 0x22 && s.[sp.stop - 1] = 0x22
+  requires forall (i in 0 .. len name). s.[sp.start + 1 + i] = name.[i]
+  ensures str_is s (Pia.Text.Json.Dom.Str sp) name
+  with str_is
+= written_key s sp name
 
 let check_str (s : [u8]) (v : Pia.Text.Json.Dom.json) (name : [u8]) : bool
   with str_is

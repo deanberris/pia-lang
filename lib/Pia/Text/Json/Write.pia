@@ -94,6 +94,7 @@ interface Writer = sig
     ensures Pia.Text.Json.Spec.num_accepting (Pia.Text.Json.Spec.num_run dst pos result)
     ensures Pia.Text.Json.Spec.num_stops dst result (Pia.Text.Json.Spec.num_run dst pos result) ==> Pia.Text.Json.Spec.token_at dst Pia.Text.Json.Spec.Number pos result
     ensures Pia.Text.Json.Spec.minus_at dst pos = false && Pia.Text.Json.Spec.magnitude dst pos result = v
+    ensures forall (k in pos .. result). Pia.Text.Json.Spec.is_digit dst.[k]
     ensures forall (k in 0 .. len dst). k < pos || result <= k ==> dst.[k] = old (dst.[k])
   let write_u16 : (dst : borrowed inout mutable [u8]) -> (pos : usize) -> (v : u16) -> usize
     requires pos <= len dst && len dst - pos >= 5
@@ -101,6 +102,7 @@ interface Writer = sig
     ensures Pia.Text.Json.Spec.num_accepting (Pia.Text.Json.Spec.num_run dst pos result)
     ensures Pia.Text.Json.Spec.num_stops dst result (Pia.Text.Json.Spec.num_run dst pos result) ==> Pia.Text.Json.Spec.token_at dst Pia.Text.Json.Spec.Number pos result
     ensures Pia.Text.Json.Spec.minus_at dst pos = false && Pia.Text.Json.Spec.magnitude dst pos result = v
+    ensures forall (k in pos .. result). Pia.Text.Json.Spec.is_digit dst.[k]
     ensures forall (k in 0 .. len dst). k < pos || result <= k ==> dst.[k] = old (dst.[k])
   let write_u32 : (dst : borrowed inout mutable [u8]) -> (pos : usize) -> (v : u32) -> usize
     requires pos <= len dst && len dst - pos >= 10
@@ -108,6 +110,7 @@ interface Writer = sig
     ensures Pia.Text.Json.Spec.num_accepting (Pia.Text.Json.Spec.num_run dst pos result)
     ensures Pia.Text.Json.Spec.num_stops dst result (Pia.Text.Json.Spec.num_run dst pos result) ==> Pia.Text.Json.Spec.token_at dst Pia.Text.Json.Spec.Number pos result
     ensures Pia.Text.Json.Spec.minus_at dst pos = false && Pia.Text.Json.Spec.magnitude dst pos result = v
+    ensures forall (k in pos .. result). Pia.Text.Json.Spec.is_digit dst.[k]
     ensures forall (k in 0 .. len dst). k < pos || result <= k ==> dst.[k] = old (dst.[k])
   let write_u64 : (dst : borrowed inout mutable [u8]) -> (pos : usize) -> (v : u64) -> usize
     requires pos <= len dst && len dst - pos >= 20
@@ -115,6 +118,7 @@ interface Writer = sig
     ensures Pia.Text.Json.Spec.num_accepting (Pia.Text.Json.Spec.num_run dst pos result)
     ensures Pia.Text.Json.Spec.num_stops dst result (Pia.Text.Json.Spec.num_run dst pos result) ==> Pia.Text.Json.Spec.token_at dst Pia.Text.Json.Spec.Number pos result
     ensures Pia.Text.Json.Spec.minus_at dst pos = false && Pia.Text.Json.Spec.magnitude dst pos result = v
+    ensures forall (k in pos .. result). Pia.Text.Json.Spec.is_digit dst.[k]
     ensures forall (k in 0 .. len dst). k < pos || result <= k ==> dst.[k] = old (dst.[k])
   (** Signed integers: a minus when negative, then the magnitude's digits. *)
   let write_i8 : (dst : borrowed inout mutable [u8]) -> (pos : usize) -> (v : i8) -> usize
@@ -125,6 +129,8 @@ interface Writer = sig
     ensures (Pia.Text.Json.Spec.minus_at dst pos <==> v < 0)
     ensures v >= 0 ==> Pia.Text.Json.Spec.magnitude dst pos result = v
     ensures v < 0 ==> Pia.Text.Json.Spec.magnitude dst pos result = 0 - v
+    ensures v < 0 ==> pos + 1 < result
+    ensures forall (k in pos .. result). (k = pos && v < 0) || Pia.Text.Json.Spec.is_digit dst.[k]
     ensures forall (k in 0 .. len dst). k < pos || result <= k ==> dst.[k] = old (dst.[k])
   let write_i16 : (dst : borrowed inout mutable [u8]) -> (pos : usize) -> (v : i16) -> usize
     requires pos <= len dst && len dst - pos >= 6
@@ -134,6 +140,8 @@ interface Writer = sig
     ensures (Pia.Text.Json.Spec.minus_at dst pos <==> v < 0)
     ensures v >= 0 ==> Pia.Text.Json.Spec.magnitude dst pos result = v
     ensures v < 0 ==> Pia.Text.Json.Spec.magnitude dst pos result = 0 - v
+    ensures v < 0 ==> pos + 1 < result
+    ensures forall (k in pos .. result). (k = pos && v < 0) || Pia.Text.Json.Spec.is_digit dst.[k]
     ensures forall (k in 0 .. len dst). k < pos || result <= k ==> dst.[k] = old (dst.[k])
   let write_i32 : (dst : borrowed inout mutable [u8]) -> (pos : usize) -> (v : i32) -> usize
     requires pos <= len dst && len dst - pos >= 11
@@ -143,6 +151,8 @@ interface Writer = sig
     ensures (Pia.Text.Json.Spec.minus_at dst pos <==> v < 0)
     ensures v >= 0 ==> Pia.Text.Json.Spec.magnitude dst pos result = v
     ensures v < 0 ==> Pia.Text.Json.Spec.magnitude dst pos result = 0 - v
+    ensures v < 0 ==> pos + 1 < result
+    ensures forall (k in pos .. result). (k = pos && v < 0) || Pia.Text.Json.Spec.is_digit dst.[k]
     ensures forall (k in 0 .. len dst). k < pos || result <= k ==> dst.[k] = old (dst.[k])
   let write_i64 : (dst : borrowed inout mutable [u8]) -> (pos : usize) -> (v : i64) -> usize
     requires pos <= len dst && len dst - pos >= 20
@@ -152,6 +162,8 @@ interface Writer = sig
     ensures (Pia.Text.Json.Spec.minus_at dst pos <==> v < 0)
     ensures v >= 0 ==> Pia.Text.Json.Spec.magnitude dst pos result = v
     ensures v < 0 ==> Pia.Text.Json.Spec.magnitude dst pos result = 0 - v
+    ensures v < 0 ==> pos + 1 < result
+    ensures forall (k in pos .. result). (k = pos && v < 0) || Pia.Text.Json.Spec.is_digit dst.[k]
     ensures forall (k in 0 .. len dst). k < pos || result <= k ==> dst.[k] = old (dst.[k])
   (** A string literal of the UTF-8 bytes src. *)
   let write_string : (dst : borrowed inout mutable [u8]) -> (pos : usize) -> (src : [u8]) -> usize
@@ -168,6 +180,7 @@ interface Writer = sig
     requires forall (i in 0 .. len k). 0x20 <= k.[i] && k.[i] <= 0x7E && k.[i] <> 0x22 && k.[i] <> 0x5C
     ensures result = pos + len k + 2
     ensures Pia.Text.Json.Spec.token_at dst Pia.Text.Json.Spec.String pos result
+    ensures dst.[pos] = 0x22 && dst.[result - 1] = 0x22 && (forall (i in 0 .. len k). dst.[pos + 1 + i] = k.[i])
     ensures forall (j in 0 .. len dst). j < pos || result <= j ==> dst.[j] = old (dst.[j])
 end
 
@@ -363,6 +376,7 @@ let write_unsigned (dst : borrowed inout mutable [u8]) (pos : usize) (v : u64) :
   ensures result = pos + ndig v
   ensures Spec.num_accepting (Spec.num_run dst pos result)
   ensures Spec.minus_at dst pos = false && Spec.magnitude dst pos result = v
+  ensures forall (k in pos .. result). Spec.is_digit dst.[k]
   ensures forall (k in 0 .. len dst). k < pos || result <= k ==> dst.[k] = old (dst.[k])
 = let e = write_digits dst pos v in
   unsigned_run dst pos e;
@@ -379,6 +393,8 @@ let write_signed (dst : borrowed inout mutable [u8]) (pos : usize) (v : i64) : u
   ensures result <= pos + ndig (mag v) + 1 && pos < result
   ensures Spec.num_accepting (Spec.num_run dst pos result)
   ensures (Spec.minus_at dst pos <==> v < 0) && Spec.magnitude dst pos result = mag v
+  ensures v < 0 ==> pos + 1 < result
+  ensures forall (k in pos .. result). (k = pos && v < 0) || Spec.is_digit dst.[k]
   ensures forall (k in 0 .. len dst). k < pos || result <= k ==> dst.[k] = old (dst.[k])
 = if v >= 0 then (let m : u64 = v in write_unsigned dst pos m)
   else (
@@ -396,6 +412,7 @@ let meta unsigned_writer (name : string) (t : string) (room : int) : item =
        ensures Spec.num_accepting (Spec.num_run $!dst $!pos $!result)
        ensures Spec.num_stops $!dst $!result (Spec.num_run $!dst $!pos $!result) ==> Spec.token_at $!dst Spec.Number $!pos $!result
        ensures Spec.minus_at $!dst $!pos = false && Spec.magnitude $!dst $!pos $!result = $!v
+       ensures forall (k in $!pos .. $!result). Spec.is_digit $!dst.[k]
        ensures forall (k in 0 .. len $!dst). k < $!pos || $!result <= k ==> $!dst.[k] = old ($!dst.[k])
      = let $!w : u64 = $!v in write_unsigned $!dst $!pos $!w )
 
@@ -410,6 +427,8 @@ let meta signed_writer (name : string) (t : string) (room : int) : item =
        ensures (Spec.minus_at $!dst $!pos <==> $!v < 0)
        ensures $!v >= 0 ==> Spec.magnitude $!dst $!pos $!result = $!v
        ensures $!v < 0 ==> Spec.magnitude $!dst $!pos $!result = 0 - $!v
+       ensures $!v < 0 ==> $!pos + 1 < $!result
+       ensures forall (k in $!pos .. $!result). (k = $!pos && $!v < 0) || Spec.is_digit $!dst.[k]
        ensures forall (k in 0 .. len $!dst). k < $!pos || $!result <= k ==> $!dst.[k] = old ($!dst.[k])
      = let $!w : i64 = $!v in write_signed $!dst $!pos $!w )
 
@@ -573,6 +592,7 @@ let put_utf8 (dst : borrowed inout mutable [u8]) (a : usize) (w : usize) (src : 
   requires Spec.chars dst a w
   ensures result = w + n
   ensures Spec.chars dst a result
+  ensures dst.[w] = src.[i]
   ensures forall (k in 0 .. len dst). k < w || result <= k ==> dst.[k] = old (dst.[k])
 = dst.[w] <- src.[i];
   if n >= 2 then dst.[w + 1] <- src.[i + 1];
@@ -589,6 +609,7 @@ let close_string (dst : borrowed inout mutable [u8]) (pos : usize) (w : usize) :
   requires pos < w && w < len dst && dst.[pos] = 0x22
   requires Spec.chars dst (pos + 1) w
   ensures result = w + 1 && Spec.string_at dst pos result
+  ensures dst.[w] = 0x22
   ensures forall (k in 0 .. len dst). k <> w ==> dst.[k] = old (dst.[k])
 = dst.[w] <- 0x22;
   chars_frame (old dst) dst (pos + 1) w;
@@ -684,12 +705,14 @@ let write_key (dst : borrowed inout mutable [u8]) (pos : usize) (k : [u8]) : usi
   requires forall (i in 0 .. len k). 0x20 <= k.[i] && k.[i] <= 0x7E && k.[i] <> 0x22 && k.[i] <> 0x5C
   ensures result = pos + len k + 2
   ensures Spec.token_at dst Spec.String pos result
+  ensures dst.[pos] = 0x22 && dst.[result - 1] = 0x22 && (forall (i in 0 .. len k). dst.[pos + 1 + i] = k.[i])
   ensures forall (j in 0 .. len dst). j < pos || result <= j ==> dst.[j] = old (dst.[j])
 = dst.[pos] <- 0x22;
   let i : mutable usize = 0 in
   while i < len k
     invariant i <= len k && dst.[pos] = 0x22
     invariant Spec.chars dst (pos + 1) (pos + 1 + i)
+    invariant forall (q in 0 .. i). dst.[pos + 1 + q] = k.[q]
     invariant forall (j in 0 .. len dst). j < pos || pos + 1 + i <= j ==> dst.[j] = old (dst.[j])
     decreases len k - i
   do
