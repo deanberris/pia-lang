@@ -2610,10 +2610,10 @@ class Encoder {
   // f64. An exact result below it is finite.
   Value floatOverflow(unsigned w) {
     unsigned p = floatPrecision(w);
-    unsigned shift = floatBias(w) - p;  // 103, 970
-    APInt m = APInt::getLowBitsSet(p + 2, p + 1);  // 2^(p+1) - 1
-    return realConst(llvm::toString(m.zext(p + 2 + shift).shl(shift), 10,
-                                    false));
+    unsigned shift = floatBias(w) - p;            // 103, 970
+    APInt m = APInt::getLowBitsSet(p + 2, p + 1); // 2^(p+1) - 1
+    return realConst(
+        llvm::toString(m.zext(p + 2 + shift).shl(shift), 10, false));
   }
 
   Value floatFinite(Value x, unsigned w) {
