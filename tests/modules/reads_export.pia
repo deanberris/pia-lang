@@ -1,0 +1,23 @@
+(* A spec function's `reads` clause survives its interface: the clause is
+   a keyword only first on its line, so the interface's text puts it on a
+   line of its own, and the definition reads back as it was written
+   (#259). An importer keeps the function's value across a call that
+   writes past its footprint (ADR 0060, section 3).
+// RUN: piac --emit=interface -o %t %S/Inputs/framed.pia
+// RUN: FileCheck --check-prefix=PIAI %s < %t/Num.Framed.Framed.piai
+// RUN: piac --verify --no-lint --iface-path=%t %s | FileCheck %s
+*)
+import Num.Framed.Framed as F
+
+let keep (xs : borrowed inout mutable [u8]) (lo : usize) (hi : usize) : unit
+  requires lo <= hi && hi < len xs && hi - lo <= 1000
+  ensures F.total xs lo hi = old (F.total xs lo hi)
+= F.put xs hi 7
+
+(*
+// PIAI: let spec total : (xs : [u8]) -> (lo : usize) -> (hi : usize) -> u64 requires lo <= hi && hi <= len xs && hi - lo <= 1000
+// PIAI-NEXT: reads xs.[lo .. hi]
+// PIAI: let spec total (xs : [u8]) (lo : usize) (hi : usize) : u64 requires lo <= hi && hi <= len xs && hi - lo <= 1000
+// PIAI-NEXT: reads xs.[lo .. hi] decreases hi - lo
+// CHECK: proved, 0 failed, 0 skipped
+*)

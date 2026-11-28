@@ -95,6 +95,7 @@ pia_library(
         ":dom",
         ":lex",
         ":spec",
+        ":write",
         "//lib/Pia/Mem:alloc",
     ],
 )
