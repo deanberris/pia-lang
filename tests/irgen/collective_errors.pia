@@ -68,6 +68,17 @@ let unpublished (a : borrowed inout mutable [u32]) : unit
     exchange a
   done
 
+(* A shared invariant cannot name this iteration's own value. *)
+let own_value (a : borrowed inout mutable [u32]) (n : u32) : unit
+= spread i in 0 .. len a do
+    let mine = i in
+    for t in 0 .. n
+      invariant a.[mine] = t
+    do
+      exchange a
+    done
+  done
+
 (*
 // CHECK: 17:19: error: every iteration must reach this call of the collective 'exchange' in the same order, but it is reached only wh
 // CHECK: 21:34: error: 'exchange' is a collective (@collective), which every iteration of a spread joins: it can only be called in a 
@@ -81,4 +92,5 @@ let unpublished (a : borrowed inout mutable [u32]) : unit
 // CHECK: 57:42: error: a gathered parameter is an array over a range parameter, '(r : range) (xs : [t; r])', which holds every iterat
 // CHECK: 59:1: error: a range parameter is for a collective, which gets the range of the spread that calls it (ADR 0086)
 // CHECK: 67:19: error: 'a' is written in this spread, so 'peek' could read a cell another iteration is writing: pass it after a collective publishes it
+// CHECK: 76:20: error: 'mine' is this iteration's own value, but every iteration learns this invariant at the collectives in the loop
 *)

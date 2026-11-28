@@ -2951,7 +2951,12 @@ class Encoder {
         out.push_back(bv(0));  // a placeholder: buffers are not terms
         return true;
       }
-      out.push_back(create<mlir::smt::ArraySelectOp>(sort, arr, at));
+      Value x = create<mlir::smt::ArraySelectOp>(sort, arr, at);
+      if (auto it = mlir::dyn_cast<IntType>(ld.getType());
+          it && clampLoads_ && quantifierDepth_ == clampDepth_ &&
+          &arrays != &arrays_)
+        loadRanges_.push_back(inRange(x, it));
+      out.push_back(x);
       return true;
     }
     // An empty slice: no element can be read or written.
@@ -3303,6 +3308,32 @@ class Encoder {
     return declare(boolType(), "", false);
   }
 
+  // A loop invariant to prove, at entry or after an iteration. Its loads
+  // are terms of their own, with no range fact as a load in code has, so
+  // the goal assumes each element it reads is in its type's range, as any
+  // buffer a program can hold is: `wave.[0] >= 0` holds for a [u32]. Only
+  // outside quantifiers, where the read names no bound variable; the goal
+  // gains facts and loses none, so no invariant that proved stops proving.
+  bool clampLoads_ = false;
+  int clampDepth_ = 0;
+  llvm::SmallVector<Value> loadRanges_;
+  Value demandInvariant(Value p, Demand &d) {
+    bool saved = clampLoads_;
+    int savedDepth = clampDepth_;
+    auto savedRanges = std::move(loadRanges_);
+    loadRanges_.clear();
+    clampLoads_ = true;
+    clampDepth_ = quantifierDepth_;
+    Value t = demandPredicate(p, d);
+    clampLoads_ = saved;
+    clampDepth_ = savedDepth;
+    if (t)
+      for (Value r : loadRanges_)
+        t = implies(r, t);
+    loadRanges_ = std::move(savedRanges);
+    return t;
+  }
+
   // After a spread over lo .. hi: an iteration writes only the cells it
   // owns, so every cell of a written buffer that no iteration of the range
   // owns holds what it held before the loop. Without this, a spread over
@@ -3402,7 +3433,7 @@ class Encoder {
     for (auto inv : invariants) {
       Demand d = at(lb, inits, forOp.getInitArgs());
       goal(ObligationKind::invariant, inv, "the loop invariant holds on entry",
-           demandPredicate(inv.getPredicate(), d), false);
+           demandInvariant(inv.getPredicate(), d), false);
       if (done_) return false;
     }
 
@@ -3450,7 +3481,7 @@ class Encoder {
         Demand d = at(next, yields, body.getTerminator()->getOperands());
         goal(ObligationKind::invariant, inv,
              "the loop invariant holds after each iteration",
-             demandPredicate(inv.getPredicate(), d), false);
+             demandInvariant(inv.getPredicate(), d), false);
         if (done_) break;
       }
       for (auto m : measures) {
@@ -3537,7 +3568,7 @@ class Encoder {
     for (auto inv : invariants) {
       Demand d = at(inits);
       goal(ObligationKind::invariant, inv, "the loop invariant holds on entry",
-           demandPredicate(inv.getPredicate(), d), false);
+           demandInvariant(inv.getPredicate(), d), false);
       if (done_) return false;
     }
 
@@ -3571,7 +3602,7 @@ class Encoder {
           Demand d = at(yields);
           goal(ObligationKind::invariant, inv,
                "the loop invariant holds after each iteration",
-               demandPredicate(inv.getPredicate(), d), false);
+               demandInvariant(inv.getPredicate(), d), false);
           if (done_) break;
         }
         for (auto [m, now] : llvm::zip(measures, nows)) {

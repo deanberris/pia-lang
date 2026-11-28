@@ -12096,6 +12096,13 @@ class Gen {
     std::set<std::string> halo;
     std::set<const Node *> compounds;
     bool collectives = false;
+    // The spread's range, and the invariants of the loops around the code
+    // being generated that hold a collective, with their loop variables:
+    // at each collective every iteration proves its own instance and
+    // learns every other's (ADR 0088).
+    const Node *range = nullptr;
+    std::vector<const Node *> shared;
+    std::set<std::string> loopVars;
   };
   std::optional<SpreadScope> spread_;
 
@@ -12424,6 +12431,7 @@ class Gen {
                          "the same time (ADR 0060)");
     SpreadScope sc;
     sc.var = pattern.text;
+    sc.range = &iterable;
     collectWrittenBuffers(body, sc.written);
     for (const auto &scope : scopes_)
       for (const auto &[name, b] : scope)
@@ -12740,7 +12748,7 @@ class Gen {
   // At a collective, and around an if, for or while that holds one, the
   // other iterations may have written their cells: forget them, and close
   // the halo window (ADR 0086, section 3).
-  void spreadBarrier(Location l) {
+  bool spreadBarrier(Location l) {
     spread_->halo.clear();
     for (const std::string &name : spread_->written) {
       BindingPtr wb = lookup(name);
@@ -12751,17 +12759,113 @@ class Gen {
           owner != spread_->owners.end() ? owner->second->value : Value();
       create<contract::HavocOthersOp>(l, wb->value, spread_->iv, ov);
     }
+    for (const Node *inv : std::vector<const Node *>(spread_->shared))
+      if (!shareInvariant(l, *inv))
+        return false;
+    return true;
+  }
+
+  // An invariant of a loop that holds a collective, at one of its
+  // collectives (ADR 0088): with the other iterations' cells forgotten,
+  // this iteration proves its own instance, which so holds whatever they
+  // wrote, and then learns every iteration's, `forall (i in lo .. hi). p`.
+  bool shareInvariant(Location l, const Node &inv) {
+    SpreadScope saved = *spread_;
+    std::string var = saved.var;
+    spread_.reset();
+    struct Restore {
+      std::optional<SpreadScope> &to;
+      SpreadScope &from;
+      ~Restore() { to = from; }
+    } restore{spread_, saved};
+    R own = genPredicate(inv);
+    if (!own)
+      return false;
+    auto as = create<contract::AssertOp>(loc(inv), own->value);
+    as->setAttr("pia.claim",
+                b_.getStringAttr("the loop invariant holds for this "
+                                 "iteration at the collective, whatever the "
+                                 "others write"));
+    std::string all = "$every_" + var;
+    std::function<void(Node &)> rename = [&](Node &k) {
+      if (k.kind == NodeKind::Name && k.text == var)
+        k.text = all;
+      for (syntax::NodePtr &c : k.kids)
+        if (c)
+          rename(*c);
+    };
+    auto q = std::make_unique<Node>();
+    q->kind = NodeKind::Quantifier;
+    q->text = "forall";
+    q->loc = inv.loc;
+    auto binder = std::make_unique<Node>();
+    binder->kind = NodeKind::RangeBinder;
+    binder->text = all;
+    binder->loc = inv.loc;
+    binder->kids.push_back(syntax::clone(*saved.range));
+    q->kids.push_back(std::move(binder));
+    syntax::NodePtr body = syntax::clone(inv);
+    rename(*body);
+    q->kids.push_back(std::move(body));
+    R every = genPredicate(*keep(std::move(q)));
+    if (!every)
+      return false;
+    create<contract::AssumeOp>(l, every->value);
+    return true;
+  }
+
+  // What an invariant shared at a collective may name: the spread's
+  // variable, the variables of the loops around it and names bound
+  // before the spread, but no value of this iteration's own, which would
+  // mean something else in another iteration (ADR 0088).
+  const Node *ownValueIn(const Node &n, const std::set<std::string> &bound) {
+    if (n.kind == NodeKind::Name && n.text != spread_->var &&
+        !spread_->loopVars.count(n.text) && !bound.count(n.text))
+      if (BindingPtr b = lookup(n.text); b && !spread_->outside.count(b.get()))
+        return &n;
+    std::set<std::string> inner = bound;
+    for (const syntax::NodePtr &k : n.kids)
+      if (k && (k->kind == NodeKind::RangeBinder || k->kind == NodeKind::PVar))
+        inner.insert(k->text);
+    for (const syntax::NodePtr &k : n.kids)
+      if (k)
+        if (const Node *bad = ownValueIn(*k, inner))
+          return bad;
+    return nullptr;
   }
 
   R genCollectiveCompound(const Node &n, Type expected) {
     Location l = loc(n);
-    spreadBarrier(l);
+    if (!spreadBarrier(l))
+      return std::nullopt;
+    // A loop's invariants are shared at the collectives in its body.
+    size_t mark = spread_->shared.size();
+    std::set<std::string> vars = spread_->loopVars;
+    if (n.kind == NodeKind::For) {
+      spread_->loopVars.insert(n.kids[0]->text);
+      for (const syntax::NodePtr &a : n.kids[3]->kids) {
+        if (a->kind != NodeKind::Invariant)
+          continue;
+        if (const Node *bad = ownValueIn(*a->kids[0], {}))
+          return fail(*bad, "'" + bad->text +
+                                "' is this iteration's own value, but every "
+                                "iteration learns this invariant at the "
+                                "collectives in the loop: name only cells, "
+                                "the loop's variables and names bound before "
+                                "the spread (ADR 0088)");
+        spread_->shared.push_back(a->kids[0].get());
+      }
+    }
     const Node *saved = inCompound_;
     inCompound_ = &n;
     R r = genExprOf(n, expected);
     inCompound_ = saved;
-    if (r && spread_)
-      spreadBarrier(l);
+    if (spread_) {
+      spread_->shared.resize(mark);
+      spread_->loopVars = vars;
+    }
+    if (r && spread_ && !spreadBarrier(l))
+      return std::nullopt;
     return r;
   }
 
@@ -12915,7 +13019,10 @@ class Gen {
     }
     if (unitCall)
       call->add(syntax::clone(*n.kids[1]));
-    spreadBarrier(l);
+    if (!spreadBarrier(l)) {
+      popScope();
+      return std::nullopt;
+    }
     const Node &c = *keep(std::move(call));
     const Node *saved = inCollective_;
     inCollective_ = &c;

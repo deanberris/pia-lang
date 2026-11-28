@@ -969,6 +969,29 @@ In the spread, each iteration knows its own argument's cell of the gathered arra
 
 Every iteration must reach the same collectives in the same order, or the others would wait forever, and piac checks this as it reads the body: an `if` or `for` around a collective must have a condition or range that is the same in every iteration, computed from names bound before the spread, collective results and buffers no iteration writes, and so must every argument it does not gather. `if i = 0 then exchange a else ()` is a compile error at the collective, naming the condition. A value an iteration computes before a collective and uses after it is an error too, with a hint to keep it in a cell the iteration owns: codegen runs the code between collectives as its own parallel loop, so the join at its end is the barrier, and no new runtime is needed. A buffer the spread writes may be passed to a function only while a collective has published it, and only to a parameter the function reads (no `mutable`, `out`, `inout` or `moved`); before that, piac rejects the call, since the function could read a cell another iteration is writing. [pull_spread.pia.md](pull_spread.pia.md) passes the published loads to its `gather` this way.
 
+An iteration knows only its own cells after a collective, which is enough for races and bounds but not for what a cell computes from its neighbours. A `for` around a collective runs in step in every iteration, so its invariants are **shared** ([ADR 0088](adr/0088-shared-loop-invariants.md)): at each collective in the loop, each iteration proves its own instance, with the others' cells forgotten, and then knows every iteration's. An invariant about the iteration's own cell then tells every iteration about its neighbours':
+
+```ocaml
+let exchange (b : [u32]) : unit @collective = ()
+
+let counts (a : borrowed inout mutable [u32]) (b : borrowed inout mutable [u32]) (n : u32) : unit
+  requires len b = len a
+  requires forall (k in 0 .. len a). a.[k] = 0
+= spread i in 0 .. len a do
+    for t in 0 .. n
+      invariant a.[i] = t
+    do
+      exchange a;
+      b.[i] <- (if i > 0 then a.[i - 1] else t);
+      assert b.[i] = t;
+      exchange b;
+      a.[i] <- t + 1
+    done
+  done
+```
+
+A shared invariant may name the spread's variable, the loop's variable and names bound before the spread, but not a value the iteration computed, which would mean something else in another iteration. [pull_spread.pia.md](pull_spread.pia.md) proves the sediment step equal to the sequential one this way.
+
 ## Metaprograms
 
 A metaprogram is a function marked `let meta` that runs at compile time. It takes and returns values, and code is one kind of value: `` `( ... ) `` quotes code, and `$x` splices a value into it. Whatever a metaprogram produces is type checked and proved like code you wrote.

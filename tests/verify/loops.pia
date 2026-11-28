@@ -84,6 +84,11 @@ let rec gcd (a : u32) (b : u32) : u32
   decreases b
 = if b = 0 then a else gcd b (a mod b)
 
+(* An invariant may read a buffer's elements, which keep their type's range. *)
+let firsts (xs : [u32]) : unit
+  requires len xs > 0
+= for i in 0 .. 4 invariant xs.[0] >= 0 do () done
+
 (* Expected report, in order.
 // CHECK: loops.pia:12:17: proved: the loop invariant holds on entry [smt]
 // CHECK: loops.pia:12:7: proved: the index fits in u16 [smt]
@@ -127,5 +132,7 @@ let rec gcd (a : u32) (b : u32) : u32
 // CHECK: loops.pia:75:17: proved: the loop invariant holds after each iteration [smt]
 // CHECK: loops.pia:85:33: proved: the divisor is not zero [smt]
 // CHECK: loops.pia:85:24: proved: the measure of 'gcd' decreases [smt]
-// CHECK: 38 proved, 4 failed, 0 skipped
+// CHECK: loops.pia:90:19: proved: the loop invariant holds on entry [smt]
+// CHECK: loops.pia:90:19: proved: the loop invariant holds after each iteration [smt]
+// CHECK: 40 proved, 4 failed, 0 skipped
 *)

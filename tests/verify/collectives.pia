@@ -88,6 +88,39 @@ let smooth (a : borrowed inout mutable [u32]) (b : borrowed inout mutable [u32])
     a.[i] <- b.[i]
   done
 
+(* A loop around a collective runs in step in every iteration, so its
+   invariant is shared (ADR 0088): each iteration proves its own instance
+   at the collective, whatever the others write, and then knows every
+   iteration's. Here the left neighbour's cell holds the step number. *)
+let counts (a : borrowed inout mutable [u32]) (b : borrowed inout mutable [u32]) (n : u32) : unit
+  requires len b = len a
+  requires forall (k in 0 .. len a). a.[k] = 0
+= spread i in 0 .. len a do
+    for t in 0 .. n
+      invariant a.[i] = t
+    do
+      exchange a;
+      b.[i] <- (if i > 0 then a.[i - 1] else t);
+      assert b.[i] = t;
+      exchange b;
+      a.[i] <- t + 1
+    done
+  done
+
+(* Wrong: an iteration cannot prove a fact about a cell another owns, at a
+   collective or at the loop's entry, which is a barrier too. *)
+let claims (a : borrowed inout mutable [u32]) (b : [u32]) (n : u32) : unit
+  requires len a > 0
+= spread i in 0 .. len a do
+    a.[i] <- 0;
+    for t in 0 .. n
+      invariant a.[0] = 0
+    do
+      exchange b;
+      a.[i] <- 0
+    done
+  done
+
 (*
 // CHECK: 21:13: proved: '+' does not overflow usize
 // CHECK: 16:3: proved: the postcondition holds
@@ -98,5 +131,9 @@ let smooth (a : borrowed inout mutable [u32]) (b : borrowed inout mutable [u32])
 // CHECK: 68:18: failed: the iteration owns the cell it reads in 'a' (c = i)
 // CHECK: 74:40: failed: the precondition of 'sum' holds
 // CHECK: 86:29: proved: the precondition of 'neighbour' holds
-// CHECK: 65 proved, 2 failed, 0 skipped
+// CHECK: 100:23: proved: the loop invariant holds for this iteration at the collective, whatever the others write
+// CHECK: 104:7: proved: the assertion holds
+// CHECK: 117:7: failed: the loop invariant holds on entry
+// CHECK: 117:23: failed: the loop invariant holds for this iteration at the collective, whatever the others write
+// CHECK: 84 proved, 4 failed, 0 skipped
 *)
