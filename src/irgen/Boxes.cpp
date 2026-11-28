@@ -483,7 +483,9 @@ std::string erasedSource(const std::string &cname, const Node &concept,
              " b;\n     b <- " + empty +
              " b;\n     d.state <- 1;"
              "\n     Ok ())\n  else Err Mismatch\n\n";
-      src += "let consume (t : type where t = " + t + ") (b : inout mutable " +
+      // The where is written as the operator expands, since this source
+      // is parsed after expansion.
+      src += "let consume (t : type where eq t " + t + ") (b : inout mutable " +
              boxType + ") : result " + t + " box_mismatch\n= if " + holds +
              " b then\n    (let v = " + unpack + " b in\n     b <- " + empty +
              " b;\n     Ok v)\n  else Err Mismatch\n\n";
