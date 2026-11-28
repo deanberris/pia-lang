@@ -2605,6 +2605,17 @@ class Encoder {
     return realConst(*floatRational(bits));
   }
 
+  // The least magnitude that rounds to an infinity, the largest finite
+  // magnitude plus half its ulp: 2^128 - 2^103 for f32, 2^1024 - 2^970 for
+  // f64. An exact result below it is finite.
+  Value floatOverflow(unsigned w) {
+    unsigned p = floatPrecision(w);
+    unsigned shift = floatBias(w) - p;  // 103, 970
+    APInt m = APInt::getLowBitsSet(p + 2, p + 1);  // 2^(p+1) - 1
+    return realConst(llvm::toString(m.zext(p + 2 + shift).shl(shift), 10,
+                                    false));
+  }
+
   Value floatFinite(Value x, unsigned w) {
     Type t = mlir::smt::BitVectorType::get(ctx_, w);
     Value mask = create<mlir::smt::BVConstantOp>(
@@ -2646,7 +2657,7 @@ class Encoder {
 
   // A correctly rounded result `r` of the exact real `e`, given `pre`,
   // which says the operands are finite: within the error bound when `r`
-  // is finite, and finite when `e` is below the largest finite magnitude.
+  // is finite, and finite when `|e|` is below the overflow threshold.
   void roundingFacts(Value pre, Value e, Value r, unsigned w,
                      bool subnormal = true) {
     Value err = realMul(floatEps(w), realAbs(e));
@@ -2655,7 +2666,7 @@ class Encoder {
     Value rr = floatToReal(r, w);
     define(implies(andOf(pre, floatFinite(r, w)),
                    realLe(realAbs(realSub(rr, e)), err)));
-    define(implies(andOf(pre, realLt(realAbs(e), floatMax(w))),
+    define(implies(andOf(pre, realLt(realAbs(e), floatOverflow(w))),
                    floatFinite(r, w)));
   }
 

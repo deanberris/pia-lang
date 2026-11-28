@@ -82,7 +82,7 @@ let of_count (n : int{0..16777216}) : f32
 = f32 n
 
 (* `finite` compiles too: it tests the exponent bits.
-// CHECK: float_reals.pia:[[@LINE+2]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+// CHECK: float_reals.pia:[[@LINE+3]]:{{[0-9]+}}: proved: the postcondition holds [smt]
 *)
 let usable (x : f64) : bool
   ensures result = finite x
@@ -90,7 +90,7 @@ let usable (x : f64) : bool
 
 (* A loop keeps finiteness and a bound in its invariant: each step adds at
    most 1 and rounds once, and 2 per step covers both.
-// CHECK: float_reals.pia:[[@LINE+9]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+// CHECK: float_reals.pia:[[@LINE+5]]:{{[0-9]+}}: proved: the postcondition holds [smt]
 *)
 let sum (xs : [f32]) : f32
   requires len xs <= 1000
