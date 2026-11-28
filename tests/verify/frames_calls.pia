@@ -1,0 +1,58 @@
+(* A spec function's footprint (ADR 0060, section 3) holds across a call
+   too: after a call that writes a buffer, the verifier states that the
+   function's value on the new contents is its value on the old wherever
+   the two agree on its footprint, which the callee's ensures may say.
+   So a fact about cells a callee leaves alone survives the call with no
+   lemma by hand, as it survives a store.
+// RUN: not piac --verify --no-lint %s | FileCheck %s
+*)
+
+let spec rsum (xs : [u32]) (lo : usize) (hi : usize) : u64
+  requires lo <= hi && hi <= len xs && hi - lo <= 4294967296
+  reads xs.[lo .. hi]
+  ensures result <= 4294967296 * (hi - lo)
+  decreases hi - lo
+= if lo = hi then 0 else rsum xs lo (hi - 1) + xs.[hi - 1]
+
+(* Writes one cell, and says it kept the others. *)
+let put (xs : borrowed inout mutable [u32]) (i : usize) (v : u32) : unit
+  requires i < len xs
+  ensures xs.[i] = v
+  ensures forall (k in 0 .. len xs). k <> i ==> xs.[k] = old (xs.[k])
+= xs.[i] <- v
+
+(* A call that writes past hi keeps the sum.
+// CHECK: frames_calls.pia:[[@LINE+4]]:3: proved: the postcondition holds [smt]
+*)
+let keep (xs : borrowed inout mutable [u32]) (lo : usize) (hi : usize) : unit
+  requires lo <= hi && hi < len xs && hi - lo <= 4294967296
+  ensures rsum xs lo hi = old (rsum xs lo hi)
+= put xs hi 7
+
+(* So does a chain of them.
+// CHECK: frames_calls.pia:[[@LINE+4]]:3: proved: the postcondition holds [smt]
+*)
+let keep_twice (xs : borrowed inout mutable [u32]) (lo : usize) (hi : usize) : unit
+  requires lo <= hi && hi + 1 < len xs && hi - lo <= 4294967296
+  ensures rsum xs lo hi = old (rsum xs lo hi)
+= put xs hi 7; put xs (hi + 1) 8
+
+(* A call that may write inside the footprint keeps nothing.
+// CHECK: frames_calls.pia:[[@LINE+4]]:3: failed: the postcondition holds
+*)
+let lose (xs : borrowed inout mutable [u32]) (lo : usize) (hi : usize) : unit
+  requires lo < hi && hi <= len xs && hi - lo <= 4294967296
+  ensures rsum xs lo hi = old (rsum xs lo hi)
+= put xs lo 7
+
+(* A callee that says nothing of the other cells keeps nothing either.
+// CHECK: frames_calls.pia:[[@LINE+8]]:3: failed: the postcondition holds
+*)
+let scribble (xs : borrowed inout mutable [u32]) (i : usize) : unit
+  requires i < len xs
+= xs.[i] <- 1
+
+let unknown (xs : borrowed inout mutable [u32]) (lo : usize) (hi : usize) : unit
+  requires lo <= hi && hi < len xs && hi - lo <= 4294967296
+  ensures rsum xs lo hi = old (rsum xs lo hi)
+= scribble xs hi

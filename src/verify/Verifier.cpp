@@ -3814,6 +3814,7 @@ class Encoder {
       Value actual = call.getOperand(i), root = rootBuffer(actual);
       if (callWrites(call, i) && chosen_.contains(root)) refuseChosenWrite(call);
       if (!callWrites(call, i) || !arrays_.count(root)) continue;
+      Value before = arrays_[root];
       Value off = views_.lookup(actual), len = lengths_.lookup(actual);
       if (actual != root && off && len) {
         setArray(root, writtenThrough(arrays_[root], off, len));
@@ -3822,6 +3823,12 @@ class Encoder {
       } else {
         havocArray(root);
       }
+      // A spec function with a footprint keeps its value across the call
+      // where the callee's ensures keep the footprint's cells.
+      Derived d;
+      d.old = before;
+      d.byCall = true;
+      derived_[arrays_[root]] = d;
     }
     if (!hasBody) return true;
     Demand post = pre;
@@ -4363,6 +4370,9 @@ class Encoder {
   // iteration; no owner for the identity).
   struct Derived {
     Value old, at, owner, iv;
+    // Written by a call, which says in its ensures which cells it kept:
+    // the frame holds where the two contents agree on the footprint.
+    bool byCall = false;
   };
   llvm::DenseMap<Value, Derived> derived_;
   // The buffers' contents before the spread being walked.
@@ -4411,7 +4421,16 @@ class Encoder {
                                lo));
       };
       Value outside;
-      if (from.at) {
+      if (from.byCall) {
+        auto at = mlir::cast<mlir::smt::ArrayType>(arr.getType());
+        outside = forallIndex([&](Value c) {
+          return implies(
+              inFoot(c),
+              eq(create<mlir::smt::ArraySelectOp>(at.getRangeType(), arr, c),
+                 create<mlir::smt::ArraySelectOp>(at.getRangeType(), from.old,
+                                                  c)));
+        });
+      } else if (from.at) {
         outside = notOf(inFoot(from.at));
       } else {
         outside = forallIndex([&](Value c) {
