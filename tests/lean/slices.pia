@@ -19,6 +19,18 @@ let lemma total_le (xs : [u8]) (n : usize) : unit
   ensures total xs n <= 255 * int n
 = by lean Slices.total_le
 
+(* A fixed array, such as a spec buffer (ADR 0058), is a `Slice'` too,
+   whose length is its type's. *)
+let rec spec count (xs : [u8; 16]) (v : u8) (n : usize) : int
+  requires n <= 16
+  decreases n
+= if n = 0 then 0 else count xs v (n - 1) + (if xs.[n - 1] = v then 1 else 0)
+
+let lemma count_le (xs : [u8; 16]) (v : u8) (n : usize) : unit
+  requires n <= 16
+  ensures count xs v n <= int n
+= by lean Slices.count_le
+
 (* Proved by Z3, from the Lean lemma. *)
 let lemma total_all (xs : [u8]) : unit
   ensures total xs (len xs) <= 255 * int (len xs)
@@ -37,7 +49,14 @@ let lemma total_all (xs : [u8]) : unit
 // LEAN-NEXT:   ∀ (xs : (Slice' Int)) (n : Int),
 // LEAN-NEXT:     ((0 : Int) ≤ xs.len ∧ xs.len ≤ (18446744073709551615 : Int)) ∧ (∀ (i' : Int), (0 : Int) ≤ i' ∧ i' < xs.len → ((0 : Int) ≤ (xs.get i') ∧ (xs.get i') ≤ (255 : Int))) ∧ ((0 : Int) ≤ n ∧ n ≤ (18446744073709551615 : Int)) ∧ (n ≤ (xs).len) → ((total xs n) ≤ ((255 : Int) * n))
 
+// LEAN: def count (xs : (Slice' Int)) (v : Int) (n : Int) : Int :=
+// LEAN-NEXT:   if h_req : (xs.len = (16 : Int)) ∧ ((0 : Int) ≤ v ∧ v ≤ (255 : Int)) ∧ ((0 : Int) ≤ n ∧ n ≤ (18446744073709551615 : Int)) ∧ (n ≤ (16 : Int)) then
+// LEAN: def count_le : Prop :=
+// LEAN-NEXT:   ∀ (xs : (Slice' Int)) (v : Int) (n : Int),
+// LEAN-NEXT:     (xs.len = (16 : Int)) ∧ (∀ (i' : Int), (0 : Int) ≤ i' ∧ i' < xs.len → ((0 : Int) ≤ (xs.get i') ∧ (xs.get i') ≤ (255 : Int))) ∧ ((0 : Int) ≤ v ∧ v ≤ (255 : Int)) ∧ ((0 : Int) ≤ n ∧ n ≤ (18446744073709551615 : Int)) ∧ (n ≤ (16 : Int)) → ((count xs v n) ≤ n)
+
 // CHECK-DAG: proved: the Lean theorem 'Slices.total_le' proves 'total_le' [lean]
+// CHECK-DAG: proved: the Lean theorem 'Slices.count_le' proves 'count_le' [lean]
 // CHECK-DAG: slices.pia:{{[0-9]+}}:3: proved: the postcondition holds [{{smt|intervals}}]
 // CHECK: {{[0-9]+}} proved, 0 failed, 0 skipped
 *)

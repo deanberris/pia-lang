@@ -178,15 +178,16 @@ private:
       deps_[visiting_.back()].insert(name);
   }
 
-  // A slice is a `Slice'`, its length and its elements by index, as the
-  // verifier encodes it. It is a definition like any other, emitted once,
-  // first, and part of the hash of every statement that uses it.
+  // A slice or fixed array is a `Slice'`, its length and its elements by
+  // index, as the verifier encodes both. It is a definition like any other,
+  // emitted once, first, and part of the hash of every statement that uses it.
   void useSlice() {
     static const char *kSlice = "Slice'";
     if (!text_.count(kSlice)) {
-      text_[kSlice] = "/-- A Pia slice: its length, and its elements by "
-                      "index. -/\nstructure Slice' (α : Type) where\n"
-                      "  len : Int\n  get : Int → α\n\n";
+      text_[kSlice] =
+          "/-- A Pia slice or fixed array: its length, and its "
+          "elements by index. -/\nstructure Slice' (α : Type) where\n"
+          "  len : Int\n  get : Int → α\n\n";
       order_.insert(order_.begin(), kSlice);
     }
     use(kSlice);
@@ -229,9 +230,14 @@ private:
                     bool decidable = false) {
     if (t.kind == N::Annot)
       return range(*t.kids[1], x, decidable);
-    if (t.kind == N::SliceType && !t.kids.empty()) {
-      std::string out = "(" + intLit("0") + " ≤ " + x + ".len ∧ " + x +
-                        ".len ≤ " + intLit("18446744073709551615") + ")";
+    if ((t.kind == N::SliceType && !t.kids.empty()) ||
+        (t.kind == N::ArrayType && t.kids.size() == 2)) {
+      // A fixed array's length is its type's.
+      std::string out =
+          t.kind == N::ArrayType
+              ? "(" + x + ".len = " + expr(*t.kids[1], Mode::Value) + ")"
+              : "(" + intLit("0") + " ≤ " + x + ".len ∧ " + x + ".len ≤ " +
+                    intLit("18446744073709551615") + ")";
       if (decidable)
         return out;
       // `i'` is a name no program writes, so it captures none of `x`.
@@ -277,12 +283,17 @@ private:
         return ident(t.text);
       }
     }
-    if (t.kind == N::SliceType && !field && !t.kids.empty()) {
-      if (t.kids[0]->kind == N::SliceType ||
+    if (((t.kind == N::SliceType && !t.kids.empty()) ||
+         (t.kind == N::ArrayType && t.kids.size() == 2)) &&
+        !field) {
+      auto buffer = [](const Node &e) {
+        return e.kind == N::SliceType || e.kind == N::ArrayType;
+      };
+      if (buffer(*t.kids[0]) ||
           (t.kids[0]->kind == N::Annot && t.kids[0]->kids.size() > 1 &&
-           t.kids[0]->kids[1]->kind == N::SliceType)) {
-        fail(t.loc, "a slice of slices has no Lean translation yet (ADR "
-                    "0061, step 3)");
+           buffer(*t.kids[0]->kids[1]))) {
+        fail(t.loc, "a slice or array of slices or arrays has no Lean "
+                    "translation yet (ADR 0061, step 3)");
         return "Int";
       }
       std::string elem = type(*t.kids[0]);
@@ -292,9 +303,9 @@ private:
     if (t.kind == N::RangeType && !field && t.kids.size() == 2 &&
         (t.text == "int" || machineRange(t.text)))
       return "Int";
-    if (field && t.kind == N::SliceType) {
-      fail(t.loc, "a record field that is a slice has no Lean translation "
-                  "yet (ADR 0061, step 3)");
+    if (field && (t.kind == N::SliceType || t.kind == N::ArrayType)) {
+      fail(t.loc, "a record field that is a slice or array has no Lean "
+                  "translation yet (ADR 0061, step 3)");
       return "Int";
     }
     if (field && (t.kind == N::RangeType ||

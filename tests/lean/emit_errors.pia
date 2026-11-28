@@ -39,7 +39,7 @@ let lemma counted (n : int) : unit
 
 (* Expected errors.
 // CHECK: error: the operator 'div' has no Lean translation yet (ADR 0061, step 3)
-// CHECK: error: a slice of slices has no Lean translation yet (ADR 0061, step 3)
+// CHECK: error: a slice or array of slices or arrays has no Lean translation yet (ADR 0061, step 3)
 // CHECK: error: a record field of a machine integer or range type has no Lean translation yet (ADR 0061, step 3)
 // CHECK: error: a quantifier in a spec function's body has no Lean translation yet (ADR 0061, step 3)
 // CHECK: error: a lemma proved in Lean states only 'requires' and 'ensures'
