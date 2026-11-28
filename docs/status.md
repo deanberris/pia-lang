@@ -35,6 +35,8 @@ Pia is an experimental language under active development. The compiler proves an
 
 ## Roadmap
 
+The releases to 1.0, each defined by a demo, are on the [roadmap](roadmap.md). The milestones below are the work towards 0.1.0.
+
 The plan is a sequence of milestones, each a GitHub issue, building towards the flagship demo: stream delineation and sediment transport over a terrain heightmap, proved correct and running across the CPU and GPU ([ADR 0016](adr/0016-stream-delineation-flagship-demo.md)).
 
 | Milestone | Scope | |

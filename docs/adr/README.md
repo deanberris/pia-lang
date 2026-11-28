@@ -83,3 +83,9 @@ Each file records one decision: its context, the decision, and its consequences.
 | [0077](0077-definitions-inherit-interface-contracts.md) | A definition that states no contract takes the contract of the interface that lists it, so a module writes each contract once | Accepted |
 | [0078](0078-pia-lib-ops-with-proved-substitutions.md) | Library functions lower to `pia_lib.call`, a Pia-owned op whose meaning is its Pia body; a late pass expands it or substitutes an upstream op through a rule proved against the body | Proposed |
 | [0079](0079-pia-module-format.md) | Pia IR: a versioned op schema Pia controls, in lock-step with piac, encoding every op piac uses, with deprecations and migrations, not MLIR bytecode | Proposed |
+| [0080](0080-release-0-1-0-gates.md) | Releases ship their libraries in .0 and finish their demo in patches; tracking labels; the gates for 0.1.0 | Proposed |
+| [0081](0081-release-0-2-0-gates.md) | Release 0.2.0: an embeddable REPL and proved networking (HTTP/2, TLS through BoringSSL, gRPC) | Proposed |
+| [0082](0082-release-0-3-0-gates.md) | Release 0.3.0: a SQL DSL and a proved embedded database | Proposed |
+| [0083](0083-release-0-4-0-gates.md) | Release 0.4.0: an FFI to C++ and a proof that Pia subsumes C++ interfaces | Proposed |
+| [0084](0084-release-0-5-0-gates.md) | Release 0.5.0: a SAT and SMT solver written in Pia, beside Z3 | Proposed |
+| [0085](0085-release-1-0-gates.md) | Release 1.0: a Pia front end in Pia over Pia IR | Proposed |
