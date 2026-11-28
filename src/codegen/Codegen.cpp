@@ -2288,7 +2288,7 @@ static LogicalResult addBoxEntries(mlir::ModuleOp module) {
           b, loc, (g.getSymName() + "$" + llvm::Twine(k)).str(),
           b.getFunctionType(inputs, ft.getResults()));
       entry.setPrivate();
-      Block *body = entry.addEntryBlock();
+      mlir::Block *body = entry.addEntryBlock();
       b.setInsertionPointToStart(body);
       llvm::SmallVector<Value> callArgs;
       for (unsigned i = 0; i < n; ++i)
@@ -2316,7 +2316,7 @@ static void defineBoxDescriptors(mlir::ModuleOp module) {
     if (!thunks)
       continue;
     Location loc = g.getLoc();
-    Block *init = b.createBlock(&g.getInitializerRegion());
+    mlir::Block *init = b.createBlock(&g.getInitializerRegion());
     b.setInsertionPointToStart(init);
     Value v = make<mlir::LLVM::UndefOp>(b, loc, g.getType());
     auto word = [&](llvm::StringRef attr) -> Value {
