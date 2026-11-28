@@ -76,6 +76,10 @@ Floats are already core MLIR: IRGen emits `arith.addf`, `subf`, `mulf`, `divf`, 
 
 LLVM recognises the widen-clamp-truncate pattern, so `add_px` on `u8` with `@overflow(saturate)` compiles to `llvm.uadd.sat.i8`. In a loop over slices, such as `add_rows` in `tests/codegen/saturate.pia`, LLVM's loop vectoriser turns it into NEON `uqadd.16b`.
 
+### Vectorisation
+
+Pia relies on LLVM's loop vectoriser (ADR 0013) and gives it loops with nothing in the way: the proof has already removed every bounds and overflow check, so a proved loop body is plain arithmetic on loads and stores, and slices passed to a function do not alias (ADR 0042). An elementwise loop therefore vectorises as written and stays strict IEEE, because each element is still rounded once: clamp-and-scale in `tests/codegen/vectorise.pia` becomes `fcmgt.4s`, `bsl.16b` and `fmul.4s` on an M1 and `vminps` and `vmulps` on `ymm` registers on x86-64-v3, and its `u8` version `umin.16b` and `vpminub`. `vectorise_test.c` checks both against C bit for bit at lengths around every vector width. A float reduction, such as a dot product, is the exception: its sum must be reordered to use lanes, which strict IEEE forbids, so it vectorises only under `@fp(reassoc)` (`tests/codegen/fp_licence.pia`, above).
+
 ## Atomics
 
 An atomic cell is a one-element memref ([ADR 0052](adr/0052-atomics.md), section 5). `atomic_new` is a `memref.alloca` at the start of the function and a plain store, since nothing else sees the cell yet. Every other op is an LLVM atomic on the memref's aligned pointer, at the element's alignment: `llvm.load` and `llvm.store` with an ordering, `llvm.atomicrmw`, `llvm.cmpxchg` (whose old value is the result) and `llvm.fence`. `relaxed` is LLVM's `monotonic`, and the other orders keep their names. `atomic_min` and `atomic_max` are `min` and `max` on a signed cell, `umin` and `umax` otherwise. A `bool` is a byte, since LLVM's atomics take whole bytes.
@@ -201,7 +205,7 @@ let matmul (r : region) (a : mat8) (b : mat8) (c : inout grid i32 [4; 4] r)
 
 ## Limits of v0
 
-- There is no vectorisation yet. Loops compile to scalar code, apart from whatever LLVM's own vectoriser does with them.
+- `vec<T, k>`, a vector shape fixed by the author (ADR 0013), is not built; vectorisation is LLVM's loop vectoriser on proved loops, and a float reduction needs `@fp(reassoc)`.
 - `dyn`, buffers nested deeper than a buffer of slices, and buffer results are not lowered.
 - A recursive value's layout keeps every constructor's fields side by side, and a box's slot as a whole memref descriptor; the published union layout of ADR 0030, a box as one pointer and `option (box t)` as a nullable one, comes later.
 - An atomic cell crosses the C boundary as a pointer to its element, like a one-element array.
