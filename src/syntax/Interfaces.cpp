@@ -270,7 +270,13 @@ NodePtr importedFunction(const Node &val, const std::string &module,
   annot->add(makeNode(N::Modifiers, at));
   annot->add(clone(*type));
   annot->add(makeNode(N::None, at));
-  ret->add(makeNode(N::Attrs, at));
+  // `@collective(xs)` comes with the entry: an importer's calls gather
+  // their arguments and run it once for the spread (ADR 0086).
+  Node *attrs = ret->add(makeNode(N::Attrs, at));
+  if (val.kids.size() > 1 && val.kids[1]->kind == N::Attrs)
+    for (const NodePtr &a : val.kids[1]->kids)
+      if (a->kind == N::Attribute && a->text == "collective")
+        attrs->add(clone(*a));
   qualify(*params, module, members, names);
   qualify(*ret, module, members, names);
   NodePtr contracts = clone(*val.kids[2]);
@@ -995,6 +1001,10 @@ std::vector<InheritedContract> inheritedContracts(const Node &program,
 void inheritInterfaceContracts(Node &program, Diagnostics &diags) {
   for (InheritedContract &h : inheritedContracts(program, diags)) {
     Node &contracts = *program.kids[h.item]->kids[2];
+    // Marked, so that IRGen need not prove that the interface's contract
+    // implies itself where a lemma over the definition cannot be formed,
+    // as for a collective's (ADR 0086).
+    contracts.flags = "inherited";
     for (const NodePtr &c : h.entry->kids[2]->kids) {
       if (!callerClause(*c))
         continue;

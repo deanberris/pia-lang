@@ -1,0 +1,52 @@
+(* What Pia.Text.Json.Write writes is what Pia.Text.Json.Shape reads: a
+   written integer is Shape's integer of the same value, and a written key
+   is its name. These are the facts a derived to_dom will state its
+   document with, so that it never fails.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Spec.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Lex.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Write.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Mem/Alloc.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Dom.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Shape.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+// CHECK-NOT: failed
+// CHECK: {{[0-9]+}} proved, 0 failed, 0 skipped
+*)
+import Pia.Text.Json.Spec.Grammar
+import Pia.Text.Json.Lex.Lexer
+import Pia.Text.Json.Write.Writer
+import Pia.Mem.Alloc.Allocators
+import Pia.Text.Json.Dom.Document
+import Pia.Text.Json.Shape.Shapes
+
+(* An i8 written at 0 is the number it was, from -128 to 127. *)
+let write_i8_num (dst : borrowed inout mutable [u8]) (v : i8) : Pia.Text.Json.Dom.span
+  requires len dst >= 4
+  ensures (let sp = result in
+           Pia.Text.Json.Shape.int_in dst (Pia.Text.Json.Dom.Num sp) (-128) 127
+           && Pia.Text.Json.Shape.int_value dst (Pia.Text.Json.Dom.Num sp) (-128) 127 = v)
+= let e = Pia.Text.Json.Write.write_i8 dst 0 v in
+  let sp : Pia.Text.Json.Dom.span = { start = 0; stop = e } in
+  (if v < 0 then Pia.Text.Json.Shape.written_neg dst sp (-128) 127 v
+   else Pia.Text.Json.Shape.written_nat dst sp (-128) 127 v);
+  sp
+
+(* A u16 written at 0 is the number it was, in a range of u16's. *)
+let write_u16_num (dst : borrowed inout mutable [u8]) (v : u16) : Pia.Text.Json.Dom.span
+  requires len dst >= 5
+  ensures Pia.Text.Json.Shape.int_in dst (Pia.Text.Json.Dom.Num result) 0 65535
+  ensures Pia.Text.Json.Shape.int_value dst (Pia.Text.Json.Dom.Num result) 0 65535 = v
+= let e = Pia.Text.Json.Write.write_u16 dst 0 v in
+  let sp : Pia.Text.Json.Dom.span = { start = 0; stop = e } in
+  Pia.Text.Json.Shape.written_nat dst sp 0 65535 v;
+  sp
+
+(* A key written at 0 is its name. *)
+let write_name (dst : borrowed inout mutable [u8]) : Pia.Text.Json.Dom.span
+  requires len dst >= 6
+  ensures (let name : [u8; 4] = [ 0x6B; 0x69; 0x6E; 0x64 ] in Pia.Text.Json.Shape.key_is dst result name)
+= let name : [u8; 4] = [ 0x6B; 0x69; 0x6E; 0x64 ] in
+  let e = Pia.Text.Json.Write.write_key dst 0 name in
+  let sp : Pia.Text.Json.Dom.span = { start = 0; stop = e } in
+  Pia.Text.Json.Shape.written_key dst sp name;
+  sp

@@ -2036,6 +2036,19 @@ class Encoder {
       return true;
     }
 
+    // The slice of every iteration's argument to a collective (ADR 0086):
+    // a fresh buffer, whose length and own cell IRGen's assumptions give.
+    if (auto g = mlir::dyn_cast<ForeignOp>(op); g && g->hasAttr("pia.gather")) {
+      Value r = g.getResult(0);
+      if (Type sort = sortOf(r.getType())) {
+        arrays_[r] = declare(sort, "", false);
+        Value len = declare(bvType(), "", false);
+        assertTerm(inRange(len, indexRange()));
+        lengths_[r] = len;
+      }
+      return true;
+    }
+
     // Everything else: compute the results from the operands.
     llvm::SmallVector<Value> operands;
     for (Value v : op->getOperands()) operands.push_back(term(v));
@@ -3309,6 +3322,11 @@ class Encoder {
       if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op))
         for (unsigned i = 0; i < call.getNumOperands(); ++i)
           if (callWrites(call, i)) out.insert(rootBuffer(call.getOperand(i)));
+      // A collective in a loop of a spread's body lets the other
+      // iterations' writes in (ADR 0086), so the loop changes the buffer.
+      if (auto h = mlir::dyn_cast<contract::HavocOthersOp>(op);
+          h && !h->hasAttr("pia.from_start"))
+        out.insert(rootBuffer(h.getBuffer()));
     });
     llvm::SmallVector<Value> tracked;
     for (Value b : out)

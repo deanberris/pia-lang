@@ -1,0 +1,86 @@
+(* Collectives in a spread (ADR 0086): functions marked @collective, which
+   every iteration calls once, together. `sum` gathers every iteration's
+   argument into a slice and adds it up with an ordinary proved loop, and
+   `exchange` gathers nothing: it is a barrier, and the buffer it takes is
+   published, readable by every iteration until the next collective. A
+   stencil over time steps reads its neighbours after an exchange, and
+   every iteration knows that the sum is at least its own contribution.
+   Reading a neighbour without an exchange races with its owner, and a
+   range longer than sum's precondition allows could overflow.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+let sum (r : range) (xs : [u32; r]) : u64
+  @collective(xs)
+  requires len xs <= 4'294'967'295
+  ensures forall (k in r.lo .. r.hi). result >= xs.[k]
+= let s : mutable u64 = 0 in
+  for j in r.lo .. r.hi
+    invariant forall (k in r.lo .. j). xs.[k] <= s
+    invariant s <= (j - r.lo) << 32
+  do s <- s + xs.[j] done;
+  s
+
+let most (r : range) (xs : [u32; r]) : u32
+  @collective(xs)
+  ensures forall (k in r.lo .. r.hi). result >= xs.[k]
+= let m : mutable u32 = 0 in
+  for j in r.lo .. r.hi
+    invariant forall (k in r.lo .. j). m >= xs.[k]
+  do if xs.[j] > m then m <- xs.[j] else () done;
+  m
+
+let exchange (b : [u32]) : unit @collective = ()
+
+let relax (a : borrowed inout mutable [u32]) (b : borrowed inout mutable [u32]) (steps : u32) : unit
+  requires len b = len a && len a <= 1000000
+= let n = len a in
+  spread i in 0 .. n do
+    for t in 0 .. steps do
+      exchange a;
+      let l = if i > 0 then a.[i - 1] else a.[i] in
+      let r = if i + 1 < n then a.[i + 1] else a.[i] in
+      b.[i] <- l / 2 + r / 2;
+      exchange b;
+      a.[i] <- b.[i]
+    done
+  done
+
+let share (xs : [u32]) (ys : out mutable [u64]) : unit
+  requires len ys = len xs && len xs <= 4294967295
+= spread i in 0 .. len xs do
+    let total = sum xs.[i] in
+    ys.[i] <- total - xs.[i]
+  done
+
+let below_max (xs : [u32]) (ys : out mutable [u32]) : unit
+  requires len ys = len xs
+= spread i in 0 .. len xs do
+    let m = most xs.[i] in
+    ys.[i] <- m - xs.[i]
+  done
+
+(* Without the exchange, a.[i - 1] is a cell its owner may be writing. *)
+let unexchanged (a : borrowed inout mutable [u32]) : unit
+  requires len a >= 2
+= spread i in 1 .. len a do
+    let m = most a.[i] in
+    a.[i] <- m - a.[i - 1]
+  done
+
+(* Nothing bounds the range, so sum's precondition may not hold. *)
+let unbounded (xs : [u32]) (ys : out mutable [u64]) : unit
+  requires len ys = len xs
+= spread i in 0 .. len xs do ys.[i] <- sum xs.[i] done
+
+(*
+// CHECK: 21:13: proved: '+' does not overflow usize
+// CHECK: 16:3: proved: the postcondition holds
+// CHECK: 41:29: proved: the index is within bounds
+// CHECK: 52:17: proved: the precondition of 'sum' holds
+// CHECK: 53:21: proved: '-' does not overflow usize
+// CHECK: 60:17: proved: '-' does not overflow u32
+// CHECK: 68:18: failed: the iteration owns the cell it reads in 'a' (c = i)
+// CHECK: 74:40: failed: the precondition of 'sum' holds
+// CHECK: 54 proved, 2 failed, 0 skipped
+*)
