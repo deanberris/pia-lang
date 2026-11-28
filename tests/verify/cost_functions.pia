@@ -1,0 +1,55 @@
+(* Counting the calls of a function (ADR 0062, step 2). `costs less <= e`
+   bounds how many times a run calls `less`: each call of `less` counts
+   one, and a call of any other function adds that function's own bound on
+   `less`. A callee with no clause has one when it cannot call `less` at
+   all, whatever loops it has, or when it has no loop and no recursion.
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+let less (a : u32) (b : u32) : bool = a < b
+
+(* One comparison per element. *)
+let count_below (xs : [u32]) (v : u32) : usize
+  ensures result <= len xs
+  costs less <= len xs
+=
+  let n : mutable usize = 0 in
+  for i in 0..len xs invariant n <= i && spent less <= i do
+    if less xs.[i] v then n <- n + 1
+  done;
+  n
+
+(* No loop and no recursion: one call of `less`, without a clause. *)
+let max2 (a : u32) (b : u32) : u32 = if less a b then b else a
+
+let max3 (a : u32) (b : u32) (c : u32) : u32
+  costs less <= 2
+= max2 (max2 a b) c
+
+(* `total` has a loop but never calls `less`, so it adds nothing. *)
+let total (xs : [u8]) : u64
+  requires len xs <= 1000
+=
+  let s : mutable u64 = 0 in
+  for i in 0..len xs invariant s <= 255 * i do s <- s + xs.[i] done;
+  s
+
+let heavier (xs : [u8]) (a : u32) (b : u32) : bool
+  requires len xs <= 1000
+  costs less <= 1
+= total xs > 10 && less a b
+
+(* A recursive function's own bound holds at its recursive call, by
+   induction on its measure. *)
+let rec compare_n (n : u8) : unit
+  costs less <= n
+  decreases n
+= if n = 0 then () else if less 1 2 then compare_n (n - 1) else compare_n (n - 1)
+
+(* Expected report.
+// CHECK-DAG: cost_functions.pia:14:3: proved: the cost on less is within its bound [smt]
+// CHECK-DAG: cost_functions.pia:26:3: proved: the cost on less is within its bound [{{smt|intervals}}]
+// CHECK-DAG: cost_functions.pia:39:3: proved: the cost on less is within its bound [{{smt|intervals}}]
+// CHECK-DAG: cost_functions.pia:45:3: proved: the cost on less is within its bound [smt]
+// CHECK: 0 failed
+*)

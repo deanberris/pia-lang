@@ -1385,6 +1385,11 @@ class Gen {
         fn->setAttr("pia.import_ghost", b_.getStringAttr(isSpec    ? "spec"
                                                          : isLemma ? "lemma"
                                                                    : "axiom"));
+      // An imported collective is split into phases at like a local one:
+      // codegen calls it once for the whole spread (ADR 0086). Its module
+      // checked its `@collective`.
+      if (collectiveAttrOf(&item))
+        fn->setAttr("pia.collective", b_.getUnitAttr());
       genImport(item, sig, fn);
       return;
     }
@@ -1881,11 +1886,12 @@ class Gen {
                  "cost; a cost clause belongs on code");
         return false;
       }
-      if (c->text != "iterations" && c->text != "calls") {
+      if (!isEventCounter(c->text) && !isCountedFunction(c->text)) {
         fail(*c, "'" + c->text +
-                     "' is not a counter yet: a cost clause "
-                     "counts 'iterations' or 'calls', and the calls of a "
-                     "function come later (ADR 0062)");
+                     "' is not a counter: a cost clause counts "
+                     "'iterations', 'calls' or the calls of a function of "
+                     "this module, and function parameters and concept "
+                     "requirements come later (ADR 0062)");
         return false;
       }
       for (const Counter &k : costs_)
@@ -1912,6 +1918,68 @@ class Gen {
       b_.getBlock()->getParentOp()->setAttr("pia.costs", b_.getUnitAttr());
     }
     return true;
+  }
+
+  static bool isEventCounter(llvm::StringRef counter) {
+    return counter == "iterations" || counter == "calls";
+  }
+
+  // Whether `name` is a function of this module that code calls, whose
+  // calls a cost clause can count (ADR 0062, section 2).
+  bool isCountedFunction(const std::string &name) {
+    for (const auto &[symbol, sig] : sigs_)
+      if (sig.item && sig.item->text == name && !hasFlag(*sig.item, "spec") &&
+          !hasFlag(*sig.item, "lemma"))
+        return true;
+    return false;
+  }
+
+  // Whether a call of `sig` is itself an event on `counter`: every call of
+  // code is one on `calls`, and a call of `f` one on `f`.
+  static bool isEvent(const sema::FuncSig &sig, const std::string &counter) {
+    if (counter == "calls")
+      return true;
+    return !isEventCounter(counter) && sig.item && sig.item->text == counter;
+  }
+
+  // Whether running `r` may call the function `counter`: a call of it, a
+  // call of a function that may, or a call through a reference, which may
+  // be to anything. A callee that cannot spends nothing on it, loops and
+  // recursion included.
+  bool mayReach(mlir::Region &r, const std::string &counter,
+                std::set<std::string> &seen) {
+    bool found = false;
+    r.walk([&](mlir::Operation *op) {
+      if (found)
+        return mlir::WalkResult::interrupt();
+      if (mlir::isa<mlir::func::CallIndirectOp>(op)) {
+        found = true;
+        return mlir::WalkResult::interrupt();
+      }
+      auto call = mlir::dyn_cast<mlir::func::CallOp>(op);
+      if (!call)
+        return mlir::WalkResult::advance();
+      std::string g = call.getCallee().str();
+      if (sourceName(g) == counter || mayReach(g, counter, seen)) {
+        found = true;
+        return mlir::WalkResult::interrupt();
+      }
+      return mlir::WalkResult::advance();
+    });
+    return found;
+  }
+
+  bool mayReach(const std::string &symbol, const std::string &counter,
+                std::set<std::string> &seen) {
+    if (!seen.insert(symbol).second)
+      return false;
+    auto f = module_.lookupSymbol<mlir::func::FuncOp>(symbol);
+    // A function of another module or of C cannot call one of this
+    // module's by name; one it was given is a reference, called here.
+    if (!f || f.isExternal() || f->hasAttr("pia.extern") ||
+        f->hasAttr(PiaDialect::getImportAttrName()))
+      return false;
+    return mayReach(f.getBody(), counter, seen);
   }
 
   // At the return: what the body spent is within the bound, a contract
@@ -1974,7 +2042,7 @@ class Gen {
         c->setAttr("pia.cost_caller", b_.getStringAttr(costSymbol_));
         costSites_[c] = n.loc;
       }
-      if (k.name == "calls")
+      if (isEvent(sig, k.name))
         part = addCost(l, part, counterConst(l, 1));
       k.spent->value = addCost(l, k.spent->value, part);
     }
@@ -2028,6 +2096,13 @@ class Gen {
     // A C function has no loop of Pia's: its call is the event.
     if (f->hasAttr("pia.extern"))
       return 0;
+    // A callee that cannot call the counted function spends nothing on it,
+    // whatever loops or recursion it has.
+    if (!isEventCounter(counter)) {
+      std::set<std::string> seen;
+      if (!mayReach(symbol, counter, seen))
+        return 0;
+    }
     if (f->hasAttr(PiaDialect::getImportAttrName()) || f.isExternal()) {
       why = "is defined in another module";
       return std::nullopt;
@@ -2055,6 +2130,12 @@ class Gen {
         if (op.getName().getDialectNamespace() == "pia_contract")
           continue;
         if (mlir::isa<mlir::scf::ForOp, mlir::scf::WhileOp>(op)) {
+          std::set<std::string> seen;
+          bool reaches = isEventCounter(counter);
+          for (mlir::Region &inner : op.getRegions())
+            reaches = reaches || mayReach(inner, counter, seen);
+          if (!reaches)
+            continue;
           why = "has a loop";
           return std::nullopt;
         }
@@ -2095,7 +2176,7 @@ class Gen {
             }
             part = *c;
           }
-          if (counter == "calls")
+          if (counter == "calls" || sourceName(g) == counter)
             part = satAdd(part, 1);
           total = satAdd(total, part);
           continue;
@@ -3046,6 +3127,12 @@ class Gen {
       sema::FuncSig &sig = *set[0];
       if (sig.isGeneric())
         return genGenericCall(n, sig, nullptr, {}, expected);
+      // A distinct arrow type is made only by applying it (ADR 0064).
+      if (!sig.params.empty() && arrowField(expected)) {
+        std::string t = typeName(expected);
+        return fail(n, "'" + n.text + "' is a function, not a value of " + t +
+                           "; write '" + t + " " + n.text + "' (ADR 0071)");
+      }
       if (!sig.params.empty())
         return fail(n, "functions as values are not supported yet; apply '" +
                            n.text + "' to all its arguments");
@@ -4895,6 +4982,18 @@ class Gen {
       if (BindingPtr h = lookup(fn.text);
           mlir::isa<mlir::FunctionType>(h->type))
         return genReferenceCall(n, h, expected);
+    // `f x` for `f` of a distinct arrow type calls through its one field.
+    if (local && !targs)
+      if (BindingPtr f = lookup(fn.text); arrowField(f->type)) {
+        auto field =
+            syntax::makeNode(NodeKind::Field, fn.loc, *arrowField(f->type));
+        field->add(syntax::clone(fn));
+        auto call = syntax::makeNode(NodeKind::Apply, n.loc);
+        call->add(std::move(field));
+        for (size_t i = 1; i < n.kids.size(); ++i)
+          call->add(syntax::clone(*n.kids[i]));
+        return genFieldReferenceCall(*keep(std::move(call)));
+      }
     // `g x` for a function object `g` is `apply g x` (ADR 0044, section 4).
     if (local && !targs)
       if (BindingPtr g = lookup(fn.text);
@@ -5090,7 +5189,8 @@ class Gen {
       // counter its cost clause bounds (ADR 0062).
       if (fn.text == "spent" && argc == 1 &&
           n.kids[1]->kind == NodeKind::Name &&
-          (n.kids[1]->text == "iterations" || n.kids[1]->text == "calls")) {
+          (isEventCounter(n.kids[1]->text) ||
+           isCountedFunction(n.kids[1]->text))) {
         const std::string &c = n.kids[1]->text;
         if (!spentOk_)
           return fail(n, "'spent " + c +
@@ -12015,6 +12115,21 @@ class Gen {
                 return f.buf == at;
               });
         }
+      // A read-only argument, which is checked at the call: the buffer
+      // must be published there (ADR 0086).
+      if (!passed && parent && parent->kind == NodeKind::Apply &&
+          parent->kids[0]->kind == NodeKind::Name &&
+          parent->kids[0].get() != &n) {
+        size_t at = 0;
+        for (size_t k = 1; k < parent->kids.size(); ++k)
+          if (parent->kids[k].get() == &n)
+            at = k - 1;
+        auto set = overloadSet(parent->kids[0]->text);
+        passed = !set.empty() && llvm::all_of(set, [&](const sema::FuncSig *f) {
+          return !f->isGeneric() && at < f->params.size() &&
+                 readOnlyParam(f->params[at]);
+        });
+      }
       // A collective's argument, which publishes the buffer: a collective
       // takes no out or inout parameter, so it reads the buffer once every
       // iteration has written its cells (ADR 0086).
@@ -12156,6 +12271,14 @@ class Gen {
   // A buffer that a spread writes, or that a function owns, passed to a
   // call: the callee must own it by the same owner array, and the goal is
   // that it touches the iteration's cells, `b = i` (ADR 0060).
+  // Whether a call reads a buffer parameter and never writes it.
+  static bool readOnlyParam(const sema::Param &p) {
+    return !sema::hasModifier(p.modifiers, "mutable") &&
+           !sema::hasModifier(p.modifiers, "out") &&
+           !sema::hasModifier(p.modifiers, "inout") &&
+           !sema::hasModifier(p.modifiers, "moved");
+  }
+
   bool checkFootprintCall(const Node &n, const sema::FuncSig &sig,
                           const std::vector<const Node *> &args) {
     // A collective's buffer arguments are published, not written: it takes
@@ -12170,15 +12293,29 @@ class Gen {
       BindingPtr buf = lookup(arg.text);
       if (!buf || !spread_->outside.count(buf.get()))
         continue;
-      if (spread_->halo.count(arg.text))
+      if (spread_->halo.count(arg.text)) {
+        // A published buffer may be read by every iteration, so it may be
+        // passed where the callee only reads it (ADR 0086).
+        if (i < sig.params.size() && readOnlyParam(sig.params[i]))
+          continue;
         return fail(arg, "'" + arg.text +
                              "' was published by a collective, so no "
                              "iteration may write it until the next "
                              "collective (ADR 0086)"),
                false;
+      }
       auto fp =
           llvm::find_if(fps, [&](const Footprint &f) { return f.buf == i; });
       auto owner = spread_->owners.find(arg.text);
+      if (fp == fps.end() && i < sig.params.size() &&
+          readOnlyParam(sig.params[i]))
+        return fail(arg, "'" + arg.text + "' is written in this spread, so '" +
+                             sig.name +
+                             "' could read a cell another iteration is "
+                             "writing: pass it after a collective publishes "
+                             "it (ADR 0086), or give '" +
+                             sig.name + "' a footprint, @owns (ADR 0060)"),
+               false;
       if (fp == fps.end())
         return fail(arg, "'" + arg.text + "' is passed to '" + sig.name +
                              "', which has no footprint for it: give it "
@@ -12611,7 +12748,10 @@ class Gen {
                            "' must be a collective with the same range and "
                            "gathered parameters (ADR 0086)");
     size_t written = llvm::count(ranges, false);
-    if (n.kids.size() - 1 != written)
+    // `barrier ()`: a collective with no parameters, called with unit.
+    bool unitCall =
+        written == 0 && n.kids.size() == 2 && n.kids[1]->kind == NodeKind::Unit;
+    if (n.kids.size() - 1 != written && !unitCall)
       return fail(n, "'" + name + "' takes " + plural(written, "argument") +
                          ", given " + std::to_string(n.kids.size() - 1) +
                          "; its range is the spread's, which the call "
@@ -12734,6 +12874,8 @@ class Gen {
       bind(tmp, xs, st, false);
       call->add(syntax::makeNode(NodeKind::Name, arg.loc, tmp));
     }
+    if (unitCall)
+      call->add(syntax::clone(*n.kids[1]));
     spreadBarrier(l);
     const Node &c = *keep(std::move(call));
     const Node *saved = inCollective_;
@@ -13815,13 +13957,38 @@ class Gen {
                 : RecordType();
   }
 
+  // The field of a distinct arrow type (ADR 0071, amendment of
+  // 2026-11-28), a record whose one field holds a function reference, or
+  // none for any other type.
+  std::optional<std::string> arrowField(Type t) {
+    auto rt = mlir::dyn_cast_or_null<RecordType>(t);
+    if (!rt || types_.isVariant(rt) || rt.getFieldNames().size() != 1 ||
+        !mlir::isa<mlir::FunctionType>(rt.getFieldTypes()[0]))
+      return std::nullopt;
+    std::string field = rt.getFieldNames()[0].str();
+    if (!llvm::StringRef(field).starts_with("raw#") ||
+        !types_.fieldArrow(rt.getName().str(), field))
+      return std::nullopt;
+    return field;
+  }
+
   // `r.op x` through a function reference field: a call of the field's
-  // proxy, which every record with this field shares.
+  // proxy, which every record with this field shares. A field of a
+  // distinct arrow type is called through that type's own field.
   R genFieldReferenceCall(const Node &n) {
-    const Node &fn = *n.kids[0];
-    R f = genField(fn);
+    const Node *fnp = n.kids[0].get();
+    R f = genField(*fnp);
     if (!f)
       return f;
+    if (std::optional<std::string> inner = arrowField(f->type)) {
+      auto field = syntax::makeNode(NodeKind::Field, fnp->loc, *inner);
+      field->add(syntax::clone(*fnp));
+      fnp = keep(std::move(field));
+      f = genField(*fnp);
+      if (!f)
+        return f;
+    }
+    const Node &fn = *fnp;
     auto ft = mlir::dyn_cast<mlir::FunctionType>(f->type);
     if (!ft)
       return fail(fn, "'." + fn.text + "' is " + typeName(f->type) +

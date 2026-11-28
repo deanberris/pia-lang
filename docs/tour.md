@@ -648,6 +648,22 @@ let has (xs : [u32]) (v : u32) : bool
 
 `has` proves its bounds from `find`'s, without looking at its loop. A function that calls one with a loop and no bound cannot bound its own cost, and that is an error that names the callee.
 
+A counter can also be a function of the module: `costs less <= e` counts the calls of `less`, the way C++ states its complexity in comparisons. A callee that cannot call `less` at all adds nothing, whatever loops it has, so only the code on the way to `less` needs a bound:
+
+```ocaml
+let less (a : u32) (b : u32) : bool = a < b
+
+let count_below (xs : [u32]) (v : u32) : usize
+  ensures result <= len xs
+  costs less <= len xs
+=
+  let n : mutable usize = 0 in
+  for i in 0..len xs invariant n <= i && spent less <= i do
+    if less xs.[i] v then n <- n + 1
+  done;
+  n
+```
+
 ## Function values
 
 A nameless `let` is a function literal, a lambda: there is no `fun` keyword. A parameter with a function type, `(p : u8 -> bool)`, takes a lambda or the name of a top-level function. Each call compiles to its own copy of the function with the argument called directly, so a lambda costs what writing its body in the loop would ([ADR 0044](adr/0044-function-values-and-lambdas.md)).
@@ -848,7 +864,24 @@ let install (t : inout [handler; 4]) : unit =
   t.[2].f <- t.[1].f
 ```
 
-A variant carries a reference the same way, as a constructor's record payload, `| Run of step` with `step` such a record, and `option step` is a reference that may be missing. A stored reference takes and returns integers, bools and floats for now. Copies of a mutable reference into a local, `option (u8 -> u8)` as one nullable address, and references passed to C come later.
+A variant carries a reference the same way, as a constructor's record payload, `| Run of step` with `step` such a record. To give an arrow and its contract a name of their own, make it a type: `type` over an arrow is a new type ([ADR 0064](adr/0064-distinct-types.md)) whose contract is part of it, so `option op` is a reference with a contract that may be missing, and two arrows with different contracts are never one type. `op succ` makes an `op`, checking `succ` against the arrow there, and an `op` is called like a function:
+
+```ocaml
+let option = let (t : type) => type | None | Some of t
+
+let succ (x : u8) : u8 requires x < 255 ensures result = x + 1 = (x + 1)
+
+let op = type (x : u8) -> u8 requires x < 100 ensures result > x
+
+let run (h : option op) (y : u8) : u8 requires y < 100 ensures result >= y =
+  match h with
+  | Some f -> f y
+  | None -> y
+
+let start () : option op = Some (op succ)
+```
+
+A function's name is never an `op` by itself: `let h : op = succ` is an error that suggests `op succ`. A stored reference takes and returns integers, bools and floats for now. Copies of a mutable reference into a local, `option (u8 -> u8)` of a bare arrow, `option` laid out as one nullable address, and references passed to C come later.
 
 ## Parallel loops
 
@@ -934,7 +967,7 @@ let share (xs : [u32]) (ys : out mutable [u64]) : unit
 
 In the spread, each iteration knows its own argument's cell of the gathered array, so `sum`'s postcondition says `total` is at least `xs.[i]`, which proves the subtraction, and `sum`'s precondition is a goal on the spread's range. `Pia.Par` defines the usual collectives this way: `sum`, `least`, `most`, `any`, `every` and `exchange` ([Library](library.md)).
 
-Every iteration must reach the same collectives in the same order, or the others would wait forever, and piac checks this as it reads the body: an `if` or `for` around a collective must have a condition or range that is the same in every iteration, computed from names bound before the spread, collective results and buffers no iteration writes, and so must every argument it does not gather. `if i = 0 then exchange a else ()` is a compile error at the collective, naming the condition. A value an iteration computes before a collective and uses after it is an error too, with a hint to keep it in a cell the iteration owns: codegen runs the code between collectives as its own parallel loop, so the join at its end is the barrier, and no new runtime is needed.
+Every iteration must reach the same collectives in the same order, or the others would wait forever, and piac checks this as it reads the body: an `if` or `for` around a collective must have a condition or range that is the same in every iteration, computed from names bound before the spread, collective results and buffers no iteration writes, and so must every argument it does not gather. `if i = 0 then exchange a else ()` is a compile error at the collective, naming the condition. A value an iteration computes before a collective and uses after it is an error too, with a hint to keep it in a cell the iteration owns: codegen runs the code between collectives as its own parallel loop, so the join at its end is the barrier, and no new runtime is needed. A buffer the spread writes may be passed to a function only while a collective has published it, and only to a parameter the function reads (no `mutable`, `out`, `inout` or `moved`); before that, piac rejects the call, since the function could read a cell another iteration is writing. [pull_spread.pia.md](pull_spread.pia.md) passes the published loads to its `gather` this way.
 
 ## Metaprograms
 
@@ -1016,7 +1049,7 @@ let describe (v : dyn) : str =
   | _         -> "other"
 ```
 
-**Tiles.** `spread`, `@place(gpu)` and collectives (`@collective`) are built ([Collectives](#collectives)); tiled grids with halo rows, and `@place(auto)`, which lets the compiler choose the device, are not:
+**Tiles.** `spread`, `@place(gpu)` and collectives (`@collective`) are built ([Collectives](#collectives)), and the sediment step runs as one spread with collectives between its waves ([pull_spread.pia.md](pull_spread.pia.md)); tiled grids with halo rows, and `@place(auto)`, which lets the compiler choose the device, are not:
 
 <!-- untested: tiled grids and @place(auto) are not implemented yet -->
 ```ocaml
