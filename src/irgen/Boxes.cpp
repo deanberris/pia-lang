@@ -6,6 +6,7 @@
 #include <set>
 #include <vector>
 
+#include "syntax/Interfaces.h"
 #include "syntax/Lexer.h"
 #include "syntax/Parser.h"
 
@@ -260,39 +261,55 @@ std::string erasedSource(const std::string &cname, const Node &concept,
             (p.receiver ? recvType : p.type) + ")";
     return ps;
   };
-  std::string src = "@trusted\n";
-  src += "let theory " + theory + " = sig\n";
-  for (const Requirement &q : reqs) {
-    if (!q.why.empty()) continue;
-    std::string sig;
-    for (const Param &p : q.params)
-      sig += "(" + (p.receiver ? self : p.name) + " : " +
-             (p.receiver ? boxType : p.type) + ") -> ";
-    src += "  let spec " + q.name + "_of : " + sig + q.result + "\n";
-  }
-  for (const Requirement &q : reqs) {
-    bool ensures = false;
-    for (const Node *c : q.contracts) ensures |= c->kind == NodeKind::Ensures;
-    if (!q.why.empty() || !ensures) continue;
-    std::map<std::string, std::string> rename = inTheory;
-    std::string recv;
-    for (const Param &p : q.params)
-      if (p.receiver) recv = p.name;
-    rename[recv] = self;
-    rename["result"] = "(" + q.name + "_of" + args(q, self) + ")";
-    src += "  let axiom " + q.name + "_contract" + params(q, boxType) +
-           rewritten(q.contracts, rename) + "\n";
-  }
-  for (const Law &l : laws) {
-    std::map<std::string, std::string> rename = inTheory;
-    src += "  let axiom " + l.name + "_law (" + l.param + " : " + boxType +
-           ")" + rewritten(l.contracts, rename) + "\n";
-  }
-  src += "end\n\n";
+  // The theory of the box's erased requirements, over `recvType`: the
+  // box's own, and a copy over a one-byte shape for the consistency check.
+  auto theorySource = [&](const std::string &name,
+                          const std::string &recvType) {
+    std::string out = "let theory " + name + " = sig\n";
+    for (const Requirement &q : reqs) {
+      if (!q.why.empty())
+        continue;
+      std::string sig;
+      for (const Param &p : q.params)
+        sig += "(" + (p.receiver ? self : p.name) + " : " +
+               (p.receiver ? recvType : p.type) + ") -> ";
+      out += "  let spec " + q.name + "_of : " + sig + q.result + "\n";
+    }
+    for (const Requirement &q : reqs) {
+      bool ensures = false;
+      for (const Node *c : q.contracts)
+        ensures |= c->kind == NodeKind::Ensures;
+      if (!q.why.empty() || !ensures)
+        continue;
+      std::map<std::string, std::string> rename = inTheory;
+      std::string recv;
+      for (const Param &p : q.params)
+        if (p.receiver)
+          recv = p.name;
+      rename[recv] = self;
+      rename["result"] = "(" + q.name + "_of" + args(q, self) + ")";
+      out += "  let axiom " + q.name + "_contract" + params(q, recvType) +
+             rewritten(q.contracts, rename) + "\n";
+    }
+    for (const Law &l : laws) {
+      std::map<std::string, std::string> rename = inTheory;
+      out += "  let axiom " + l.name + "_law (" + l.param + " : " + recvType +
+             ")" + rewritten(l.contracts, rename) + "\n";
+    }
+    return out + "end\n\n";
+  };
+  std::string src = "@trusted\n" + theorySource(theory, boxType);
+  // Its axioms speak of one box at a time and never of the box's words, so
+  // they are consistent over the box exactly when they are over any other
+  // inhabited type: the check runs over a one-byte shape, whose cost does
+  // not grow with the box (#563).
+  if (closed)
+    src += "let " + boxType + "_shape = type { tag : u8 }\n\n" +
+           theorySource(theory + "_shape", boxType + "_shape");
   // The box: before the module's widened types are known, a stand-in; then
   // one cache line of words (the cache-line amendment): the descriptor's
   // address, then the object.
-  if (!closed || closed->empty()) {
+  if (!closed) {
     src += "let " + boxType + " = type { tag : u8 }\n\n";
   } else {
     src += "let " + boxType + " = type {";
@@ -341,7 +358,7 @@ std::string erasedSource(const std::string &cname, const Node &concept,
     src += "let " + call + params(q, boxType) + " : " + q.result +
            requires(onSelf) + "\n  ensures result = " + theory + "." + q.name +
            "_of" + args(q, self) + "\n= abort ()\n\n";
-    if (closed && !closed->empty()) {
+    if (closed) {
       BoxOp op;
       op.kind = BoxOp::Call;
       op.entry = static_cast<int>(
@@ -373,7 +390,7 @@ std::string erasedSource(const std::string &cname, const Node &concept,
   }
   // The use check, the constraint `C t`, at each instance of widen.
   std::string full = "\n  requires len b.slot = 1 && b.state = 1";
-  if (!closed || closed->empty()) {
+  if (!closed) {
     src += "let widen (t : type where " + cname + " t) (b : " + box + " t) : " +
            boxType + full + "\n= { tag = 0 }\n";
   } else {
@@ -467,30 +484,25 @@ void expandErasedBoxes(
     rewriteTypes(*item, false, unsized, cs, used, diags);
   }
   if (diags.hasErrors() || used.empty()) return;
-  // A box's layout is this module's union of the types it widens (step
-  // 5), so another Pia module cannot share it until the table layout of
-  // step 6: an interface may not show it, except to C (@abi(c)), whose
-  // callers take the documented layout.
+  // A box is one cache line whose layout is the target's and whose
+  // descriptor's is the concept's (the cache-line amendment), so another
+  // module that sees the concept makes the same box: an interface may show
+  // one, and a module may box values of a concept it imports. To C
+  // (@abi(c)) the box is a type of its own, an opaque block of that size.
   for (NodePtr &item : program.kids) {
     if (item->kind != NodeKind::Interface) continue;
     bool c = false;
     for (const NodePtr &k : item->kids)
       if (k->kind == NodeKind::Attrs)
         for (const NodePtr &a : k->kids) c |= a->text == "abi";
+    if (!c)
+      continue;
     std::set<std::string> shown;
     for (const NodePtr &k : item->kids)
       if (k->kind == NodeKind::SigVal || k->kind == NodeKind::SigType)
         for (const std::string &u : used)
-          if (mentionsName(*k, "box_" + mangle(u))) {
-            if (!c) {
-              diags.error(k->loc, "'" + k->text + "' shows a box over '" + u +
-                                  "' to other modules, whose layout is this "
-                                  "module's for now: a box crosses modules "
-                                  "with the table layout of ADR 0046, step 6");
-              continue;
-            }
+          if (mentionsName(*k, "box_" + mangle(u)))
             shown.insert("box_" + mangle(u));
-          }
     for (const std::string &b : shown) {
       syntax::Diagnostics local;
       NodePtr sig = syntax::parseProgram(
@@ -501,13 +513,6 @@ void expandErasedBoxes(
           item->kids.push_back(std::move(k));
     }
   }
-  // Nor may this module box an imported concept's values for another.
-  for (const NodePtr &item : program.kids)
-    if (item->kind == NodeKind::Import)
-      for (const std::string &u : used)
-        if (cs.count(u) && item->text.find(u) != std::string::npos)
-          diags.error(item->loc, "a box over '" + u + "' from another module "
-                                 "needs the table layout of ADR 0046, step 6");
   if (diags.hasErrors()) return;
   if (source.empty()) {
     diags.error(program.loc, "a box over a concept needs the program's "
@@ -522,9 +527,32 @@ void expandErasedBoxes(
     std::map<std::string, std::string> whyNot;
     std::map<std::string, BoxOp> ops;
     const std::vector<std::string> *closed = nullptr;
-    if (widened)
-      if (auto w = widened->find(c); w != widened->end()) closed = &w->second;
-    std::string src = erasedSource(c, *cs.at(c), box, text, whyNot, closed,
+    // The second pass knows what the module widens, which may be nothing:
+    // a box it only receives, from a module that boxed values.
+    static const std::vector<std::string> none;
+    if (widened) {
+      auto w = widened->find(c);
+      closed = w != widened->end() ? &w->second : &none;
+    }
+    // An imported concept's nodes sit at the import, so its requirements'
+    // contracts are read from its interface artifact's text instead.
+    const Node *concept = cs.at(c);
+    Text *from = &text;
+    std::string definition = syntax::importedDefinitionText(c);
+    NodePtr reread;
+    Text imported{definition, {}};
+    if (!definition.empty()) {
+      syntax::Diagnostics quiet;
+      reread = syntax::parseProgram(definition, quiet);
+      if (!quiet.hasErrors() && reread && !reread->kids.empty() &&
+          syntax::isConceptItem(*reread->kids[0])) {
+        syntax::LexOptions lexImported;
+        imported.tokens = syntax::tokenize(definition, quiet, lexImported);
+        concept = reread->kids[0].get();
+        from = &imported;
+      }
+    }
+    std::string src = erasedSource(c, *concept, box, *from, whyNot, closed,
                                    words, ops, diags);
     if (diags.hasErrors()) return;
     syntax::Diagnostics local;
@@ -537,10 +565,12 @@ void expandErasedBoxes(
     }
     for (NodePtr &k : extra->kids) {
       if (k->kind == NodeKind::FileAttr) continue;
-      // Its axioms hold of every type `widen` boxes, by the use check.
-      // Once it boxes a type, that type is a model of them.
+      // Its axioms hold of every type `widen` boxes, by the use check. The
+      // box's theory is consistent when its shape's is, which the verifier
+      // checks, so only the shape's is checked.
       if (k->kind == NodeKind::Theory)
-        k->flags = closed && !closed->empty() ? "box modelled" : "box";
+        k->flags =
+            closed && k->text == "erased_" + mangle(c) ? "box modelled" : "box";
       // A function whose body is a box's own op: a proxy to the verifier.
       if (k->kind == NodeKind::LetItem)
         if (auto o = ops.find(k->text); o != ops.end()) {

@@ -1,0 +1,42 @@
+(* A box over a concept crosses modules (ADR 0046, the cache-line
+   amendment, step 2). Raise's io_error has a case `Cxx of box Exception`;
+   this module boxes errors of its own type, timeout, in that case, and
+   handles both its own and Raise's through the box, calling Exception's
+   `code` proved from the concept's contract alone. A box is one cache line
+   whose descriptor's layout is the concept's, so both modules make the
+   same box from the concept they share.
+// RUN: piac --emit=interface -o %t %S/Inputs/raises.pia
+// RUN: piac --verify --no-lint %S/Inputs/raises.pia | FileCheck --check-prefix=LIB %s
+// RUN: piac --verify --no-lint --iface-path=%t %s | FileCheck %s
+*)
+import Raise.Errors
+
+let box = let (@unsized t : type) (r : region) => type { slot : borrowed(r) mutable [t]; state : int }
+
+let timeout = type { ms : u32 }
+let code (e : timeout) : u32 ensures result > 0 = if e.ms = 0 then 1 else e.ms
+
+let late (to : borrowed mutable [timeout]) (x : u8) : result u8 Raise.io_error
+  requires len to = 1
+  ensures (match result with | Ok v -> v = x | Err _ -> true)
+= if x = 3 then
+    (to.[0] <- { ms = 30 };
+     let b : box timeout = { slot = to; state = 1 } in
+     Err (Cxx (widen b)))
+  else Ok x
+
+let status (nf : borrowed mutable [Raise.not_found]) (to : borrowed mutable [timeout]) (x : u8) : u32
+  requires len nf = 1 && len to = 1
+  ensures result > 0
+= (let v = Raise.fail nf x? in
+   let w = late to v? in 1
+   handle
+   | Closed -> 2
+   | Cxx e -> code e)
+
+(*
+// LIB-NOT: failed
+// LIB: 0 failed
+// CHECK-NOT: failed
+// CHECK: 0 failed
+*)
