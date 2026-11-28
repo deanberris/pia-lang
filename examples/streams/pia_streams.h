@@ -102,8 +102,8 @@ uint64_t pull_step_spread(const uint16_t *fill, uint64_t nfill,
                           const uint64_t *pos, uint64_t npos, uint64_t w,
                           const uint32_t *bed0, uint64_t nbed0, uint32_t *bed,
                           uint64_t nbed, uint32_t *flux, uint64_t nflux,
-                          uint64_t *gathered, uint64_t ngathered,
-                          uint32_t *wave, uint64_t nwave);
+                          uint64_t *seen, uint64_t nseen, uint64_t *gathered,
+                          uint64_t ngathered, uint32_t *wave, uint64_t nwave);
 // examples/streams/gif.pia.
 uint64_t gif_bound(uint16_t w, uint16_t h, uint16_t nf);
 uint64_t gif_animation(uint16_t w, uint16_t h, const uint8_t *pal,

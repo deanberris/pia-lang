@@ -114,6 +114,10 @@ interface PullWaves = sig
       -> (q : usize) -> (hi : usize) -> bool
   let spec ready_vals : (fill : [u16]) -> (down : [usize]) -> (acc : [u32]) -> (order : [usize]) -> (bed0 : [u32])
       -> (gathered : [u64]) -> (newbed : [u32]) -> (newout : [u32]) -> (q : usize) -> (hi : usize) -> bool
+  let spec holds : (fill : [u16]) -> (down : [usize]) -> (acc : [u32]) -> (bed0 : [u32]) -> (bed : [u32])
+      -> (flux : [u32]) -> (seen : [u64]) -> (c : usize) -> bool
+  let spec settled : (fill : [u16]) -> (down : [usize]) -> (acc : [u32]) -> (bed0 : [u32]) -> (bed : [u32])
+      -> (flux : [u32]) -> (seen : [u64]) -> bool
   let spec settled_if : (fill : [u16]) -> (down : [usize]) -> (acc : [u32]) -> (bed0 : [u32]) -> (bed : [u32])
       -> (flux : [u32]) -> (seen : [u64]) -> bool
   let spec linked : (down : [usize]) -> (flux : [u32]) -> (seen : [u64]) -> (w : usize) -> bool
@@ -173,6 +177,23 @@ interface PullWaves = sig
     ensures result = g0 + osum order down flux hi
     ensures done_if_upto fill down acc bed0 bed flux seen pos hi
     ensures linked_upto down flux seen pos hi w
+  let lemma same_step : (fill : [u16]) -> (down : [usize]) -> (acc : [u32]) -> (order : [usize]) -> (pos : [usize])
+      -> (w : usize) -> (bed0 : [u32]) -> (ba : [u32]) -> (fa : [u32]) -> (sa : [u64]) -> (ga : u64)
+      -> (bb : [u32]) -> (fb : [u32]) -> (sb : [u64]) -> (gb : u64) -> (gone : u64) -> unit
+    requires len down = len fill && len acc = len fill && len order = len fill && len pos = len fill && len bed0 = len fill
+    requires len ba = len fill && len fa = len fill && len sa = len fill
+    requires len bb = len fill && len fb = len fill && len sb = len fill
+    requires w >= 3 && w < max usize && len fill <= max u32
+    requires forall (r in 0 .. len order). order.[r] < len pos && pos.[order.[r]] = r
+    requires forall (k in 0 .. len pos). pos.[k] < len order && order.[pos.[k]] = k
+    requires forall (a in 0 .. len order) (b in 0 .. len order). a < b ==> fill.[order.[b]] <= fill.[order.[a]]
+    requires forall (k in 0 .. len down). down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k])
+    requires forall (k in 0 .. len down). down.[k] < len fill
+    requires settled fill down acc bed0 ba fa sa && linked down fa sa w
+    requires settled_if fill down acc bed0 bb fb sb && linked down fb sb w
+    requires ga = gone + osum order down fa (len fill) && gb = gone + osum order down fb (len fill)
+    ensures forall (k in 0 .. len fill). ba.[k] = bb.[k] && fa.[k] = fb.[k]
+    ensures ga = gb
   let wave_end : (fill : [u16]) -> (order : [usize]) -> (lo : usize) -> usize
     requires len order = len fill && lo < len fill
     requires forall (r in 0 .. len order). order.[r] < len fill
@@ -1769,20 +1790,6 @@ The theorem: from the same bed, the pull step and the sequential step leave the 
 ```pia
 let lemma same_step (fill : [u16]) (down : [usize]) (acc : [u32]) (order : [usize]) (pos : [usize]) (w : usize) (bed0 : [u32])
     (ba : [u32]) (fa : [u32]) (sa : [u64]) (ga : u64) (bb : [u32]) (fb : [u32]) (sb : [u64]) (gb : u64) (gone : u64) : unit
-  requires len down = len fill && len acc = len fill && len order = len fill && len pos = len fill && len bed0 = len fill
-  requires len ba = len fill && len fa = len fill && len sa = len fill
-  requires len bb = len fill && len fb = len fill && len sb = len fill
-  requires w >= 3 && w < max usize && len fill <= max u32
-  requires forall (r in 0 .. len order). order.[r] < len pos && pos.[order.[r]] = r
-  requires forall (k in 0 .. len pos). pos.[k] < len order && order.[pos.[k]] = k
-  requires forall (a in 0 .. len order) (b in 0 .. len order). a < b ==> fill.[order.[b]] <= fill.[order.[a]]
-  requires forall (k in 0 .. len down). down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k])
-  requires forall (k in 0 .. len down). down.[k] < len fill
-  requires settled fill down acc bed0 ba fa sa && linked down fa sa w
-  requires settled_if fill down acc bed0 bb fb sb && linked down fb sb w
-  requires ga = gone + osum order down fa (len fill) && gb = gone + osum order down fb (len fill)
-  ensures forall (k in 0 .. len fill). ba.[k] = bb.[k] && fa.[k] = fb.[k]
-  ensures ga = gb
 = both_if fill down acc bed0 ba fa sa bb fb sb;
   agree fill down order pos ba fa sa bb fb sb w (len fill);
   use_upto pos ba fa bb fb (len fill);
