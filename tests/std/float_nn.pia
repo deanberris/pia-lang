@@ -1,0 +1,15 @@
+(* Pia.Float.Nn (ADR 0067, K2): every goal of the module is proved, the
+   softmax's sum through Pia.Float.Error.sum and lemmas by induction over
+   the prefix, and its interface gives each kernel's bounds.
+// RUN: FileCheck %s < %S/../../lib/Pia/Float/nn.goals
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Float/Nn.pia
+// RUN: FileCheck --check-prefix=IFACE %s < %t/Pia.Float.Nn.Nn.piai
+*)
+
+(* CHECK-NOT: failed
+// CHECK: {{[0-9]+}} proved, 0 failed, 0 skipped
+// IFACE: module Pia.Float.Nn
+// IFACE: let softmax : (y : borrowed inout mutable [f32]) -> (e : borrowed inout mutable [f32]) -> (x : [f32]) -> unit
+// IFACE: let silu : (x : f32) -> f32
+// IFACE: let rmsnorm
+*)

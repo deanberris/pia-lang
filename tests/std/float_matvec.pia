@@ -1,0 +1,14 @@
+(* Pia.Float.Matvec (ADR 0067, K1): every goal of the module is proved,
+   each row through Pia.Float.Error.dot, and its interface exports row_ok
+   opaque, so an importer's goals see one fact per row.
+// RUN: FileCheck %s < %S/../../lib/Pia/Float/matvec.goals
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Float/Error.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Float/Matvec.pia
+// RUN: FileCheck --check-prefix=IFACE %s < %t/Pia.Float.Matvec.Matvec.piai
+*)
+
+(* CHECK-NOT: failed
+// CHECK: {{[0-9]+}} proved, 0 failed, 0 skipped
+// IFACE: module Pia.Float.Matvec
+// IFACE: let matvec : (y : borrowed inout mutable [f32]) -> (w : [f32]) -> (x : [f32]) -> (bw : real) -> (bx : real) -> unit
+*)
