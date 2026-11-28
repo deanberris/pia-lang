@@ -1,0 +1,28 @@
+(* A bare arrow as a type argument, `option (u8 -> u8)` (ADR 0071,
+   amendment of 2026-11-28, step 2b), compiled and run from C by
+   fn_options_test.c.
+// RUN: piac --emit=llvm -O2 %s | FileCheck %s
+*)
+
+(* CHECK-LABEL: define {{.*}}$pick"(
+*)
+module FnOptions : Options
+
+interface Options @abi(c) = sig
+  let pick : (k : u8) -> (y : u8) -> u8
+end
+
+let option = let (t : type) => type | None | Some of t
+
+let half (x : u8) : u8 = x / 2
+let flip (x : u8) : u8 = 255 - x
+
+let choose (k : u8) : option (u8 -> u8) =
+  if k = 1 then Some half else if k = 2 then Some flip else None
+
+let run (h : option (u8 -> u8)) (y : u8) : u8 =
+  match h with
+  | Some f -> f y
+  | None -> y
+
+let pick (k : u8) (y : u8) : u8 = run (choose k) y

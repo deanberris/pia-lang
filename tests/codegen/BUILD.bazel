@@ -416,6 +416,26 @@ cc_test(
     target_compatible_with = PIA_TARGETS,
 )
 
+# fn_options.pia, an option of a bare arrow (ADR 0071), run against the
+# same steps in C.
+genrule(
+    name = "fn_options_run_obj",
+    srcs = ["fn_options.pia"],
+    outs = ["fn_options_run.o"],
+    cmd = "$(location //tools/piac) --emit=obj " + PIAC_TARGET_FLAGS + " -o $@ $<",
+    target_compatible_with = PIA_TARGETS,
+    tools = ["//tools/piac"],
+)
+
+cc_test(
+    name = "fn_options_run_test",
+    srcs = [
+        "fn_options_test.c",
+        ":fn_options_run_obj",
+    ],
+    target_compatible_with = PIA_TARGETS,
+)
+
 # box_concept.pia, a box over a concept compiled to a tagged union and
 # called through by a switch on the tag (ADR 0046, step 5).
 genrule(

@@ -157,6 +157,12 @@ class TypeResolver {
                      const syntax::Node *arrow) {
     fieldArrows_[{record, field}] = arrow;
   }
+  // An arrow of no contract written for the function type `t`, which
+  // stands for every such arrow, since they all say the same: nothing.
+  const syntax::Node *bareArrow(mlir::Type t) const {
+    auto it = bareArrows_.find(t.getAsOpaquePointer());
+    return it == bareArrows_.end() ? nullptr : it->second;
+  }
   const syntax::Node *fieldArrow(const std::string &record,
                                  const std::string &field) const {
     auto it = fieldArrows_.find({record, field});
@@ -364,6 +370,7 @@ class TypeResolver {
   std::map<std::string, Refinements> refinements_;
   std::map<std::pair<std::string, std::string>, const syntax::Node *>
       fieldArrows_;
+  std::map<const void *, const syntax::Node *> bareArrows_;
   std::map<std::string, ValueArgs> valueArgs_; // by instance, `vec<u8, 4>`
   std::map<std::string, TypeLowering> lowerings_; // by record name
   ValueArgs values_; // the value parameters of the body being built

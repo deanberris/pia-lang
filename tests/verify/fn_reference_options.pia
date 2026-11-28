@@ -1,0 +1,46 @@
+(* A bare arrow as a type argument (ADR 0071, amendment of 2026-11-28,
+   step 2b): `option (u8 -> u8)` holds a reference of no contract, so it
+   takes a function's name or another such reference. A function with a
+   precondition goes in only when it holds for every argument; a
+   reference with a contract goes in a distinct arrow type instead.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+let option = let (t : type) => type | None | Some of t
+
+let half (x : u8) : u8 = x / 2
+let small (x : u8) : u8 requires x < 10 = x
+
+let run (h : option (u8 -> u8)) (y : u8) : u8 =
+  match h with
+  | Some f -> f y
+  | None -> y
+
+let pass (h : option (u8 -> u8)) : option (u8 -> u8) = h
+
+let rewrap (h : option (u8 -> u8)) : option (u8 -> u8) =
+  match h with
+  | Some f -> Some f
+  | None -> None
+
+let go (y : u8) : u8 = run (rewrap (pass (Some half))) y
+
+(* small needs x < 10, which a bare arrow does not promise. *)
+let bad () : option (u8 -> u8) = Some small
+
+(* A contracted parameter cannot become a bare reference: wrap is proved
+   at each instance instead, where small fails again. *)
+let wrap (f : (x : u8) -> u8 requires x < 10) : option (u8 -> u8) = Some f
+let use () : option (u8 -> u8) = wrap small
+
+(* Expected report, in order.
+// CHECK: fn_reference_options.pia:11:28: proved: the divisor is not zero [intervals]
+// CHECK: fn_reference_options.pia:11:28: proved: '/' does not overflow u8 [intervals]
+// CHECK: fn_reference_options.pia:29:39: failed: the precondition of 'small' holds
+// CHECK-NEXT: counterexample: x = {{-?[0-9]+}}
+// CHECK: fn_reference_options.pia:34:39: proved: the precondition of 'small' holds [smt]
+// CHECK: fn_reference_options.pia:33:74: failed: the precondition of 'small@fn_reference_options.pia:34:39' holds
+// CHECK-NEXT: counterexample: x = {{-?[0-9]+}}
+// CHECK: fn_reference_options.pia:33:74: not proved generically: 'wrap' is proved at each instance, since its check over any function argument failed here: this place holds a function reference of no contract, so it takes a function's name or another such reference; a reference with a contract goes in a distinct arrow type (ADR 0071) [generic]
+// CHECK: 3 proved, 2 failed, 0 skipped
+*)
