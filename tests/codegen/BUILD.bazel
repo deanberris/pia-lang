@@ -436,7 +436,7 @@ genrule(
     name = "collectives_obj",
     srcs = ["collectives.pia"],
     outs = ["collectives.o"],
-    cmd = "$(location //tools/piac) --emit=obj " + PIAC_TARGET_FLAGS + " -o $@ $<",
+    cmd = "$(location //tools/piac) --emit=obj --allow-unproved=sum " + PIAC_TARGET_FLAGS + " -o $@ $<",
     target_compatible_with = PIA_TARGETS,
     tools = ["//tools/piac"],
 )
