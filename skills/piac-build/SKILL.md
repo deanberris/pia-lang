@@ -68,7 +68,7 @@ Importers are checked against the interfaces' contracts, never the bodies, so a 
 | Rule | Builds | Notes |
 | --- | --- | --- |
 | `pia_object(name, src)` | `<name>.o` from one file with no imports | put it in a `cc_library`'s `srcs` to call it from C; `opt_level = 3` passes `-O3` (piac's default is `-O2`) |
-| `pia_library(name, src, deps)` | a module: its objects and `<name>.piai/` | `deps` are other `pia_library` targets; each `import` must be provided by a direct dep. Also checks the certificates link, and writes the goal report of its proof as `<name>.goals` (output group `report`) |
+| `pia_library(name, src, deps)` | a module: its objects and `<name>.piai/` | `deps` are other `pia_library` targets; each `import` must be provided by a direct dep. Also checks the certificates link, and writes the goal report of its proof as `<name>.goals` (output group `report`). `lean_receipts` takes `pia_lean_proof` targets for its `by lean` lemmas and models (skill `pia-lean`) |
 | `pia_binary(name, src, deps)` | a program whose `main` is in `src` | a `pia_library` plus a `cc_binary` |
 
 `load("//tools/lean:lean.bzl", "pia_lean_proof")`: `pia_lean_proof(name, src, proofs)` checks the Lean proofs in `proofs` of the lemmas of `src` proved in Lean and writes `<name>.receipt`, for `piac --lean-receipt=` (ADR 0061, the `pia-lean` skill).

@@ -62,12 +62,24 @@ def main():
     p.add_argument("--src", required=True)
     p.add_argument("--proofs", required=True)
     p.add_argument("--out", required=True)
+    # Directories of prebuilt .olean files, searched after the statements.
+    p.add_argument("--lean-path", action="append", default=[])
+    # The Mathlib commit those are built from, recorded in each receipt.
+    p.add_argument("--mathlib", default="")
+    # A mathlib_repository: its `lib/<package>` directories and its `rev`.
+    p.add_argument("--mathlib-root", default="")
     a = p.parse_args()
+    if a.mathlib_root:
+        lib = os.path.join(a.mathlib_root, "lib")
+        a.lean_path += [os.path.join(lib, d) for d in sorted(os.listdir(lib))]
+        with open(os.path.join(a.mathlib_root, "rev")) as f:
+            a.mathlib = f.read().strip()
 
     lean = os.path.abspath(a.lean)
     work = tempfile.mkdtemp(prefix="pia_lean_")
     try:
-        env = dict(os.environ, LEAN_PATH=work)
+        env = dict(os.environ, LEAN_PATH=os.pathsep.join(
+            [work] + [os.path.abspath(d) for d in a.lean_path]))
         statements = os.path.join(work, "Statements.lean")
         run([os.path.abspath(a.piac), "--emit=lean", "-o", statements,
              os.path.abspath(a.src)], work, env, "piac --emit=lean")
@@ -100,6 +112,11 @@ def main():
         version = run([lean, "--version"], work, env, "lean --version")
         m = re.search(r"version (\d+\.\d+\.\d+)", version)
         toolchain = "leanprover/lean4:v" + (m.group(1) if m else "unknown")
+        # A proof that uses Mathlib rests on it too, so the receipt, the
+        # certificate and the trust report name its commit with Lean's,
+        # where an advisory can find it (ADR 0073).
+        if a.mathlib:
+            toolchain += "+mathlib@" + a.mathlib
 
         receipts = []
         for lemma, theorem, digest in lemmas:

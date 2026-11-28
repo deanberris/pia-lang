@@ -1,6 +1,6 @@
 ---
 name: pia-lean
-description: Prove a Pia lemma in Lean 4 when Z3 cannot - `= by lean T`, `piac --emit=lean`, writing the Lean proof against the generated statements, the pia_lean_proof Bazel rule and `--lean-receipt`, and what a stale receipt means. Use when a lemma needs induction, nonlinear arithmetic or a theorem Z3 gives up on, or when a by-lean goal fails with "no receipt" or "stale receipt".
+description: Prove a Pia lemma or a theory's model in Lean 4 when Z3 cannot - `= by lean T`, `let model m : T = by lean N`, reals as Mathlib's ℝ, `piac --emit=lean`, writing the Lean proof against the generated statements, the pia_lean_proof Bazel rule and `--lean-receipt`, and what a stale receipt means. Use when a lemma needs induction, nonlinear arithmetic or a theorem Z3 gives up on, or when a by-lean goal fails with "no receipt" or "stale receipt".
 ---
 
 # Lemmas proved in Lean
@@ -32,7 +32,7 @@ let lemma sum_plus_one (m : int) : unit
 = sum_nonneg m
 ```
 
-What the translation supports: `int` and `bool`, machine integers (`u8` ... `u64`, `usize`, `i8` ... `i64`, `isize`) and range types (`int{0..9}`), slices and fixed arrays of them (`[u8]`, `[u8; 16]`, with `len` and `xs.[i]`), records of `int` and `bool`, variant types that are not recursive, with constructors and `match`, `+ - *`, comparisons, `&& || ==> <==>`, `if`, `let ... in`, record literals, fields and updates, calls of spec functions in the same file, recursion with a `decreases` measure, and `forall`/`exists` in a lemma's contracts. A machine integer is a Lean `Int`, never a `BitVec`, because Pia's integers never wrap; its range is a hypothesis, `((0 : Int) ≤ a ∧ a ≤ (255 : Int))`, first among the lemma's, in a spec function's `h_req` guard, and after a bound variable (`∃ x, range ∧ p`). A suffix such as `9u8` names only the type, and `int x` is `x`. A slice is a `Slice' t` with fields `len` and `get`, so `xs.[i]` is `xs.get i`; the lemma has the length's range and `∀ i', 0 ≤ i' ∧ i' < xs.len → range (xs.get i')` as hypotheses, and a spec function's guard tests only the length. A fixed array is a `Slice'` too, with `xs.len = 16` as its hypothesis. A variant is an `inductive`, its constructors are `t.C`, and a `u8` payload's range is the hypothesis `(match r with | t.Level p' => (0 ≤ p' ∧ p' ≤ 255) | _ => True)`: after `cases r`, it reduces to the payload's range, which `have hv : 0 ≤ v ∧ v ≤ 255 := h` names (`tests/lean/Variants.lean`). Anything else, such as `/`, a record field of type `u8`, a slice of slices, a recursive variant, a quantifier in a spec function's body or a `decreases` on the lemma, is an error from `--emit=lean` that says it has no translation yet. Only what a `by lean` lemma uses is translated.
+What the translation supports: `int` and `bool`, machine integers (`u8` ... `u64`, `usize`, `i8` ... `i64`, `isize`) and range types (`int{0..9}`), slices and fixed arrays of them (`[u8]`, `[u8; 16]`, with `len` and `xs.[i]`), records of `int` and `bool`, variant types that are not recursive, with constructors and `match`, `+ - *`, comparisons, `&& || ==> <==>`, `if`, `let ... in`, record literals, fields and updates, calls of spec functions in the same file, recursion with a `decreases` measure, and `forall`/`exists` in a lemma's contracts. A machine integer is a Lean `Int`, never a `BitVec`, because Pia's integers never wrap; its range is a hypothesis, `((0 : Int) ≤ a ∧ a ≤ (255 : Int))`, first among the lemma's, in a spec function's `h_req` guard, and after a bound variable (`∃ x, range ∧ p`). A suffix such as `9u8` names only the type, and `int x` is `x`. A slice is a `Slice' t` with fields `len` and `get`, so `xs.[i]` is `xs.get i`; the lemma has the length's range and `∀ i', 0 ≤ i' ∧ i' < xs.len → range (xs.get i')` as hypotheses, and a spec function's guard tests only the length. A fixed array is a `Slice'` too, with `xs.len = 16` as its hypothesis. A variant is an `inductive`, its constructors are `t.C`, and a `u8` payload's range is the hypothesis `(match r with | t.Level p' => (0 ≤ p' ∧ p' ≤ 255) | _ => True)`: after `cases r`, it reduces to the payload's range, which `have hv : 0 ≤ v ∧ v ≤ 255 := h` names (`tests/lean/Variants.lean`). `real` is Mathlib's `ℝ`, exact like Pia's: a literal is the rational it spells, `(25/100 : ℝ)`, `/` of reals is ℝ's division, and `real n` is `((n : Int) : ℝ)`; a statement over reals imports Mathlib. Anything else, such as `/` of integers, a record field of type `u8`, a slice of slices, a recursive variant, a quantifier in a spec function's body or a `decreases` on the lemma, is an error from `--emit=lean` that says it has no translation yet. Only what a `by lean` lemma uses is translated.
 
 ## 2. Read the statements
 
@@ -64,7 +64,7 @@ decreasing_by all_goals first | omega | (simp_wf; omega)
 
 ## 3. Write the proof
 
-The proof file imports `Statements` and proves each theorem against its statement. No Mathlib yet: core Lean, `omega`, `simp`, `decide`, `split` and induction.
+The proof file imports `Statements` and proves each theorem against its statement, with core Lean (`omega`, `simp`, `decide`, `split`, induction) or, for a statement over reals, Mathlib (`linarith`, `nlinarith`, `norm_num`, `positivity`, `Real.exp_bound`, `Real.log_two_near_10` and the rest).
 
 ```lean
 import Statements
@@ -127,6 +127,31 @@ piac --verify --lean-receipt=bazel-bin/tests/lean/sums_proof.receipt sums.pia
 ```
 
 The target writes Statements.lean with `piac --emit=lean`, compiles it and the proofs with the pinned Lean release, checks `example : sums.sum_nonneg := Proofs.sum_nonneg`, and prints the axioms each theorem uses. A receipt holds the lemma, the statement hash, the theorem, the Lean version and the axioms. `--lean-receipt` may be given more than once.
+
+## 5. A theory modelled in Lean
+
+A theory whose functions are mathematics, such as the real exp, is modelled in Lean: Lean gives the functions and proves the axioms, so none is trusted.
+
+<!-- untested: proved only with its Lean receipt, from a pia_lean_proof target (tests/lean) -->
+```ocaml
+let theory Grow = sig
+  let spec rate : (x : real) -> real
+  let axiom rate_pos (x : real) ensures rate x > 0.0
+end
+
+let model exps : Grow = by lean Reals.exps
+```
+
+`--emit=lean` writes the theory as a `structure` with a field for each sort (`: Type`), abstract function and axiom, and the model as `Nonempty Grow`. The proof gives a value:
+
+```lean
+theorem exps : reals.exps :=
+  ⟨{ rate := Real.exp, rate_pos := fun x => Real.exp_pos x }⟩
+```
+
+A theory modelled in Lean must be in the same file, and its functions take and give its sorts, `int`, `real` and `bool`. Its axioms may call the file's spec functions, which are translated as `def`s. Keep the axioms the Z3 side needs small and give each a trigger that mentions all its parameters. If Z3 has to multiply out a spec function such as a polynomial, mark it `@opaque` and reveal it `with f` only where it must unfold. `lib/Pia/Float/Exp.pia` with `ExpProofs.lean` is the worked example: exp proved within 1e-7 of `Real.exp`.
+
+For Mathlib, set `mathlib = "@mathlib//:oleans"` on the `pia_lean_proof`. The receipt's toolchain then names the Mathlib commit. A `pia_library` takes the receipts as `lean_receipts = [":exp_proof"]`.
 
 ## Reading the goal
 

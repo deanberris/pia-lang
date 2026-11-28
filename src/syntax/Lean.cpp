@@ -61,6 +61,12 @@ bool isByLean(const Node &item) {
          item.kids.size() > 3 && item.kids[3]->kind == N::ByLean;
 }
 
+// `let model m : T = by lean N` (ADR 0061, section 2).
+bool isLeanModel(const Node &item) {
+  return item.kind == N::Model && item.flags == "lean" &&
+         item.kids.size() == 2 && item.kids[1]->kind == N::ByLean;
+}
+
 bool isRecordType(const Node &item) {
   return item.kind == N::LetItem && item.kids.size() > 3 &&
          item.kids[0]->kids.empty() && item.kids[3]->kind == N::TypeValue &&
@@ -90,6 +96,10 @@ class Emitter {
 public:
   Emitter(const Node &program, Diagnostics &diags) : diags_(diags) {
     for (const NodePtr &k : program.kids) {
+      if (k->kind == N::Theory)
+        theories_.emplace(k->text, k.get());
+      if (isLeanModel(*k))
+        items_.emplace(k->text, k.get());
       if (k->kind != N::LetItem)
         continue;
       items_.emplace(k->text, k.get());
@@ -125,6 +135,8 @@ public:
     bool saved = ok_;
     std::map<std::string, std::string> savedLocals;
     std::swap(savedLocals, locals_);
+    std::set<std::string> savedReals;
+    std::swap(savedReals, realLocals_);
     std::vector<std::string> savedRanges, savedGuards;
     std::swap(savedRanges, ranges_);
     std::swap(savedGuards, guards_);
@@ -137,6 +149,8 @@ public:
       text = variant(item);
     else if (isByLean(item))
       text = statement(item);
+    else if (isLeanModel(item))
+      text = model(item);
     else if (hasWord(item.flags, "spec") && !hasWord(item.flags, "abstract"))
       text = definition(item);
     else
@@ -147,6 +161,7 @@ public:
     bool good = ok_;
     ok_ = saved && good;
     locals_ = std::move(savedLocals);
+    realLocals_ = std::move(savedReals);
     ranges_ = std::move(savedRanges);
     guards_ = std::move(savedGuards);
     hyps_ = savedHyps;
@@ -308,8 +323,15 @@ private:
       return type(*t.kids[1], field);
     }
     if (t.kind == N::TypeName) {
+      if (auto it = sorts_.find(t.text); it != sorts_.end())
+        return it->second;
       if (t.text == "int")
         return "Int";
+      // Pia's spec-only `real` is exact (ADR 0036), as Mathlib's ℝ is.
+      if (t.text == "real") {
+        real_ = true;
+        return "ℝ";
+      }
       if (t.text == "bool")
         return "Bool";
       if (machineRange(t.text) && !field)
@@ -386,6 +408,8 @@ private:
         continue;
       }
       locals_[p->text] = ident(p->text);
+      if (isRealType(*p->kids[0]))
+        realLocals_.insert(p->text);
       out += (binders ? "" : " ") + std::string("(") + ident(p->text) + " : " +
              type(*p->kids[0]) + ")";
       if (binders)
@@ -536,6 +560,104 @@ private:
            " : Prop :=\n  " + prop + "\n\n";
   }
 
+  // `let model m : T = by lean N`, as a structure with a field for each
+  // of T's sorts, abstract functions and axioms, and the proposition that
+  // it has a value: a Lean proof gives the sorts and functions and proves
+  // every axiom of them. T's lemmas are proved in Pia from its axioms, so
+  // they are not fields.
+  std::string model(const Node &item) {
+    const std::string &name = item.kids[0]->text;
+    auto it = theories_.find(name);
+    if (it == theories_.end()) {
+      fail(item.loc, "the theory '" + name +
+                         "' of a Lean model must be in "
+                         "the same file (ADR 0061)");
+      return "";
+    }
+    const Node &theory = *it->second;
+    sorts_.clear();
+    fields_.clear();
+    realFns_.clear();
+    // A function's types are the theory's sorts, int, real and bool; a
+    // machine integer would need the range of each value as a field too.
+    auto plain = [&](const Node &t) {
+      const Node *n = &t;
+      if (n->kind == N::Annot && n->kids.size() > 1)
+        n = n->kids[1].get();
+      if (n->kind == N::TypeName &&
+          (sorts_.count(n->text) || n->text == "int" || n->text == "real" ||
+           n->text == "bool"))
+        return type(*n);
+      fail(t.loc, "a function of a theory modelled in Lean takes and gives "
+                  "its sorts, int, real and bool, not this type yet (ADR "
+                  "0061, section 2)");
+      return std::string("Int");
+    };
+    std::string out = "/-- The Pia theory `" + theory.text +
+                      "`: its sorts, functions and axioms. -/\nstructure " +
+                      ident(theory.text) + " where\n";
+    for (const NodePtr &k : theory.kids) {
+      if (k->kind == N::SortItem) {
+        if (!k->kids.empty())
+          fail(k->loc, "a sort abbreviation in a theory modelled in Lean has "
+                       "no translation yet (ADR 0061, section 2)");
+        sorts_[k->text] = ident(k->text);
+        out += "  " + ident(k->text) + " : Type\n";
+        continue;
+      }
+      if (k->kind != N::LetItem) {
+        fail(k->loc, "this item of a theory modelled in Lean has no "
+                     "translation yet (ADR 0061, section 2)");
+        continue;
+      }
+      if (hasWord(k->flags, "lemma"))
+        continue;
+      if (hasWord(k->flags, "abstract")) {
+        const Node &ret = *k->kids[1];
+        const Node *t = ret.kids[0].get();
+        if (t->kind == N::Annot && t->kids.size() > 1)
+          t = t->kids[1].get();
+        std::string arrow;
+        while (t->kind == N::ArrowType) {
+          arrow += plain(*t->kids[0]->kids[1]) + " → ";
+          t = t->kids[1].get();
+        }
+        if (isRealType(*t))
+          realFns_.insert(k->text);
+        out += "  " + ident(k->text) + " : " + arrow + plain(*t) + "\n";
+        fields_[k->text] = ident(k->text);
+        continue;
+      }
+      if (hasWord(k->flags, "axiom")) {
+        locals_.clear();
+        realLocals_.clear();
+        std::string binders = params(*k->kids[0], true);
+        std::vector<std::string> pre = ranges_, ensures;
+        for (const NodePtr &c : k->kids[2]->kids)
+          if (c->kind == N::Requires)
+            pre.push_back(expr(*c->kids[0], Mode::Prop));
+          else if (c->kind == N::Ensures)
+            ensures.push_back(expr(*c->kids[0], Mode::Prop));
+        std::string prop = ensures.empty() ? "True" : conj(ensures);
+        if (!pre.empty())
+          prop = conj(pre) + " → " + prop;
+        if (!binders.empty())
+          prop = "∀ " + binders.substr(0, binders.size() - 1) + ", " + prop;
+        out += "  " + ident(k->text) + " : " + prop + "\n";
+        continue;
+      }
+      fail(k->loc, "a spec function with a body in a theory modelled in Lean "
+                   "has no translation yet (ADR 0061, section 2)");
+    }
+    sorts_.clear();
+    fields_.clear();
+    realFns_.clear();
+    return out + "\n/-- The Pia model `" + item.text + "` of `" + theory.text +
+           "`, proved by `" + item.kids[1]->text + "`. -/\n@[reducible] def " +
+           ident(item.text) + " : Prop :=\n  Nonempty " + ident(theory.text) +
+           "\n\n";
+  }
+
   static std::string conj(const std::vector<std::string> &ps) {
     std::string out;
     for (const std::string &p : ps)
@@ -578,6 +700,8 @@ private:
       // where `0 - 1 = 0` holds and Pia's `int` says it does not.
       return intLit(digits.substr(0, end));
     }
+    case N::FloatLit:
+      return realLit(n);
     case N::BoolLit:
       if (m == Mode::Prop)
         return n.text == "true" ? "True" : "False";
@@ -685,6 +809,10 @@ private:
       if (auto it = arith.find(op); it != arith.end())
         return "(" + expr(a, Mode::Value) + " " + it->second + " " +
                expr(b, Mode::Value) + ")";
+      // Division is exact on reals, as ℝ's is; on integers Pia truncates
+      // and Lean's `Int` division floors, so it is not translated yet.
+      if (op == "div" && (isReal(a) || isReal(b)))
+        return "(" + expr(a, Mode::Value) + " / " + expr(b, Mode::Value) + ")";
       if (auto it = cmp.find(op); it != cmp.end()) {
         std::string p = "(" + expr(a, Mode::Value) + " " + it->second + " " +
                         expr(b, Mode::Value) + ")";
@@ -711,6 +839,14 @@ private:
     }
     if (locals_.count(head.text))
       return unsupported(n, "a call of a parameter");
+    // A function of the theory a Lean model gives, which is the
+    // structure's field of that name.
+    if (auto it = fields_.find(head.text); it != fields_.end()) {
+      std::string call = "(" + it->second;
+      for (size_t i = 1; i < n.kids.size(); ++i)
+        call += " " + expr(*n.kids[i], Mode::Value);
+      return asProp(call + ")", m);
+    }
     if (n.kids.size() == 2 && ctors_.count(head.text)) {
       auto c = ctor(head.text, head.loc);
       if (!c)
@@ -724,6 +860,13 @@ private:
     if (!items_.count(head.text) && n.kids.size() == 2) {
       if (head.text == "int")
         return expr(*n.kids[1], Mode::Value);
+      // `real n` of an integer is exact.
+      if (head.text == "real" && !isReal(*n.kids[1])) {
+        real_ = true;
+        return "((" + expr(*n.kids[1], Mode::Value) + " : Int) : ℝ)";
+      }
+      if (head.text == "real")
+        return expr(*n.kids[1], Mode::Value);
       if (head.text == "len")
         return "(" + expr(*n.kids[1], Mode::Value) + ").len";
       if (machineRange(head.text))
@@ -733,6 +876,92 @@ private:
     for (size_t i = 1; i < n.kids.size(); ++i)
       call += " " + expr(*n.kids[i], Mode::Value);
     return asProp(call + ")", m);
+  }
+
+  static bool isRealType(const Node &t) {
+    if (t.kind == N::Annot && t.kids.size() > 1)
+      return isRealType(*t.kids[1]);
+    return t.kind == N::TypeName && t.text == "real";
+  }
+
+  // Whether `n` is a real, so that `/` divides exactly. The translation
+  // has no types of its own, so this follows what names a real: a real
+  // literal, `real n`, a real parameter or bound variable, a spec
+  // function whose result is real, and arithmetic over them.
+  bool isReal(const Node &n) {
+    switch (n.kind) {
+    case N::FloatLit:
+      return true;
+    case N::Name:
+      return realLocals_.count(n.text) > 0;
+    case N::Neg:
+      return isReal(*n.kids[0]);
+    case N::If:
+      return n.kids.size() > 2 && (isReal(*n.kids[1]) || isReal(*n.kids[2]));
+    case N::LetIn:
+      return n.kids.size() > 4 && isReal(*n.kids[4]);
+    case N::Apply: {
+      const Node &head = *n.kids[0];
+      if (head.kind != N::Name)
+        return false;
+      if (hasWord(head.flags, "prelude"))
+        return (head.text == "add" || head.text == "sub" ||
+                head.text == "mul" || head.text == "div") &&
+               n.kids.size() == 3 && (isReal(*n.kids[1]) || isReal(*n.kids[2]));
+      if (head.text == "real" && !items_.count(head.text))
+        return true;
+      if (fields_.count(head.text))
+        return realFns_.count(head.text) > 0;
+      auto it = items_.find(head.text);
+      if (it == items_.end())
+        return false;
+      const Node &item = *it->second;
+      return item.kids.size() > 1 && item.kids[1]->kind == N::RetAnnot &&
+             !item.kids[1]->kids.empty() && isRealType(*item.kids[1]->kids[0]);
+    }
+    default:
+      return false;
+    }
+  }
+
+  // A decimal literal as the exact rational it spells, `(3/2 : ℝ)`.
+  std::string realLit(const Node &n) {
+    std::string digits, exponent;
+    bool afterPoint = false, inExponent = false;
+    long scale = 0;
+    for (char c : n.text) {
+      if (c == '\'' || c == '_')
+        continue;
+      if (inExponent) {
+        exponent += c;
+      } else if (c == 'e' || c == 'E') {
+        inExponent = true;
+      } else if (c == '.') {
+        afterPoint = true;
+      } else if (std::isdigit(static_cast<unsigned char>(c))) {
+        digits += c;
+        if (afterPoint)
+          --scale;
+      } else {
+        return unsupported(n, "the literal '" + n.text + "'");
+      }
+    }
+    if (!exponent.empty())
+      scale += std::stol(exponent);
+    while (digits.size() > 1 && digits[0] == '0')
+      digits.erase(0, 1);
+    if (digits.empty())
+      digits = "0";
+    while (scale < 0 && digits.size() > 1 && digits.back() == '0') {
+      digits.pop_back();
+      ++scale;
+    }
+    if (digits == "0")
+      scale = 0;
+    real_ = true;
+    if (scale >= 0)
+      return "(" + digits + std::string(scale, '0') + " : ℝ)";
+    return "(" + digits + "/1" + std::string(-scale, '0') + " : ℝ)";
   }
 
   // A constructor of a variant type, by its full Lean name.
@@ -811,6 +1040,8 @@ private:
           continue;
         }
         out += (all ? "∀ (" : "∃ (") + x + " : " + type(*b.kids[0]) + "), ";
+        if (isRealType(*b.kids[0]))
+          realLocals_.insert(b.text);
         if (std::string r = range(*b.kids[0], x); !r.empty())
           out += r + (all ? " → " : " ∧ ");
       } else if (b.kind == N::RangeBinder && b.kids[0]->kind == N::Range) {
@@ -845,6 +1076,19 @@ private:
   std::vector<std::string> ranges_, guards_;
   unsigned hyps_ = 0;
   bool ok_ = true;
+
+public:
+  // Whether a translated item uses ℝ, which needs Mathlib.
+  bool real_ = false;
+
+private:
+  std::set<std::string> realLocals_;
+  std::map<std::string, const Node *> theories_;
+  // While a Lean model's theory is translated: its sorts and functions, by
+  // the names of the structure's fields, and the functions with real
+  // results.
+  std::map<std::string, std::string> sorts_, fields_;
+  std::set<std::string> realFns_;
 };
 
 } // namespace
@@ -855,6 +1099,8 @@ leanLemmas(const Node &program) {
   for (const NodePtr &k : program.kids)
     if (isByLean(*k))
       out.emplace_back(k->text, k->kids[3]->text);
+    else if (isLeanModel(*k))
+      out.emplace_back(k->text, k->kids[1]->text);
   return out;
 }
 
@@ -863,13 +1109,21 @@ LeanFile emitLean(const Node &program, const std::string &ns,
   LeanFile file;
   Emitter e(program, diags);
   for (const NodePtr &k : program.kids) {
-    if (!isByLean(*k) || !e.need(k->text, k->loc))
+    bool model = isLeanModel(*k);
+    if ((!isByLean(*k) && !model) || !e.need(k->text, k->loc))
       continue;
     file.statements.push_back(
-        {k->text, k->kids[3]->text, e.closure(k->text), k->loc});
+        {k->text, k->kids[model ? 1 : 3]->text, e.closure(k->text), k->loc});
   }
-  if (!file.statements.empty())
-    file.text = "namespace " + ns + "\n\n" + e.text() + "end " + ns + "\n";
+  if (!file.statements.empty()) {
+    file.real = e.real_;
+    // ℝ's operations are not computable, so neither are definitions over
+    // it; the statements are only checked, never run.
+    std::string body = e.text();
+    if (file.real)
+      body = "noncomputable section\n\n" + body + "end\n\n";
+    file.text = "namespace " + ns + "\n\n" + body + "end " + ns + "\n";
+  }
   return file;
 }
 

@@ -1321,6 +1321,9 @@ class Gen {
       if (auto m = theoryInfo_.modelled.find(theory);
           m != theoryInfo_.modelled.end())
         fn->setAttr("pia.modelled", b_.getStringAttr(m->second));
+      else if (auto l = theoryInfo_.leanModelled.find(theory);
+               l != theoryInfo_.leanModelled.end())
+        fn->setAttr("pia.modelled", b_.getStringAttr(l->second));
       else if (theoryInfo_.boxModelled.count(theory))
         fn->setAttr("pia.modelled", b_.getStringAttr("widen"));
     }

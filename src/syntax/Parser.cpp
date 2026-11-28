@@ -366,6 +366,17 @@ class Parser {
     n->add(makeNode(N::TypeName, theoryAt,
                     std::string(expect(K::Ident, "a theory").text)));
     expect(K::Eq, "'='");
+    // `= by lean Name`: a model given in Lean (ADR 0061, section 2), whose
+    // sorts and functions are Lean's, so the theory means what Lean's do.
+    if (at(K::Ident) && text() == "by" && kind(1) == K::Ident &&
+        tok(1).text == "lean") {
+      SourceLoc at = loc();
+      take(); // by
+      take(); // lean
+      n->flags = "lean";
+      n->add(makeNode(N::ByLean, at, path()));
+      return n;
+    }
     expect(K::Struct, "'struct'");
     skipSeps();
     while (!at(K::End)) {

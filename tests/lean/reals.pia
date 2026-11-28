@@ -1,0 +1,70 @@
+(* Reals and theories modelled in Lean (ADR 0061, section 2). Pia's
+   spec-only `real` is exact, as Mathlib's ℝ is, so a statement over reals
+   imports Mathlib, and `/` of reals is ℝ's division. A theory modelled
+   with `let model m : T = by lean N` is a Lean structure, a field for each
+   sort, function and axiom, and the model is the statement that it has a
+   value: N gives the functions and proves every axiom, so nothing of the
+   theory is trusted. Reals.lean proves both with Mathlib, its exp the
+   model's rate, and the reals_proof target writes their receipts, which
+   name Mathlib's commit; without them, both goals fail.
+// RUN: piac --emit=lean %s | FileCheck %s --check-prefix=LEAN
+// RUN: piac --verify --trust-report --lean-receipt=%S/reals_proof.receipt %s | FileCheck %s
+// RUN: not piac --verify %s | FileCheck %s --check-prefix=NONE
+*)
+
+let spec half (x : real) : real = x / 2.0
+
+let lemma halves (x : real) (n : int) : unit
+  requires 0 <= n
+  ensures half x + half x = x && real n * 0.25 >= 0.0
+= by lean Reals.halves
+
+let theory Grow = sig
+  let sort cell
+  let spec size : (c : cell) -> real
+  let spec rate : (x : real) -> real
+  let axiom rate_pos (x : real) ensures rate x > 0.0
+  let axiom rate_mono (x : real) (y : real) @trigger(rate x, rate y)
+    requires x <= y
+    ensures rate x <= rate y
+  let lemma rate_sum (x : real) : unit
+    ensures rate x + rate x > 0.0
+  = ()
+end
+
+let model exps : Grow = by lean Reals.exps
+
+(* Proved from the axioms, which the Lean model makes untrusted. *)
+let lemma twice (x : real) : unit ensures Grow.rate x + Grow.rate x > 0.0 = ()
+
+(* The Lean statements: ℝ with Mathlib, exact literals, and the theory's
+   structure, whose axiom fields name its function fields.
+// LEAN: import Mathlib.Basic.Real.Basic
+// LEAN: noncomputable section
+// LEAN: def half (x : ℝ) : ℝ :=
+// LEAN-NEXT: (x / (2 : ℝ))
+// LEAN: @[reducible] def halves : Prop :=
+// LEAN-NEXT: ∀ (x : ℝ) (n : Int),
+// LEAN-NEXT: ((0 : Int) ≤ n) → ((((half x) + (half x)) = x) ∧ ((((n : Int) : ℝ) * (25/100 : ℝ)) ≥ (0 : ℝ)))
+// LEAN: structure Grow where
+// LEAN-NEXT: cell : Type
+// LEAN-NEXT: size : cell → ℝ
+// LEAN-NEXT: rate : ℝ → ℝ
+// LEAN-NEXT: rate_pos : ∀ (x : ℝ), ((rate x) > (0 : ℝ))
+// LEAN-NEXT: rate_mono : ∀ (x : ℝ) (y : ℝ), (x ≤ y) → ((rate x) ≤ (rate y))
+// LEAN: @[reducible] def exps : Prop :=
+// LEAN-NEXT: Nonempty Grow
+*)
+
+(* Nothing is trusted: the theory's lemma and the client are proved from
+   its axioms, and the axioms by the Lean model.
+// CHECK: 0 trusted items
+// CHECK: lean: 'halves', proved by the Lean theorem 'Reals.halves' (leanprover/lean4:v4.36.0+mathlib@fc4f59e577feb1a4956671bc04ac18aaaf8cd842; axioms propext Classical.choice Quot.sound;
+// CHECK: lean: 'exps', proved by the Lean theorem 'Reals.exps' (leanprover/lean4:v4.36.0+mathlib@fc4f59e577feb1a4956671bc04ac18aaaf8cd842;
+// CHECK: reals.pia:17:1: proved: the Lean theorem 'Reals.halves' proves 'halves' [lean]
+// CHECK: reals.pia:35:1: proved: the Lean theorem 'Reals.exps' proves 'exps' [lean]
+// CHECK: 5 proved, 0 failed, 0 skipped
+// NONE: reals.pia:17:1: failed: the Lean theorem 'Reals.halves' proves 'halves' [no receipt]
+// NONE: reals.pia:35:1: failed: the Lean theorem 'Reals.exps' proves 'exps' [no receipt]
+// NONE: 3 proved, 2 failed, 0 skipped
+*)

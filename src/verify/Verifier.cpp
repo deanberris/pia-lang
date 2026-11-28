@@ -2832,6 +2832,14 @@ class Encoder {
       Value down = andOf(realLe(x, n), realLt(n, realAdd(x, one)));
       define(implies(andOf(floatFinite(in[0], w), inRange(t, c.getType())),
                      ite(realLe(zero, x), up, down)));
+      // A float strictly between lo - 1 and hi + 1 truncates into the
+      // range, as IEEE 754 says: the conversion goal proves that, and
+      // without this the truncation, an uninterpreted function, would be
+      // in range only when the goal had already said so in its terms.
+      define(
+          implies(andOf(floatFinite(in[0], w),
+                        floatFits(in[0], c.getInput().getType(), c.getType())),
+                  inRange(t, c.getType())));
       return;
     }
   }

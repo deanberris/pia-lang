@@ -131,6 +131,7 @@ def _pia_library_impl(ctx):
     args += ["--iface-path=" + d.path for d in imported]
     args += embed_args
     args += ["--allow-unproved=" + spec for spec in ctx.attr.allow_unproved]
+    args += ["--lean-receipt=" + f.path for f in ctx.files.lean_receipts]
     args += [
         "--solver-rlimit=%d" % ctx.attr.solver_rlimit,
         "--solver-timeout=%d" % ctx.attr.solver_timeout_ms,
@@ -140,7 +141,7 @@ def _pia_library_impl(ctx):
     ctx.actions.run(
         executable = piac,
         arguments = args,
-        inputs = [src] + imported + embed_files,
+        inputs = [src] + imported + embed_files + ctx.files.lean_receipts,
         outputs = [obj, goals],
         mnemonic = "PiaCompile",
         resource_set = _piac_resources,
@@ -192,13 +193,15 @@ module again.
 
 `embeds` declares binary files available to `@embed(file = "...")` (ADR 0070).
 `allow_unproved`, `solver_rlimit` and `solver_timeout_ms` are as for
-pia_object.
+pia_object. `lean_receipts` are pia_lean_proof targets, whose receipts
+prove the module's lemmas and models given `by lean` (ADR 0061).
 """,
     attrs = {
         "src": attr.label(allow_single_file = [".pia", ".pia.md"], mandatory = True),
         "deps": attr.label_list(providers = [PiaInfo]),
         "embeds": attr.label_list(allow_files = True),
         "allow_unproved": attr.string_list(),
+        "lean_receipts": attr.label_list(allow_files = True),
         "solver_rlimit": attr.int(default = 1200000000),
         "solver_timeout_ms": attr.int(default = 600000),
         "_linux": attr.label(default = "@platforms//os:linux"),

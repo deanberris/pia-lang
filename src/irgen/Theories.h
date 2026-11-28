@@ -39,6 +39,9 @@ struct TheoryInfo {
   std::map<std::string, std::pair<std::string, std::string>> obligations;
   std::map<std::string, std::string> modelOf;   // a model's item -> model
   std::map<std::string, std::string> modelled;  // theory -> its model
+  // A theory modelled in Lean (ADR 0061, section 2) -> its model, whose
+  // proof is the Lean lemma of that name: there is nothing of it in Pia.
+  std::map<std::string, std::string> leanModelled;
   // `m.witness.f` -> `f`: a client with the model's definitions in place
   // of the theory's, where a failed goal looks for a counterexample.
   std::map<std::string, std::string> witnesses;

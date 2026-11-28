@@ -98,7 +98,7 @@ Sizes: **S** is about a day of work and one PR, **M** two to three days, **L** a
 | # | PR | Size | Status |
 | --- | --- | --- | --- |
 | X1 | `sqrt` as a builtin IEEE operation, and `rsqrt` as `1 / sqrt` with its error | S | needs F1, F3 |
-| X2 | `exp` for f32: reduction by `ln 2`, a degree-6 polynomial, scaling through the exponent bits; finite on `x <= 88.7`, error bound against a real `exp` theory whose model and polynomial lemma are proved in Lean | M | done for `x <= 0` (`Pia.Float.Exp.exp`, what softmax and a stable SiLU need): proved finite and in [0, 1]; its error is measured (2.5e-7 relative), and the Lean-proved bound waits on Mathlib |
+| X2 | `exp` for f32: reduction by `ln 2`, a degree-6 polynomial, scaling through the exponent bits; finite on `x <= 88.7`, error bound against a real `exp` theory whose model and polynomial lemma are proved in Lean | M | done for `x <= 0` (`Pia.Float.Exp.exp`, what softmax and a stable SiLU need): proved within 1e-7 relative of the real exp, whose theory's Lean model is Mathlib's `Real.exp`, and finite and in [0, 1]; reduction and polynomial in f64, one rounding to f32; measured within 5.95e-8 of libm's |
 | X3 | `sin` and `cos` for f32 on the range RoPE uses (`|x| <= seq_len`), the same way | M | needs X2's machinery |
 
 **Kernels (`Pia.Nn`) and the model (`Pia.Llm`)**

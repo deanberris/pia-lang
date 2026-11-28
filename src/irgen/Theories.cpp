@@ -325,6 +325,36 @@ void flattenTheories(Node &program, syntax::Diagnostics &diags,
   // theory's, becomes a lemma the model must prove (ADR 0036).
   for (NodePtr &model : models) {
     Theory &t = theories.at(model->kids[0]->text);
+    // `let model m : T = by lean N` (ADR 0061, section 2): Lean gives the
+    // sorts and functions and proves every axiom of them, so the model is
+    // one fact, that T's structure in Lean has a value, which the lemma
+    // `m` stands for: its receipt is checked like any Lean lemma's, and
+    // piac --emit=lean writes its statement. Nothing of the model is in
+    // Pia, so a failed goal has no model to find a counterexample in.
+    if (model->flags == "lean") {
+      syntax::SourceLoc at = model->loc;
+      auto lemma = syntax::makeNode(NodeKind::LetItem, at, model->text);
+      lemma->flags = "lemma";
+      lemma->add(syntax::makeNode(NodeKind::Params, at));
+      auto ret = syntax::makeNode(NodeKind::RetAnnot, at);
+      auto annot = syntax::makeNode(NodeKind::Annot, at);
+      annot->add(syntax::makeNode(NodeKind::Modifiers, at));
+      annot->add(syntax::makeNode(NodeKind::TypeName, at, "unit"));
+      annot->add(syntax::makeNode(NodeKind::None, at));
+      ret->add(std::move(annot));
+      ret->add(syntax::makeNode(NodeKind::Attrs, at));
+      lemma->add(std::move(ret));
+      auto contracts = syntax::makeNode(NodeKind::Contracts, at);
+      auto ensures = syntax::makeNode(NodeKind::Ensures, at);
+      ensures->add(syntax::makeNode(NodeKind::BoolLit, at, "true"));
+      contracts->add(std::move(ensures));
+      lemma->add(std::move(contracts));
+      lemma->add(std::move(model->kids[1]));
+      out.push_back(std::move(lemma));
+      if (info)
+        info->leanModelled[t.name] = model->text;
+      continue;
+    }
     Theory scope;
     scope.name = model->text;
     scope.kind = "model";

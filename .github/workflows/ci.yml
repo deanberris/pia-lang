@@ -123,6 +123,22 @@ jobs:
             ${{ steps.key.outputs.key }}-partial-
             bazel-disk-${{ runner.os }}-${{ runner.arch }}-
 
+      # Mathlib's prebuilt .olean files (ADR 0061), for Lean proofs over
+      # reals: lake downloads them into ~/.cache/mathlib, about 460 MB, and
+      # tools/lean/mathlib.bzl unpacks them from there, so a run with this
+      # cache downloads nothing. The key is the pinned Mathlib commit.
+      - name: Name Mathlib's commit
+        id: mathlib
+        run: echo "commit=$(sed -n 's/^    commit = \"\([0-9a-f]*\)\",$/\1/p' MODULE.bazel | head -1)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Mathlib's download cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/mathlib
+          key: mathlib-${{ runner.os }}-${{ steps.mathlib.outputs.commit }}
+          restore-keys: |
+            mathlib-${{ runner.os }}-
+
       # BuildBuddy remote cache and results UI (.bazelrc, config buildbuddy).
       # Pull requests from forks get no secrets, so they build without it.
       - name: Use the BuildBuddy remote cache
@@ -312,6 +328,22 @@ jobs:
           restore-keys: |
             ${{ steps.key.outputs.key }}-partial-
             bazel-disk-${{ runner.os }}-${{ runner.arch }}-
+
+      # Mathlib's prebuilt .olean files (ADR 0061), for Lean proofs over
+      # reals: lake downloads them into ~/.cache/mathlib, about 460 MB, and
+      # tools/lean/mathlib.bzl unpacks them from there, so a run with this
+      # cache downloads nothing. The key is the pinned Mathlib commit.
+      - name: Name Mathlib's commit
+        id: mathlib
+        run: echo "commit=$(sed -n 's/^    commit = \"\([0-9a-f]*\)\",$/\1/p' MODULE.bazel | head -1)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Mathlib's download cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/mathlib
+          key: mathlib-${{ runner.os }}-${{ steps.mathlib.outputs.commit }}
+          restore-keys: |
+            mathlib-${{ runner.os }}-
 
       # BuildBuddy remote execution (.bazelrc, config rbe): actions build and
       # run on BuildBuddy's Linux executors, with its remote cache and
