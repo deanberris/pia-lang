@@ -8,6 +8,7 @@ lit_tests(
     srcs = glob(["*.pia"], exclude = ["floats.pia", "saturate.pia", "bits.pia", "bit_counts.pia", "ffi_run.pia", "slices.pia", "consts.pia", "variants.pia", "record_buffers.pia", "arena.pia", "pages.pia", "spec_state.pia", "box_concept.pia", "box_error_payload.pia", "rec_run.pia", "slice_buffers_run.pia", "local_arrays.pia", "spread.pia"]),
     tools = [
         "//tools/pia-cert",
+        "//tools/pia-opt",
         "//tools/piac",
     ],
 )

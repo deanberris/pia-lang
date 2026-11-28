@@ -119,6 +119,7 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 - `src/dialect/Pia.td` and `src/dialect/PiaDialect.{h,cpp}` define `pia`: range integers, arrays, slices, records, `dyn` and scalar ops.
 - `src/dialect/Contract.td` and `src/dialect/ContractDialect.{h,cpp}` define `pia_contract`: requires, ensures, invariant, `obligation`, quantifiers and `old`.
 - `src/dialect/Par.td` and `src/dialect/ParDialect.{h,cpp}` define `pia_par`: tiled grids, `spread` and collectives. They are not lowered yet.
+- `src/dialect/Lib.td` and `src/dialect/LibDialect.{h,cpp}` define `pia_lib` (ADR 0078): its one op, `pia_lib.call`, is a call of a library function with a lowering rule. `markLibCalls` and `expandLibCalls` in `src/codegen/Lowerings.cpp` make and expand it; `tests/codegen/lib_call.pia` tests it.
 
 ### src/transforms, src/verify, src/codegen
 
