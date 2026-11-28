@@ -315,7 +315,6 @@ let rec value (s : [u8]) (pos : usize) (budget : int{0..255}) (values : inout mu
   else Err (Misplaced t.start)
 
 let parse (s : [u8]) (max_depth : int{0..255}) (values : inout mutable Pia.Mem.Alloc.bump json) (members : inout mutable Pia.Mem.Alloc.bump member) : result json dom_error
-  ensures (match result with | Ok v -> valid_dom s v | Err _ -> true)
 = let x = value s 0 max_depth values members? in
   let t = token s x.next? in
   if role t.kind = 11 then Ok x.value else Err (Trailing t.start)

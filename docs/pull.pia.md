@@ -1034,8 +1034,6 @@ One more cell.
 
 ```pia
 let lemma osum_next (order : [usize]) (down : [usize]) (flux : [u32]) (p : usize) : unit
-  requires p < max u32 + 1
-  ensures osum order down flux (p + 1) = osum order down flux p + oterm order down flux p
   with osum
 = ()
 ```
@@ -1379,16 +1377,6 @@ The kernel's postcondition, as the two invariants.
 ```pia
 let lemma ready_init (fill : [u16]) (down : [usize]) (acc : [u32]) (order : [usize]) (w : usize) (bed0 : [u32]) (flux : [u32])
     (gathered : [u64]) (newbed : [u32]) (newout : [u32]) (lo : usize) (hi : usize) : unit
-  requires len down = len fill && len acc = len fill && len order = len fill && len bed0 = len fill && len flux = len fill
-  requires len gathered = len fill && len newbed = len fill && len newout = len fill && hi <= len fill
-  requires forall (r in 0 .. len order). order.[r] < len fill
-  requires w >= 3 && w < max usize
-  requires forall (q in lo .. hi). gathered.[q] = inflow_of down flux w (order.[q])
-  requires forall (q in lo .. hi). gathered.[q] + bed0.[order.[q]] <= max u32 ==>
-    newbed.[q] = eb (gathered.[q]) (cap_of fill down acc (order.[q])) (bed0.[order.[q]])
-    && newout.[q] = el (gathered.[q]) (cap_of fill down acc (order.[q])) (bed0.[order.[q]])
-  ensures ready_in down order w flux gathered lo hi
-  ensures ready_vals fill down acc order bed0 gathered newbed newout lo hi
   with ready_in, ready_vals
 = ()
 ```
@@ -1460,10 +1448,6 @@ The invariants hold at the start.
 ```pia
 let lemma start_pull (fill : [u16]) (down : [usize]) (acc : [u32]) (bed0 : [u32]) (bed : [u32]) (flux : [u32]) (seen : [u64])
     (pos : [usize]) (w : usize) : unit
-  requires len down = len fill && len acc = len fill && len bed0 = len fill && len bed = len fill && len flux = len fill
-  requires len seen = len fill && len pos = len fill && w >= 3 && w < max usize
-  ensures done_if_upto fill down acc bed0 bed flux seen pos 0
-  ensures linked_upto down flux seen pos 0 w
   with done_if_upto, linked_upto
 = ()
 ```
@@ -1473,13 +1457,6 @@ And give `settled_if` and `linked` at the end.
 ```pia
 let lemma finish_pull (fill : [u16]) (down : [usize]) (acc : [u32]) (bed0 : [u32]) (bed : [u32]) (flux : [u32]) (seen : [u64])
     (pos : [usize]) (w : usize) : unit
-  requires len down = len fill && len acc = len fill && len bed0 = len fill && len bed = len fill && len flux = len fill
-  requires len seen = len fill && len pos = len fill && w >= 3 && w < max usize
-  requires forall (k in 0 .. len pos). pos.[k] < len fill
-  requires done_if_upto fill down acc bed0 bed flux seen pos (len fill)
-  requires linked_upto down flux seen pos (len fill) w
-  ensures settled_if fill down acc bed0 bed flux seen
-  ensures linked down flux seen w
   with done_if_upto, linked_upto, settled_if, linked
 = ()
 ```
@@ -1544,24 +1521,6 @@ let copy_back (fill : [u16]) (down : [usize]) (acc : [u32]) (order : [usize]) (p
     (gathered : [u64]) (newbed : [u32]) (newout : [u32])
     (bed : borrowed inout mutable [u32]) (flux : borrowed inout mutable [u32]) (seen : borrowed inout mutable [u64])
     (lo : usize) (hi : usize) (v : u16) (g : u64) (g0 : u64) : u64
-  requires len down = len fill && len acc = len fill && len order = len fill && len pos = len fill && len bed0 = len fill
-  requires len gathered = len fill && len newbed = len fill && len newout = len fill
-  requires len bed = len fill && len flux = len fill && len seen = len fill
-  requires w >= 3 && w < max usize && lo <= hi && hi <= len fill
-  requires forall (r in 0 .. len order). order.[r] < len pos && pos.[order.[r]] = r
-  requires forall (k in 0 .. len pos). pos.[k] < len order && order.[pos.[k]] = k
-  requires forall (a in 0 .. len order) (b in 0 .. len order). a < b ==> fill.[order.[b]] <= fill.[order.[a]]
-  requires forall (k in 0 .. len down). down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k])
-  requires forall (k in 0 .. len down). down.[k] < len fill
-  requires forall (r in lo .. hi). fill.[at order r] = v
-  requires done_if_upto fill down acc bed0 bed flux seen pos lo
-  requires linked_upto down flux seen pos lo w
-  requires ready_in down order w flux gathered lo hi
-  requires ready_vals fill down acc order bed0 gathered newbed newout lo hi
-  requires len fill < max u32 && g0 <= max u32 && g = g0 + osum order down flux lo
-  ensures result = g0 + osum order down flux hi
-  ensures done_if_upto fill down acc bed0 bed flux seen pos hi
-  ensures linked_upto down flux seen pos hi w
 =
   let g2 : mutable u64 = g in
   for q in lo .. hi
@@ -1580,10 +1539,6 @@ The end of the wave that starts at lo: every cell of the same height.
 
 ```pia
 let wave_end (fill : [u16]) (order : [usize]) (lo : usize) : usize
-  requires len order = len fill && lo < len fill
-  requires forall (r in 0 .. len order). order.[r] < len fill
-  ensures lo < result && result <= len fill
-  ensures forall (r in lo .. result). fill.[at order r] = fill.[order.[lo]]
 =
   let v = fill.[order.[lo]] in
   let hi : mutable usize = lo + 1 in

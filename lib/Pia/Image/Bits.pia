@@ -125,14 +125,10 @@ let lemma window_bits (s : [u8]) (pos : usize) (n : int{0..16}) (q : usize) : un
 
 (** The number of addressable bits of s. *)
 let bit_len (s : [u8]) : usize
-  ensures result = nbits s
 = if len s <= max usize / 8 then 8 * len s else max usize
 
 (** The n-bit field at bit pos, least significant bit first. *)
 let read_bits (s : [u8]) (pos : usize) (n : int{0..16}) : u32
-  requires pos + n <= nbits s
-  ensures result = bits_at s pos n
-  ensures result < pow2 n
 = let q : usize = pos / 8 in
   let r : int{0..7} = pos % 8 in
   let b0 : u32 = if q < len s then s.[q] else 0 in
@@ -147,11 +143,6 @@ let read_bits (s : [u8]) (pos : usize) (n : int{0..16}) : u32
 (** Writes v as the n-bit field at bit pos, least significant bit first,
     and leaves every other bit of dst as it was. *)
 let write_bits (dst : borrowed inout mutable [u8]) (pos : usize) (n : int{0..16}) (v : u32) : unit
-  requires v < pow2 n
-  requires pos + n <= nbits dst
-  ensures bits_at dst pos n = v
-  ensures forall (k in 0 .. len dst). (k < pos / 8 || pos + n <= 8 * k) ==> dst.[k] = old (dst.[k])
-  ensures win dst (pos / 8) = ((old (win dst (pos / 8)) & ~(field n (pos % 8))) | (v << (pos % 8)))
 = let q : usize = pos / 8 in
   let r : int{0..7} = pos % 8 in
   let one : u32 = 1 in

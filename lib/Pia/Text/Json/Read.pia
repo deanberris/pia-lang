@@ -262,10 +262,6 @@ let read_int (s : [u8]) (pos : usize) (lo : i64) (hi : i64) : result int_read nu
        | _ -> Err (NotNumber t.start))
 
 let read_bool (s : [u8]) (pos : usize) : result bool_read usize
-  requires pos <= len s
-  ensures (match result with
-    | Ok r -> pos < r.stop && r.stop <= len s
-    | Err p -> p <= len s)
 = match Lex.next s pos with
   | Err e -> Err (lex_pos e)
   | Ok t ->
@@ -275,10 +271,6 @@ let read_bool (s : [u8]) (pos : usize) : result bool_read usize
        | _ -> Err t.start)
 
 let open_object (s : [u8]) (pos : usize) : result opened usize
-  requires pos <= len s
-  ensures (match result with
-    | Ok o -> pos < o.next && o.next <= len s
-    | Err p -> p <= len s)
 = match Lex.next s pos with
   | Err e -> Err (lex_pos e)
   | Ok t ->
@@ -312,10 +304,6 @@ let read_key (s : [u8]) (pos : usize) : result key usize
        | _ -> Err t.start)
 
 let after_member (s : [u8]) (pos : usize) : result sep usize
-  requires pos <= len s
-  ensures (match result with
-    | Ok r -> pos < r.next && r.next <= len s && (r.more = false ==> r.next >= 1 && s.[r.next - 1] = 0x7D)
-    | Err p -> p <= len s)
 = match Lex.next s pos with
   | Err e -> Err (lex_pos e)
   | Ok t ->
@@ -325,10 +313,6 @@ let after_member (s : [u8]) (pos : usize) : result sep usize
        | _ -> Err t.start)
 
 let read_null (s : [u8]) (pos : usize) : result usize usize
-  requires pos <= len s
-  ensures (match result with
-    | Ok e -> pos < e && e <= len s
-    | Err p -> p <= len s)
 = match Lex.next s pos with
   | Err e -> Err (lex_pos e)
   | Ok t ->
@@ -350,10 +334,6 @@ let read_str (s : [u8]) (pos : usize) : result span usize
        | _ -> Err t.start)
 
 let skip_scalar (s : [u8]) (pos : usize) : result usize usize
-  requires pos <= len s
-  ensures (match result with
-    | Ok e -> pos < e && e <= len s
-    | Err p -> p <= len s)
 = match Lex.next s pos with
   | Err e -> Err (lex_pos e)
   | Ok t ->
@@ -366,10 +346,6 @@ let skip_scalar (s : [u8]) (pos : usize) : result usize usize
        | _ -> Err t.start)
 
 let open_array (s : [u8]) (pos : usize) : result opened usize
-  requires pos <= len s
-  ensures (match result with
-    | Ok o -> pos < o.next && o.next <= len s
-    | Err p -> p <= len s)
 = match Lex.next s pos with
   | Err e -> Err (lex_pos e)
   | Ok t ->
@@ -384,10 +360,6 @@ let open_array (s : [u8]) (pos : usize) : result opened usize
        | _ -> Err t.start)
 
 let after_element (s : [u8]) (pos : usize) : result sep usize
-  requires pos <= len s
-  ensures (match result with
-    | Ok r -> pos < r.next && r.next <= len s
-    | Err p -> p <= len s)
 = match Lex.next s pos with
   | Err e -> Err (lex_pos e)
   | Ok t ->

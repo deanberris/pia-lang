@@ -70,8 +70,6 @@ let spec be32 (s : [u8]) (q : usize) : u32
 
 (** The Adler-32 of the first n bytes of s. *)
 let adler32 (s : [u8]) (n : usize) : u32
-  requires n <= len s
-  ensures result = adler s n
 = let a : mutable u32 = 1 in
   let b : mutable u32 = 0 in
   for i in 0 .. n
@@ -85,12 +83,6 @@ let adler32 (s : [u8]) (n : usize) : u32
 (** Decompresses the zlib stream s into dst. lb, ltab and dtab are
     Pia.Compress.Inflate's scratch. *)
 let decompress (s : [u8]) (dst : borrowed inout mutable [u8]) (lb : borrowed inout mutable [u8]) (ltab : borrowed inout mutable [u8]) (dtab : borrowed inout mutable [u8]) : result zout zlib_error
-  requires len s <= 1152921504606846975
-  requires len lb = 320 && len ltab = 704 && len dtab = 704
-  ensures (match result with
-    | Ok r -> r.n <= len dst && r.trailer < len s && 4 <= len s - r.trailer
-              && be32 s r.trailer = adler dst r.n
-    | Err _ -> true)
 = if len s < 2 then Err (ZEnds 0)
   else (
     let cmf : u32 = s.[0] in

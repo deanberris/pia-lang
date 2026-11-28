@@ -528,15 +528,6 @@ let pull_step_gpu (fill : [u16]) (down : [usize]) (acc : [u32]) (order : [usize]
     (bed : borrowed inout mutable [u32]) (flux : borrowed inout mutable [u32]) (seen : borrowed inout mutable [u64])
     (gathered : borrowed inout mutable [u64]) (newbed : borrowed inout mutable [u32]) (newout : borrowed inout mutable [u32])
     (starts : borrowed inout mutable [usize]) (gone : u64) (sent : out mutable [u64]) : i32
-  requires len down = len fill && len acc = len fill && len order = len fill && len pos = len fill && len bed0 = len fill
-  requires len bed = len fill && len flux = len fill && len seen = len fill
-  requires len gathered = len fill && len newbed = len fill && len newout = len fill && len starts = len fill + 1
-  requires w >= 3 && w < max usize && len fill < max u32 && gone <= max u32 && len sent = 1
-  requires forall (r in 0 .. len order). order.[r] < len pos && pos.[order.[r]] = r
-  requires forall (k in 0 .. len pos). pos.[k] < len order && order.[pos.[k]] = k
-  requires forall (a in 0 .. len order) (b in 0 .. len order). a < b ==> fill.[order.[b]] <= fill.[order.[a]]
-  requires forall (k in 0 .. len down). down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k])
-  requires forall (k in 0 .. len down). down.[k] < len fill
 =
   match pull_step_on_gpu fill down acc order pos w bed0 bed flux seen gathered newbed newout starts gone with
   | Ok s -> (sent.[0] <- s; 0)

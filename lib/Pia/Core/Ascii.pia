@@ -56,103 +56,77 @@ end
 
 (** lo <= c <= hi: the one range test the classifiers share. *)
 let between (c : u8) (lo : u8) (hi : u8) : bool
-  ensures result <==> lo <= c && c <= hi
 = lo <= c && c <= hi
 
 (** C++: std::isdigit. *)
 let is_digit (c : u8) : bool
-  ensures result <==> 48 <= c && c <= 57
 = between c 48 57
 
 (** C++: std::isupper. *)
 let is_upper (c : u8) : bool
-  ensures result <==> 65 <= c && c <= 90
 = between c 65 90
 
 (** C++: std::islower. *)
 let is_lower (c : u8) : bool
-  ensures result <==> 97 <= c && c <= 122
 = between c 97 122
 
 (** C++: std::isalpha. *)
 let is_alpha (c : u8) : bool
-  ensures result <==> (65 <= c && c <= 90) || (97 <= c && c <= 122)
 = is_upper c || is_lower c
 
 (** C++: std::isalnum. *)
 let is_alnum (c : u8) : bool
-  ensures result <==> (48 <= c && c <= 57) || (65 <= c && c <= 90) || (97 <= c && c <= 122)
 = is_digit c || is_alpha c
 
 (** C++: std::isxdigit. *)
 let is_xdigit (c : u8) : bool
-  ensures result <==> (48 <= c && c <= 57) || (65 <= c && c <= 70) || (97 <= c && c <= 102)
 = is_digit c || between c 65 70 || between c 97 102
 
 (** C++: std::isspace: space, tab, newline, vertical tab, form feed and
     carriage return. *)
 let is_space (c : u8) : bool
-  ensures result <==> c = 32 || (9 <= c && c <= 13)
 = c = 32 || between c 9 13
 
 (** C++: std::isblank: space and tab. *)
 let is_blank (c : u8) : bool
-  ensures result <==> c = 32 || c = 9
 = c = 32 || c = 9
 
 (** C++: std::iscntrl. *)
 let is_cntrl (c : u8) : bool
-  ensures result <==> c <= 31 || c = 127
 = c <= 31 || c = 127
 
 (** C++: std::isprint. *)
 let is_print (c : u8) : bool
-  ensures result <==> 32 <= c && c <= 126
 = between c 32 126
 
 (** C++: std::isgraph. *)
 let is_graph (c : u8) : bool
-  ensures result <==> 33 <= c && c <= 126
 = between c 33 126
 
 (** C++: std::ispunct: printable, not a space, and not alphanumeric. *)
 let is_punct (c : u8) : bool
-  ensures result <==> (33 <= c && c <= 126) && ((48 <= c && c <= 57) || (65 <= c && c <= 90) || (97 <= c && c <= 122)) = false
 = is_graph c && is_alnum c = false
 
 (** C++: std::toupper. *)
 let to_upper (c : u8) : u8
-  ensures 97 <= c && c <= 122 ==> result = c - 32
-  ensures (c < 97 || c > 122) ==> result = c
 = if is_lower c then c - 32 else c
 
 (** C++: std::tolower. *)
 let to_lower (c : u8) : u8
-  ensures 65 <= c && c <= 90 ==> result = c + 32
-  ensures (c < 65 || c > 90) ==> result = c
 = if is_upper c then c + 32 else c
 
 (** A decimal digit's value. *)
 let digit_value (c : int{48..57}) : int{0..9}
-  ensures result = c - 48
 = let v : u8 = c in v - 48
 
 (** The decimal digit for d: digit_value (digit d) = d. *)
 let digit (d : int{0..9}) : int{48..57}
-  ensures result - 48 = d
 = let v : u8 = d in v + 48
 
 (** A hexadecimal digit's value, either case. *)
 let hex_value (c : u8) : int{0..15}
-  requires (48 <= c && c <= 57) || (65 <= c && c <= 70) || (97 <= c && c <= 102)
-  ensures 48 <= c && c <= 57 ==> result = c - 48
-  ensures 65 <= c && c <= 70 ==> result = c - 55
-  ensures 97 <= c && c <= 102 ==> result = c - 87
 = let v : u8 = if c <= 57 then c - 48 else if c <= 70 then c - 55 else c - 87 in v
 
 (** The lower-case hexadecimal digit for d: hex_value (hex_digit d) = d. *)
 let hex_digit (d : int{0..15}) : u8
-  ensures d < 10 ==> result - 48 = d
-  ensures d >= 10 ==> result - 87 = d
-  ensures (48 <= result && result <= 57) || (97 <= result && result <= 102)
 = let v : u8 = d in if v < 10 then v + 48 else v + 87

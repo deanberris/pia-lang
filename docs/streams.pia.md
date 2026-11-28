@@ -1148,7 +1148,6 @@ The shared palette: 256 colours, three bytes each.
 
 ```pia
 let palette (pal : out mutable [u8]) : unit
-  requires len pal = 768
 = for i in 0..256 do
     let c = index_colour i in
     let j = i + i + i in

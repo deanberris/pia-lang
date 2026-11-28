@@ -66,8 +66,6 @@ end
 (* The precondition, postcondition and assertion are proved, then erased.
 *)
 let dec (x : u8) : u8
-  requires x > 3
-  ensures result >= 3
 =
   assert x >= 4;
   x - 1

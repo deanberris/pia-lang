@@ -232,10 +232,6 @@ let digits (s : [u8]) (i : usize) (j : usize) (max : u64) : result u64 nonconfor
   if bad then Err Nonconforming else Ok acc
 
 let read_int (s : [u8]) (v : Pia.Text.Json.Dom.json) (lo : i64) (hi : i64) : result i64 nonconforming
-  requires lo <= hi
-  ensures (match result with
-    | Ok x -> lo <= x && x <= hi && int_in s v lo hi && x = int_value s v lo hi
-    | Err _ -> int_in s v lo hi = false)
   with int_in, int_value
 = match v with
   | Num sp ->
@@ -266,22 +262,18 @@ let read_int (s : [u8]) (v : Pia.Text.Json.Dom.json) (lo : i64) (hi : i64) : res
   | _ -> Err Nonconforming
 
 let bool_value (v : Pia.Text.Json.Dom.json) : bool
-  requires is_bool v
-  ensures result = (v = Pia.Text.Json.Dom.Bool true)
   with is_bool
 = match v with
   | Bool b -> b
   | _ -> false
 
 let check_bool (v : Pia.Text.Json.Dom.json) : bool
-  ensures result = is_bool v
   with is_bool
 = match v with
   | Bool _ -> true
   | _ -> false
 
 let check_null (v : Pia.Text.Json.Dom.json) : bool
-  ensures result = is_null v
   with is_null
 = match v with
   | JNull -> true
@@ -289,7 +281,6 @@ let check_null (v : Pia.Text.Json.Dom.json) : bool
 
 (* Whether the key's span is name in quotes, compared byte by byte. *)
 let key_matches (s : [u8]) (sp : Pia.Text.Json.Dom.span) (name : [u8]) : bool
-  ensures result = key_is s sp name
   with key_is
 = if sp.start < sp.stop && sp.stop <= len s && len name < sp.stop - sp.start
      && sp.stop - sp.start - len name = 2 then
@@ -305,9 +296,6 @@ let key_matches (s : [u8]) (sp : Pia.Text.Json.Dom.span) (name : [u8]) : bool
   else false
 
 let find (s : [u8]) (items : [Pia.Text.Json.Dom.member]) (name : [u8]) : result usize nonconforming
-  ensures (match result with
-    | Ok i -> i < len items && key_is s items.[i].key name
-    | Err _ -> forall (i in 0 .. len items). key_is s items.[i].key name = false)
 = let at : mutable usize = 0 in
   let found : mutable bool = false in
   while at < len items && found = false
@@ -322,7 +310,6 @@ let find (s : [u8]) (items : [Pia.Text.Json.Dom.member]) (name : [u8]) : result 
   if found then Ok at else Err Nonconforming
 
 let only (s : [u8]) (items : [Pia.Text.Json.Dom.member]) (name : [u8]) (i : usize) : bool
-  ensures result = (forall (j in 0 .. len items). key_is s items.[j].key name ==> j = i)
 = let ok : mutable bool = true in
   for j in 0 .. len items
     invariant ok = (forall (q in 0 .. j). key_is s items.[q].key name ==> q = i)

@@ -441,8 +441,6 @@ let spec escaped_size (s : [u8]) (i : usize) (j : usize) : usize
 = if i < j then byte_size s.[i] + escaped_size s (i + 1) j else 0
 
 let string_size (src : [u8]) : usize
-  requires len src <= 1000000000000
-  ensures result = 2 + escaped_size src 0 (len src)
 = let n : mutable usize = 2 in
   let i : mutable usize = len src in
   while i > 0

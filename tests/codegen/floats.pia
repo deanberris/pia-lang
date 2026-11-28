@@ -94,14 +94,12 @@ let clamp01 (x : f32) : f32 =
 
 (* A reduction in order, one rounding per step. *)
 let dot (xs : [f32]) (ys : [f32]) : f32
-  requires len xs = len ys
 =
   let s : mutable f32 = 0.0 in
   for i in 0..len xs do s <- s + xs.[i] * ys.[i] done;
   s
 
 let scale (xs : [f32]) (k : f32) (dst : out mutable [f32]) : unit
-  requires len xs = len dst
 =
   for i in 0..len xs do dst.[i] <- xs.[i] * k done
 
@@ -128,11 +126,9 @@ let narrow (x : f64) : f32 = f32 x
 (* -2^31 and 2^31 are both f32s: the least i32, and the first f32 past the
    greatest. *)
 let trunc_i32 (x : f32) : i32
-  requires -2147483648.0 <= x && x < 2147483648.0
 = i32 x
 
 let trunc_u8 (x : f64) : u8
-  requires -1.0 < x && x < 256.0
 = u8 x
 
 (* The encoding, bit for bit. *)
@@ -145,7 +141,6 @@ let from_bits64 (u : u64) : f64 = from_bits u
 let fabs32 (x : f32) : f32 = from_bits (to_bits x & 2147483647)
 
 let mean (xs : [f32]) : f32
-  requires len xs > 0
 =
   let s : mutable f32 = 0.0 in
   for i in 0..len xs do s <- s + xs.[i] done;

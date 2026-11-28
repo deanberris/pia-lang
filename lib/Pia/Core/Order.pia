@@ -515,14 +515,10 @@ order_family "i64"
    an ordering, ADR 0043), so it is exported for u8 only, memcmp's role. *)
 (** C++: std::lexicographical_compare_three_way. *)
 let lexicographical_compare_three_way (xs : [u8]) (ys : [u8]) : ordering
-  ensures result = Less <==> lex_from<u8> xs ys 0
-  ensures result = Greater ==> lex_from<u8> ys xs 0
-  ensures result = Equal ==> lex_from<u8> xs ys 0 = false && lex_from<u8> ys xs 0 = false
 = lex_compare_three_way<u8> xs ys
 
 (** Eq: equality of booleans. *)
 let same (a : bool) (b : bool) : bool
-  ensures result <==> a = b
 = (a = b)
 
 (** Ord: false before true. *)

@@ -14,8 +14,6 @@ end
 let spec dbl (x : int) : int = x + x
 
 let lemma dbl_mono (a : int) (b : int) : unit
-  requires a <= b
-  ensures dbl a <= dbl b
 = ()
 
 (* Proved by induction, so the interface's contract follows only from a
@@ -25,6 +23,5 @@ let spec tri (n : u8) : int
 = if n = 0 then 0 else n + tri (n - 1)
 
 let lemma tri_ge (n : u8) : unit
-  ensures tri n >= n
   decreases n
 = if n > 0 then tri_ge (n - 1)

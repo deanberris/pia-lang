@@ -793,11 +793,6 @@ let inflate_ref (s : [u8]) (pos : usize) (dst : borrowed inout mutable [u8]) (lb
     lb, ltab and dtab are scratch: inflate_ref with no stream to compare
     against. *)
 let inflate (s : [u8]) (pos : usize) (dst : borrowed inout mutable [u8]) (lb : borrowed inout mutable [u8]) (ltab : borrowed inout mutable [u8]) (dtab : borrowed inout mutable [u8]) : result inflated inflate_error
-  requires len s <= 1152921504606846975 && pos <= B.nbits s
-  requires len lb = 320 && len ltab = 704 && len dtab = 704
-  ensures (match result with
-    | Ok r -> r.written <= len dst && pos < r.pos && r.pos <= B.nbits s
-    | Err _ -> true)
 = let spec zu : [usize; 1] = zeros in
   let spec zs : [int{0..319}; 1] = zeros in
   let spec zb : [[u8]; 1] = zeros in

@@ -846,7 +846,6 @@ a height unit per 64 units of bed, at most `max u16`.
 
 ```pia
 let surface (rock : [u16]) (bed : [u32]) (height : out mutable [u16]) : unit
-  requires len bed = len rock && len height = len rock
 = for c in 0 .. len rock
   do
     let r : u64 = rock.[c] in

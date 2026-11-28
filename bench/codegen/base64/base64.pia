@@ -88,8 +88,6 @@ let b64_encode (dst : borrowed inout mutable [u8]) (src : [u8]) : usize
    before a group of four is skipped, and a byte outside the alphabet fails
    the whole decode, which returns -1 where the C returns false. *)
 let b64_decode (dst : borrowed inout mutable [u8]) (src : [u8]) : i64
-  requires len src <= 1'000'000'000
-  requires 4 * len dst >= 3 * len src + 16
 = let size : mutable usize = len src in
   while size > 0 && (src.[size - 1] = 10 || src.[size - 1] = 13 || src.[size - 1] = 61)
     invariant size <= len src

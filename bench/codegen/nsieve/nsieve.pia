@@ -9,7 +9,6 @@ end
    each prime from 2i up crossed out; the result is the number of primes
    below m. The C driver owns the buffer, as C's malloc does. *)
 let ns_count (flags : borrowed inout mutable [u8]) : u32
-  requires len flags <= 1'000'000'000
 = let m : usize = len flags in
   for k in 0 .. m do flags.[k] <- 1 done;
   let count : mutable u32 = 0 in

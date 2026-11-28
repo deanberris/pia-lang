@@ -21,7 +21,6 @@ end
 let ordering = type | Lt | Eq | Gt
 
 let before (a : u8) (b : u8) : bool
-  ensures result <==> a < b
 = a < b
 
 let compare (t : type where Before t) (a : t) (b : t) : ordering

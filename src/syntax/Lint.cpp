@@ -1,6 +1,7 @@
 // Lints for idiomatic Pia (ADR 0037). See Lint.h and docs/idioms.md.
 
 #include "syntax/Lint.h"
+#include "syntax/Interfaces.h"
 #include "syntax/RecTypes.h"
 
 #include <algorithm>
@@ -365,6 +366,7 @@ public:
     walk(program, /*topLevel=*/true);
     families(program);
     needlessRec(program);
+    repeatedContracts(program);
     std::stable_sort(out_.begin(), out_.end(),
                      [](const Lint &a, const Lint &b) {
                        return a.loc.offset < b.loc.offset;
@@ -404,6 +406,110 @@ private:
                   "refer to itself; drop 'rec'";
       add(std::move(l));
     }
+  }
+
+  // A definition whose contract is exactly what it would inherit from the
+  // interface that lists it says it twice (ADR 0077, step 2). The check
+  // strips each listed definition's contract from a copy, lets it inherit,
+  // and compares what comes back with what was written.
+  void repeatedContracts(const Node &program) {
+    bool header = false, iface = false;
+    for (const NodePtr &item : program.kids) {
+      header = header || item->kind == N::ModuleHeader;
+      iface = iface || item->kind == N::Interface;
+    }
+    if (!header || !iface)
+      return;
+    NodePtr copy = clone(program);
+    std::vector<size_t> stripped;
+    for (size_t i = 0; i < copy->kids.size(); ++i) {
+      Node &item = *copy->kids[i];
+      if (item.kind != N::LetItem || item.kids.size() < 4)
+        continue;
+      std::vector<NodePtr> &cs = item.kids[2]->kids;
+      size_t before = cs.size();
+      cs.erase(
+          std::remove_if(cs.begin(), cs.end(),
+                         [](const NodePtr &c) { return isCallerClause(*c); }),
+          cs.end());
+      if (cs.size() != before)
+        stripped.push_back(i);
+    }
+    Diagnostics ignored;
+    inheritInterfaceContracts(*copy, ignored);
+    for (size_t i : stripped) {
+      const Node &own = *program.kids[i];
+      std::vector<const Node *> written, inherited;
+      for (const NodePtr &c : own.kids[2]->kids)
+        if (isCallerClause(*c))
+          written.push_back(c.get());
+      for (const NodePtr &c : copy->kids[i]->kids[2]->kids)
+        if (isCallerClause(*c))
+          inherited.push_back(c.get());
+      if (written.size() != inherited.size())
+        continue;
+      bool same = true;
+      for (size_t k = 0; same && k < written.size(); ++k) {
+        std::string a, b;
+        keyOf(*written[k], a, false, false);
+        keyOf(*inherited[k], b, false, false);
+        same = a == b;
+      }
+      if (!same)
+        continue;
+      // A foreign function's contract is what --trust-report lists, and the
+      // bindings generator writes it on every row, so it stays.
+      const Node &body = *own.kids[3];
+      if (body.kind == N::Apply && body.kids.size() == 2 &&
+          body.kids[0]->kind == N::Name && body.kids[0]->text == "extern")
+        continue;
+      allowOf(own);
+      Lint l;
+      l.name = "repeated_contract";
+      l.loc = written.front()->loc;
+      l.end = clauseEnd(own, *written.back());
+      l.message = "'" + own.text +
+                  "' repeats the contract of the interface "
+                  "that lists it, which it takes when it states none; "
+                  "remove it";
+      l.fixTitle = "Remove the contract the interface already states";
+      for (const Node *c : written) {
+        Span whole;
+        whole.b = c->loc.offset;
+        whole.e = clauseEnd(own, *c);
+        l.edits.push_back(removeClause(*c, {whole}));
+      }
+      add(std::move(l));
+      allow_.clear();
+    }
+  }
+
+  // Where a clause of `fn` ends: before the next clause or the `=` of the
+  // body, so a closing parenthesis, which no node covers, goes with it.
+  uint32_t clauseEnd(const Node &fn, const Node &clause) const {
+    uint32_t begin = clause.loc.offset;
+    // A node's location is its operator, not its first token, so the body
+    // starts where its leftmost leaf does.
+    uint32_t body = spanOf(*fn.kids[3], src_).b;
+    uint32_t stop = body;
+    for (const NodePtr &c : fn.kids[2]->kids)
+      if (c->loc.offset > begin && c->loc.offset < stop)
+        stop = c->loc.offset;
+    if (stop == body) {
+      uint32_t eq = stop;
+      while (eq > begin && src_[eq - 1] != '=')
+        --eq;
+      if (eq > begin)
+        stop = eq - 1;
+    }
+    while (stop > begin && isSpace(src_[stop - 1]))
+      --stop;
+    return std::max(stop, spanOf(clause, src_).e);
+  }
+
+  static bool isCallerClause(const Node &c) {
+    return c.kind == N::Requires || c.kind == N::Ensures ||
+           c.kind == N::Costs || c.kind == N::Reads;
   }
 
   void walk(const Node &n, bool topLevel) {
@@ -1108,7 +1214,8 @@ const std::vector<std::string_view> &lintNames() {
                                                       "deep_fuel",
                                                       "assume",
                                                       "costly_goal",
-                                                      "needless_rec"};
+                                                      "needless_rec",
+                                                      "repeated_contract"};
   return names;
 }
 

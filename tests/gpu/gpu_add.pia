@@ -36,7 +36,6 @@ let run (a : [i32]) (b : [i32]) (c : out mutable [i32]) : result unit G.error
   Ok ()
 
 let gpu_add (a : [i32]) (b : [i32]) (c : out mutable [i32]) : i32
-  requires len a = 1024 && len b = 1024 && len c = 1024
 =
   match run a b c with
   | Ok -> 0

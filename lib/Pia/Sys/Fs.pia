@@ -65,20 +65,17 @@ let decode (e : i32) : errno =
   else Other e
 
 let open_read (path : [u8]) : result file errno
-  requires len path >= 1 && path.[len path - 1] = 0
 = let flags : i32 = (Pia.Sys.Posix.o_rdonly | Pia.Sys.Posix.o_cloexec) in
   let r = Pia.Sys.Posix.open path flags in
   if r < 0 then Err (decode Pia.Sys.Posix.errno) else Ok { raw = r }
 
 let create (path : [u8]) (mode : int{0..4095}) : result file errno
-  requires len path >= 1 && path.[len path - 1] = 0
 = let flags : i32 =
     (Pia.Sys.Posix.o_wronly | Pia.Sys.Posix.o_creat | Pia.Sys.Posix.o_trunc | Pia.Sys.Posix.o_cloexec) in
   let r = Pia.Sys.Posix.open_mode path flags mode in
   if r < 0 then Err (decode Pia.Sys.Posix.errno) else Ok { raw = r }
 
 let read_some (f : file) (buf : out mutable [u8]) : result usize errno
-  ensures (match result with | Ok n -> n <= len buf | Err _ -> true)
 = let r = Pia.Sys.Posix.read f.raw buf (len buf) in
   if r < 0 then Err (decode Pia.Sys.Posix.errno)
   else (let n : usize = r in Ok n)

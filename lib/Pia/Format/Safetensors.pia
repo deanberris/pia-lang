@@ -173,8 +173,6 @@ let spec placed (n : usize) (base : usize) (t : tensor) : bool =
 let found = type | Found of usize | Missing
 
 let lemma times_exact (a : u64) (b : u64) : unit
-  requires times a b < max u64
-  ensures times a b = a * b
   with times
 = ()
 
@@ -529,15 +527,6 @@ let place (k : J.key) (r : entry) (hl : usize) (base : usize) (n : usize) (expec
                   start = base + r.b; stop = base + r.e })
 
 let parse (s : [u8]) (ts : borrowed inout mutable [tensor]) : result layout st_error
-  ensures (match result with
-    | Ok l -> l.count <= len ts && 8 <= l.data && l.data <= len s
-              && l.meta_start <= l.meta_stop && l.meta_stop <= l.data
-              && (forall (j in 0 .. l.count). placed (len s) l.data ts.[j])
-              && (forall (j in 1 .. l.count). ts.[j - 1].stop = ts.[j].start)
-              && (l.count = 0 ==> l.data = len s)
-              && (forall (j in 0 .. l.count). (j = 0 ==> ts.[j].start = l.data) && (j + 1 = l.count ==> ts.[j].stop = len s))
-    | Err _ -> true)
-  ensures len s < 8 ==> (match result with | Ok _ -> false | Err _ -> true)
 = if len s < 8 then Err { problem = Short; at = len s }
   else (
     let n = le64 s in
@@ -606,9 +595,6 @@ let parse (s : [u8]) (ts : borrowed inout mutable [tensor]) : result layout st_e
           else Ok { data = base; count = cnt; meta_start = meta_start; meta_stop = meta_stop }))
 
 let find (s : [u8]) (ts : [tensor]) (count : usize) (name : [u8]) : found
-  ensures (match result with
-    | Found k -> k < count && k < len ts
-    | Missing -> true)
 = let n : usize = if count < len ts then count else len ts in
   let hit : mutable usize = n in
   for i in 0 .. n
@@ -622,7 +608,6 @@ let find (s : [u8]) (ts : [tensor]) (count : usize) (name : [u8]) : found
   if hit < n then Found hit else Missing
 
 let f32_word (s : [u8]) (t : tensor) (i : usize) : u32
-  requires within (len s) t && is_f32 t.dtype && i < t.count
 = let p : usize = t.start + 4 * i in
   let b0 : u32 = s.[p] in
   let b1 : u32 = s.[p + 1] in

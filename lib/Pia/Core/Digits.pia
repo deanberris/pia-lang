@@ -39,13 +39,9 @@ end
 
 (** v is its quotient by b times b, plus its last digit, which is below b. *)
 let lemma divmod32 (v : u32) (b : u32) : unit
-  requires b >= 2
-  ensures (v / b) * b + v % b = v && v % b < b
 = ()
 (** The same for u64. *)
 let lemma divmod64 (v : u64) (b : u64) : unit
-  requires b >= 2
-  ensures (v / b) * b + v % b = v && v % b < b
 = ()
 (** b to the k. *)
 let spec pow (b : int) (k : usize) : int
@@ -62,14 +58,11 @@ let spec dval (xs : [u8]) (i : usize) (j : usize) (b : int) : int
 (** The ring step behind prepend: (a * p + r) * b + x is a * (b * p)
     plus r * b + x. *)
 let lemma shift (a : int) (p : int) (r : int) (b : int) (x : int) : unit
-  ensures (a * p + r) * b + x = a * (b * p) + (r * b + x)
 = ()
 
 (** Prepending a digit: the value of xs.[i .. j] is its first digit times
     b^(j - i - 1), plus the value of the rest. *)
 let lemma prepend (xs : [u8]) (i : usize) (j : usize) (b : int) : unit
-  requires i < j && j <= len xs
-  ensures dval xs i j b = xs.[i] * pow b (j - i - 1) + dval xs (i + 1) j b
   decreases j - i
 = if j - i > 1 then (
     prepend xs i (j - 1) b;
@@ -90,25 +83,16 @@ let lemma prepend (xs : [u8]) (i : usize) (j : usize) (b : int) : unit
 
 (** Two slices that agree on xs.[i .. j] give it the same value. *)
 let lemma frame (xs : [u8]) (ys : [u8]) (i : usize) (j : usize) (b : int) : unit
-  requires i <= j && j <= len xs && j <= len ys
-  requires forall (k in 0 .. len xs). i <= k && k < j ==> xs.[k] = ys.[k]
-  ensures dval xs i j b = dval ys i j b
   decreases j - i
 = if i < j then frame xs ys i (j - 1) b
 
 (** The algebra of one step: q' * b + d, times b^k, plus the rest, is
     q' times b^(k + 1), plus d times b^k and the rest. *)
 let lemma step (v : int) (q : int) (b : int) (d : int) (pk : int) (rest : int) : unit
-  requires v = (q * b + d) * pk + rest
-  ensures v = q * (b * pk) + (d * pk + rest)
 = ()
 
 (** xs.[p] becomes d, and the digits after it keep their value. *)
 let put (xs : borrowed inout mutable [u8]) (p : usize) (d : u8) (n : usize) (b : int) : unit
-  requires p < n && n <= len xs
-  ensures xs.[p] = d
-  ensures forall (k in 0 .. len xs). k <> p ==> xs.[k] = old (xs.[k])
-  ensures dval xs (p + 1) n b = dval (old xs) (p + 1) n b
 = xs.[p] <- d;
   frame (old xs) xs (p + 1) n b
 

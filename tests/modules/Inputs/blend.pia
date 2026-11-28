@@ -13,9 +13,7 @@ interface C @abi(c) = sig
 end
 
 let blend (x : u8) (y : u8) : u8
-  ensures result <= x || result <= y
 = Image.Pixels.mix x y
 
 let grey (v : u8) : u8
-  requires v <= 200
 = Image.Pixels.luma v v v

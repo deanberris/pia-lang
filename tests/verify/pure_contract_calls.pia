@@ -18,7 +18,6 @@ end
 let pair = type { a : u8; b : u8 }
 
 let combine (a : u8) (b : u8) : u16
-  ensures result = a + b
 = a + b
 
 (* The postcondition does not pin down `a` and `b` uniquely, so unrelated calls

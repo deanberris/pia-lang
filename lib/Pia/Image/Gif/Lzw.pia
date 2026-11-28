@@ -52,8 +52,6 @@ let lzw_error = type | Truncated of usize | BadCode of usize | OutputFull of usi
 
 (** The length of entry k's string, by following its prefixes. *)
 let entry_len (t : [u8]) (clear : usize) (k : int{0..4095}) : usize
-  requires len t = 12288
-  ensures result = S.elen t clear k
 = let c : mutable usize = k in
   let n : mutable usize = 1 in
   let go : mutable bool = true in
@@ -74,12 +72,6 @@ let entry_len (t : [u8]) (clear : usize) (k : int{0..4095}) : usize
 
 (** Writes entry k's string, n bytes, at dst.[o ..], last byte first. *)
 let put_entry (t : [u8]) (clear : int{4..256}) (nx : int{0..4096}) (k : usize) (dst : borrowed inout mutable [u8]) (o : usize) (n : usize) : unit
-  requires len t = 12288 && S.table_ok t clear nx && S.valid clear nx k
-  requires n = S.elen t clear k && o + n <= len dst
-  requires forall (j in 0 .. o). dst.[j] < clear
-  ensures forall (d in 0 .. n). dst.[o + d] = S.sym t clear k d
-  ensures forall (j in 0 .. o + n). dst.[j] < clear
-  ensures forall (j in 0 .. len dst). (j < o || o + n <= j) ==> dst.[j] = old (dst.[j])
 = let c : mutable usize = k in
   let p : mutable usize = o + n - 1 in
   while c >= clear
@@ -517,15 +509,6 @@ let decode_ref (s : [u8]) (m : int{2..8}) (t : borrowed inout mutable [u8]) (dst
 (** decode_ref with no stream to compare against: the same code, since
     codegen erases the spec state. *)
 let decode (s : [u8]) (m : int{2..8}) (t : borrowed inout mutable [u8]) (dst : borrowed inout mutable [u8]) : result usize lzw_error
-  requires len t = 12288
-  ensures (match result with | Ok n -> n <= len dst | Err _ -> true)
-  ensures (match result with | Ok n -> (forall (i in 0 .. n). dst.[i] < B.pow2 m) | Err _ -> true)
-  ensures (match result with
-    | Ok n -> true
-    | Err e -> (match e with
-      | Truncated p -> p <= B.nbits s
-      | BadCode p -> p < B.nbits s
-      | OutputFull p -> p < B.nbits s))
 = let spec zu : [usize; 1] = zeros in
   let spec zw : [int{3..12}; 1] = zeros in
   let spec zc : [int{0..4095}; 1] = zeros in

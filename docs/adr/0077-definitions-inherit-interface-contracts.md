@@ -96,7 +96,7 @@ The interface artifact (`.piai`) is the interface as written, so it and the inte
 ### 6. Steps
 
 1. The rule, `tests/verify/inherited_contracts.pia`, and the docs and skills that teach modules. Done (PR #500).
-2. A lint, `repeated_contract`, for a definition whose contract is exactly its interface's, parameter names aside, with the fix of deleting it. About 210 definitions in some 50 files (the standard library, `tests/codegen`, the demos) repeat their contract today, so the lint lands with a change that moves them to the short form, and their reports' goal locations with them.
+2. A lint, `repeated_contract`, for a definition whose contract is exactly its interface's, parameter names aside, with the fix of deleting it (`tests/lint/repeated_contract.pia`). Foreign functions keep theirs, since the bindings generator writes the contract on every row. The repository moved to the short form in the same change (Dean, 2026-11-27): 527 clauses on about 210 definitions in 67 files, the standard library, `tests/codegen`, `tests/modules`, the demos and the literate pages. Done.
 3. `pia-lsp` hover shows an inherited contract on the definition, renamed to its parameters and marked with the interface it came from (`tests/lsp`). Done.
 
 ## Consequences

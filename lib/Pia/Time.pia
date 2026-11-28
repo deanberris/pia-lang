@@ -224,14 +224,9 @@ let lemma split_years (y : i64) : unit
 let ymd = type { year : int{-1000000..1000000}; month : int{1..12}; day : int{1..31} }
 (** Whether y is a leap year of the proleptic Gregorian calendar. *)
 let is_leap (y : int{-1000000..1000000}) : bool
-  ensures result <==> y % 4 = 0 && (y % 100 <> 0 || y % 400 = 0)
 = y % 4 = 0 && (y % 100 <> 0 || y % 400 = 0)
 (** C++: year_month_day_last's day: the number of days in month m of y. *)
 let last_day (y : int{-1000000..1000000}) (m : int{1..12}) : int{28..31}
-  ensures m = 2 ==> (result = 29 <==> is_leap y)
-  ensures m = 2 ==> result >= 28 && result <= 29
-  ensures m = 4 || m = 6 || m = 9 || m = 11 ==> result = 30
-  ensures m <> 2 && m <> 4 && m <> 6 && m <> 9 && m <> 11 ==> result = 31
 = if m = 2 then (if is_leap y then 29 else 28)
   else if m = 4 || m = 6 || m = 9 || m = 11 then 30 else 31
 let lemma leap_link (y : int{-1000000..1000000}) (era : i64) (yoe : int{0..399}) : unit
@@ -270,8 +265,6 @@ let spec civil_days (y0 : int{-1000000..1000000}) (m : int{1..12}) (d : int{1..3
 
 (** The days from 1970-01-01 to y0-m-d, as C++'s sys_days of it. *)
 let days_from_civil (y0 : int{-1000000..1000000}) (m : int{1..12}) (d : int{1..31}) : i64
-  requires d <= last_day y0 m
-  ensures result = civil_days y0 m d
 = let y : i64 = if m <= 2 then y0 - 1 else y0 in
   split_years y;
   let era : i64 = (if y >= 0 then y else y - 399) / 400 in
@@ -301,8 +294,6 @@ let doy_of_doe (doe : int{0..146096}) : int{0..365}
   doe - doe_of (yoe_of doe) 0
 
 let civil_from_days (z : int{-365962028..364523337}) : ymd
-  ensures valid result
-  ensures maps_to result z
 = let w : i64 = z in
   let s : i64 = w + 719468 in
   split_days s;
@@ -327,8 +318,6 @@ let civil_from_days (z : int{-365962028..364523337}) : ymd
 
 (** A valid date's day number is one that civil_from_days takes. *)
 let lemma in_range (y0 : int{-1000000..1000000}) (m : int{1..12}) (d : int{1..31}) : unit
-  requires d <= last_day y0 m
-  ensures civil_days y0 m d >= -365962028 && civil_days y0 m d <= 364523337
 = let y : i64 = if m <= 2 then y0 - 1 else y0 in
   split_years y;
   let era : i64 = (if y >= 0 then y else y - 399) / 400 in
@@ -408,7 +397,4 @@ let lemma injective (y1 : int{-1000000..1000000}) (m1 : int{1..12}) (d1 : int{1.
     is that of y0-m-d is y0-m-d. So civil_from_days (days_from_civil y0 m
     d), which maps_to that day number, is y0-m-d. *)
 let lemma unique (c : ymd) (y0 : int{-1000000..1000000}) (m : int{1..12}) (d : int{1..31}) : unit
-  requires d <= last_day y0 m
-  requires maps_to c (civil_days y0 m d)
-  ensures c.year = y0 && c.month = m && c.day = d
 = injective c.year c.month c.day y0 m d

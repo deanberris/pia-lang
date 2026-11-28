@@ -69,7 +69,6 @@ let luma (r : u8) (g : u8) (b : u8) : u8 =
   y / 4
 
 let gray (rgb : [u8]) (dst : out mutable [u8]) : unit
-  requires len rgb = len dst + len dst + len dst
 =
   for i in 0..len dst do
     let j = i + i + i in
@@ -104,7 +103,6 @@ let blur_row (src : [u8]) (w : usize) (r : usize) (dst : inout mutable [u8])
 (* A 3x3 box blur, which smooths out noise. Border pixels are copied
    unchanged. *)
 let blur (src : [u8]) (w : usize) (dst : out mutable [u8]) : unit
-  requires len dst = len src && w >= 3 && w + w + w <= len src
 =
   for i in 0..len src do dst.[i] <- src.[i] done;
   let r : mutable usize = w in
@@ -154,7 +152,6 @@ let sobel_row (src : [u8]) (w : usize) (r : usize) (dst : inout mutable [u8])
 
 (* The edge strength of every pixel. Border pixels are 0. *)
 let sobel (src : [u8]) (w : usize) (dst : out mutable [u8]) : unit
-  requires len dst = len src && w >= 3 && w + w + w <= len src
 =
   for i in 0..len src do dst.[i] <- 0 done;
   let r : mutable usize = w in
@@ -170,8 +167,6 @@ let sobel (src : [u8]) (w : usize) (dst : out mutable [u8]) : unit
    images. *)
 let edges (rgb : [u8]) (w : usize) (luma_buf : out mutable [u8])
     (smooth : out mutable [u8]) (dst : out mutable [u8]) : unit
-  requires len rgb = len dst + len dst + len dst && len luma_buf = len dst
-  requires len smooth = len dst && w >= 3 && w + w + w <= len dst
 =
   gray rgb luma_buf;
   blur luma_buf w smooth;

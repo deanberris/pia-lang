@@ -81,13 +81,9 @@ let lemma passes_cover (h : int{1..65535}) : unit
 (** The interlaced row order maps the rows 0 .. h - 1 onto themselves, and
     rank_of undoes it: a permutation. *)
 let lemma row_rank (h : int{1..65535}) (r : usize) : unit
-  requires r < h
-  ensures G.row_of h r < h && G.rank_of h (G.row_of h r) = r
 = passes_cover h
 
 let lemma rank_row (h : int{1..65535}) (y : usize) : unit
-  requires y < h
-  ensures G.rank_of h y < h && G.row_of h (G.rank_of h y) = y
 = passes_cover h
 
 (* The image row of the r-th row of interlaced data. *)
@@ -105,7 +101,6 @@ let interlaced_row (h : int{1..65535}) (r : usize) : usize
 
 (** The end of the sub-block chain at p, or 0. *)
 let chain_skip (s : [u8]) (p : usize) : usize
-  ensures result = G.chain_end s p
 = let q : mutable usize = p in
   let r : mutable usize = 0 in
   let go : mutable bool = p < len s in
@@ -131,8 +126,6 @@ let table_len (packed : u8) : int{0..768}
 
 (** The end of the extension or image block at p, or 0. *)
 let block_skip (s : [u8]) (p : usize) : usize
-  requires p < len s
-  ensures result = G.block_end s p
 = if s.[p] = 0x21 then (if len s - p < 2 then 0 else chain_skip s (p + 2))
   else if s.[p] = 0x2C then (
     if len s - p < 11 then 0
@@ -157,14 +150,6 @@ let loop_count (s : [u8]) (p : usize) : int{0..65536}
 (** The screen, the frame count and the loop count, or where the input
     stops being a GIF. *)
 let info (s : [u8]) : result gif_info gif_error
-  ensures (match result with
-    | Ok i -> (if G.header_ok s then
-                i.start = G.first_block s && G.blocks_ok s i.start && i.frames = G.frames_from s i.start
-                && i.w = G.u16le s 6 && i.h = G.u16le s 8
-              else false)
-    | Err _ -> (if G.header_ok s then
-                 G.u16le s 6 = 0 || G.u16le s 8 = 0 || G.blocks_ok s (G.first_block s) = false
-               else true))
 = if len s < 13 then Err (NotGif 0)
   else if (s.[0] = 0x47 && s.[1] = 0x49 && s.[2] = 0x46 && s.[3] = 0x38
            && (s.[4] = 0x37 || s.[4] = 0x39) && s.[5] = 0x61) = false then Err (NotGif 0)
@@ -300,8 +285,6 @@ let draw (d : R.dims) (canvas : borrowed inout mutable [u8]) (idx : [u8]) (n : u
     the canvas for "restore to previous" disposal, idx a frame's indices,
     data its LZW stream, t the LZW table and pal its colours. *)
 let decode_frame (s : [u8]) (i : gif_info) (k : usize) (canvas : borrowed inout mutable [u8]) (save : borrowed inout mutable [u8]) (idx : borrowed inout mutable [u8]) (data : borrowed inout mutable [u8]) (t : borrowed inout mutable [u8]) (pal : borrowed inout mutable [u8]) : result frame gif_error
-  requires len canvas = R.size i.w i.h 4 && len save = len canvas && len idx = R.size i.w i.h 1
-  requires len data >= len s && len t = 12288 && len pal = 768
 = let d : R.dims = { w = i.w; h = i.h; c = 4 } in
   fill canvas 0;
   if i.start < 13 || i.start > len s || i.start - 13 > 768 then Err (NotGif 0)

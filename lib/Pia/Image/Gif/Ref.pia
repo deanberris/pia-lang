@@ -81,32 +81,16 @@ let spec emit_ok (m : int{2..8}) (x : [u8]) (tc : [int{0..4095}]) (to : [usize])
 (** emit_ok's facts for code q naming an entry, with its index a
     explicit: what a proof about a copy needs, with no if to unfold. *)
 let lemma emit_entry (m : int{2..8}) (x : [u8]) (tc : [int{0..4095}]) (to : [usize]) (te : [usize]) (q : usize) (a : usize) : unit
-  requires q + 1 < len tc && q + 1 < len to && q + 1 < len te
-  requires te.[q] <= q && to.[q] <= to.[q + 1] && to.[q + 1] <= len x
-  requires emit_ok m x tc to te q && tc.[q] >= B.pow2 m
-  requires a = te.[q] + (tc.[q] - B.pow2 m - 2)
-  ensures te.[q] < q && a < q && B.pow2 m + 2u16 <= tc.[q] && tc.[q] <= nx_at (B.pow2 m) te.[q] q
-  ensures to.[a] <= to.[a + 1] && to.[a + 1] <= to.[q] && to.[q + 1] - to.[q] = to.[a + 1] - to.[a] + 1
-  ensures forall (d in 0 .. to.[q + 1] - to.[q]). x.[to.[q] + d] = x.[to.[a] + d]
   with emit_ok
 = ()
 
 (** emit_ok's facts for code q naming a root. *)
 let lemma emit_root (m : int{2..8}) (x : [u8]) (tc : [int{0..4095}]) (to : [usize]) (te : [usize]) (q : usize) : unit
-  requires q + 1 < len tc && q + 1 < len to && q + 1 < len te
-  requires te.[q] <= q && to.[q] <= to.[q + 1] && to.[q + 1] <= len x
-  requires emit_ok m x tc to te q && tc.[q] < B.pow2 m
-  ensures to.[q + 1] - to.[q] = 1 && to.[q] < len x && x.[to.[q]] = tc.[q]
   with emit_ok
 = ()
 
 (** An entry code whose index would pass code q is no code at all. *)
 let lemma emit_overrun (m : int{2..8}) (x : [u8]) (tc : [int{0..4095}]) (to : [usize]) (te : [usize]) (q : usize) : unit
-  requires q + 1 < len tc && q + 1 < len to && q + 1 < len te
-  requires te.[q] <= q && to.[q] <= to.[q + 1] && to.[q + 1] <= len x
-  requires emit_ok m x tc to te q && tc.[q] >= B.pow2 m + 2u16
-  requires tc.[q] - B.pow2 m - 2 > q - te.[q]
-  ensures false
   with emit_ok
 = ()
 
@@ -145,18 +129,10 @@ let spec lzw_ok (s : [u8]) (m : int{2..8}) (x : [u8]) (k : usize) (tp : [usize])
 
 (** What lzw_from says of code j, for a proof that keeps it opaque. *)
 let lemma from_step (s : [u8]) (m : int{2..8}) (x : [u8]) (k : usize) (tp : [usize]) (tw : [int{3..12}]) (tc : [int{0..4095}]) (to : [usize]) (te : [usize]) (j : usize) : unit
-  requires k <= len tp && k <= len tw && k <= len tc && k <= len to && k <= len te && j < k
-  requires lzw_from s m x k tp tw tc to te j
-  ensures j + 1 < k ==> lzw_step s m x tp tw tc to te j && lzw_from s m x k tp tw tc to te (j + 1)
-  ensures j + 1 = k ==> read_ok s m tp tw tc j && tc.[j] = B.pow2 m + 1u16 && to.[j] = len x
   with lzw_from
 = ()
 
 (** What lzw_ok says, for a proof that keeps it opaque. *)
 let lemma ok_start (s : [u8]) (m : int{2..8}) (x : [u8]) (k : usize) (tp : [usize]) (tw : [int{3..12}]) (tc : [int{0..4095}]) (to : [usize]) (te : [usize]) : unit
-  requires lzw_ok s m x k tp tw tc to te
-  ensures 1 <= k && k <= len tp && k <= len tw && k <= len tc && k <= len to && k <= len te
-  ensures tp.[0] = 0 && tw.[0] = m + 1u8 && to.[0] = 0 && te.[0] = 0
-  ensures lzw_from s m x k tp tw tc to te 0
   with lzw_ok
 = ()
