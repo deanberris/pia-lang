@@ -1,0 +1,48 @@
+(* Milestone M10 (ADR 0013): loops that need no licence vectorise as they
+   are, because the proof has already removed what would stop LLVM's
+   vectoriser (bounds checks, overflow checks) and slices do not alias
+   (ADR 0042). Clamp-and-scale is elementwise, so it is strict IEEE and
+   vectorised at once, and vectorise_test.c checks it against C bit for
+   bit. A reduction needs ADR 0012's licence (fp_licence.pia).
+// RUN: piac --emit=asm --target=arm64-apple-macosx14.0.0 --cpu=apple-m1 %s | FileCheck %s --check-prefix=NEON
+// RUN: piac --emit=asm --target=x86_64-unknown-linux-gnu --cpu=x86-64-v3 %s | FileCheck %s --check-prefix=AVX
+*)
+
+(* NEON-LABEL: {{^}}_clamp_scale:
+   NEON: fmul.4s
+   NEON-LABEL: {{^}}_clamp_scale_u8:
+   NEON: umin.16b
+
+   AVX-LABEL: {{^}}clamp_scale:
+   AVX: vminps {{.*}}%ymm
+   AVX: vmulps {{.*}}%ymm
+   AVX-LABEL: {{^}}clamp_scale_u8:
+   AVX: vpminub
+*)
+module Vectorise : Kernels
+
+(* What vectorise_test.c calls, by its C names (ADR 0039). *)
+interface Kernels @abi(c) = sig
+  let clamp_scale : (xs : [f32]) -> (k : f32) -> (dst : out mutable [f32]) -> unit
+    requires len xs = len dst
+  let clamp_scale_u8 : (xs : [u8]) -> (dst : out mutable [u16]) -> unit
+    requires len xs = len dst
+end
+
+(* Each x clamped to [0, 1], then scaled; NaN stays NaN, as in C's
+   `x < 0 ? 0 : x > 1 ? 1 : x`. *)
+let clamp_scale (xs : [f32]) (k : f32) (dst : out mutable [f32]) : unit
+= for i in 0..len xs do
+    let x = xs.[i] in
+    let c : f32 = if x < 0.0 then 0.0 else if x > 1.0 then 1.0 else x in
+    dst.[i] <- c * k
+  done
+
+(* The integer version: the clamp proves the product fits, so there is no
+   overflow check left in the loop. *)
+let clamp_scale_u8 (xs : [u8]) (dst : out mutable [u16]) : unit
+= for i in 0..len xs do
+    let x : u16 = xs.[i] in
+    let c : u16 = if x > 200 then 200 else x in
+    dst.[i] <- c * 3
+  done
