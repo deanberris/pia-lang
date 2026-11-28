@@ -2391,6 +2391,13 @@ class Encoder {
                              : mlir::isa<mlir::arith::SubFOp>(op) ? "sub"
                              : mlir::isa<mlir::arith::MulFOp>(op) ? "mul"
                                                                   : "div";
+      // Under `@fp(reassoc)` or `@fp(contract)` (ADR 0012) codegen may
+      // reorder this operation with its neighbours or fuse it into an FMA,
+      // so the same operands need not give the same bits as the strict
+      // operation a contract names: the result is any value of its type
+      // until ADR 0038's error encoding bounds it.
+      if (licensed(op))
+        return declare(sortOf(t), "", false);
       return apply(name(t, what), {in[0], in[1]}, sortOf(t));
     }
     if (auto c = mlir::dyn_cast<mlir::arith::CmpFOp>(op)) {
@@ -2672,8 +2679,16 @@ class Encoder {
 
   // The facts of a float operation `op` with operands `in` and result
   // `r`, when floats have real values.
+  // An operation under `@fp(reassoc)` or `@fp(contract)` (ADR 0012).
+  static bool licensed(Operation *op) {
+    auto fm = op->getAttrOfType<mlir::arith::FastMathFlagsAttr>("fastmath");
+    return fm && fm.getValue() != mlir::arith::FastMathFlags::none;
+  }
+
   void floatFacts(Operation *op, llvm::ArrayRef<Value> in, Value r) {
-    if (!floatReals_)
+    // A licensed result may be reordered or fused away, so one rounding of
+    // its operands is not a fact about it; its value stays unknown.
+    if (!floatReals_ || licensed(op))
       return;
     if (mlir::isa<mlir::arith::AddFOp, mlir::arith::SubFOp, mlir::arith::MulFOp,
                   mlir::arith::DivFOp>(op)) {

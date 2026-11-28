@@ -1,0 +1,55 @@
+(* ADR 0012's per-function licence, `@fp(reassoc)`, `@fp(contract)` or
+   both. Codegen may then reorder the function's float sums and products,
+   which lets LLVM vectorise a reduction, and fuse a multiply and an add
+   into one FMA. So a licensed operation need not give the bits of the
+   strict operation a contract names, and until ADR 0038's error encoding
+   bounds it, the proof knows nothing about its result. Contracts are the
+   specification and stay strict, and goals that are not about float
+   values, such as index bounds, are proved as in any other function.
+// RUN: not piac --verify %s 2>&1 | FileCheck %s
+*)
+
+(* Strict, `a * b + c` is two roundings, the ones the contract names.
+// CHECK: fp_licence.pia:[[@LINE+3]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+*)
+let muladd (a : f32) (b : f32) (c : f32) : f32
+  ensures to_bits result = to_bits (a * b + c)
+= a * b + c
+
+(* Licensed to contract, the body may be one FMA, which rounds once.
+// CHECK: fp_licence.pia:[[@LINE+3]]:{{[0-9]+}}: failed: the postcondition holds
+*)
+let fused (a : f32) (b : f32) (c : f32) : f32 @fp(contract)
+  ensures to_bits result = to_bits (a * b + c)
+= a * b + c
+
+(* Licensed to reassociate, the body may add b and c first.
+// CHECK: fp_licence.pia:[[@LINE+3]]:{{[0-9]+}}: failed: the postcondition holds
+*)
+let sum3 (a : f64) (b : f64) (c : f64) : f64 @fp(reassoc)
+  ensures to_bits result = to_bits (a + b + c)
+= a + b + c
+
+(* The contract's own arithmetic is strict, even in a licensed function,
+   so it agrees with itself.
+// CHECK: fp_licence.pia:[[@LINE+3]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+*)
+let strict_spec (x : f32) (y : f32) (z : f32) : bool @fp(reassoc, contract)
+  ensures (x * y + z < 1.0) = (x * y + z < 1.0)
+= x * y < z
+
+(* The licensed dot product that vectorises (tests/codegen/fp_licence.pia):
+   its index goals are proved as in any loop.
+// CHECK: fp_licence.pia:[[@LINE+7]]:{{[0-9]+}}: proved: the index is within bounds
+// CHECK: fp_licence.pia:[[@LINE+6]]:{{[0-9]+}}: proved: the index is within bounds
+*)
+let dot (xs : [f32]) (ys : [f32]) : f32 @fp(reassoc, contract)
+  requires len xs = len ys
+=
+  let s : mutable f32 = 0.0 in
+  for i in 0..len xs do s <- s + xs.[i] * ys.[i] done;
+  s
+
+(*
+// CHECK: 4 proved, 2 failed, 0 skipped
+*)

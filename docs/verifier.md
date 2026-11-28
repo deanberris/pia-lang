@@ -294,6 +294,8 @@ So nothing the program computes depends on a spec-only value. The verifier sees 
 
 So a goal that follows from those facts is proved, such as `(x < y) = (-y < -x)`, and a goal that needs what a float operation computes, even one IEEE 754 guarantees such as `x + y = y + x`, fails rather than being proved wrongly. A float in a counterexample is shown as a float, read from its bits, such as `x = nan`. Indices, lengths and integer goals in float code are proved as anywhere else. `tests/verify/floats.pia` has examples of both.
 
+In a function licensed with `@fp(reassoc)` or `@fp(contract)` ([ADR 0012](adr/0012-floating-point-reassociation.md)), codegen may reorder a `+ - * /` with its neighbours or fuse it into an FMA, so the same operands need not give the same bits as the strict operation a contract names. Each licensed operation's result is therefore a fresh unknown of its type, with no rounding fact (below) until ADR 0038's order-free bounds land, and only the contracts' own arithmetic, which is always strict, is uninterpreted as above. `tests/verify/fp_licence.pia` shows both.
+
 ### Floats as reals
 
 Where a contract in the module uses `to_real`, each float also has a real value ([ADR 0038](adr/0038-float-kernels-against-real-theories.md), steps 1 and 2):
