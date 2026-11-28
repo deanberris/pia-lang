@@ -1293,6 +1293,7 @@ class Gen {
     }
 
     overflow_ = OverflowMode::proof;
+    fpFlags_ = mlir::arith::FastMathFlags::none;
     fuel_ = 0;
     opaque_ = false;
     owns_.clear();
@@ -2599,6 +2600,31 @@ class Gen {
         }
         continue;
       }
+      // `@fp(reassoc)`, `@fp(contract)` or both (ADR 0012): the licence
+      // to reorder the function's float sums and products and to fuse a
+      // multiply and an add into one FMA. It rides on each float op as
+      // its fast-math flags, which LLVM's vectoriser and instruction
+      // selection read, so it reaches no other function, not even one
+      // this one calls.
+      if (a->text == "fp") {
+        auto flags = mlir::arith::FastMathFlags::none;
+        bool names = !a->kids.empty();
+        for (const syntax::NodePtr &k : a->kids) {
+          if (k->kind == NodeKind::Name && k->text == "reassoc")
+            flags = flags | mlir::arith::FastMathFlags::reassoc;
+          else if (k->kind == NodeKind::Name && k->text == "contract")
+            flags = flags | mlir::arith::FastMathFlags::contract;
+          else
+            names = false;
+        }
+        if (!names) {
+          fail(*a, "@fp takes reassoc, contract or both, as in "
+                   "@fp(reassoc, contract)");
+          return false;
+        }
+        fpFlags_ = fpFlags_ | flags;
+        continue;
+      }
       // `@opaque` (ADR 0063): the definition is a fact only where a proof
       // reveals it.
       if (a->text == "opaque" && a->kids.empty()) {
@@ -3339,22 +3365,27 @@ class Gen {
     return TV{c, t};
   }
 
-  // `+ - * /` on two floats of one type, each one IEEE operation.
+  // `+ - * /` on two floats of one type, each one IEEE operation, unless
+  // the function's `@fp` licence lets codegen reorder or fuse it. A
+  // contract is the specification, so it is always strict.
   R genFloatArith(const Node &n, const std::string &op, TV a, TV c) {
     if (a.type != c.type)
       return fail(n, "'" + op + "' needs operands of one type, found " +
                          typeName(a.type) + " and " + typeName(c.type) +
                          floatMixHint(a.type, c.type));
     Location l = loc(n);
+    auto fm = mlir::arith::FastMathFlagsAttr::get(
+        &ctx_,
+        contract_ || ghost_ ? mlir::arith::FastMathFlags::none : fpFlags_);
     Value v;
     if (op == "+")
-      v = create<mlir::arith::AddFOp>(l, a.value, c.value);
+      v = create<mlir::arith::AddFOp>(l, a.value, c.value, fm);
     else if (op == "-")
-      v = create<mlir::arith::SubFOp>(l, a.value, c.value);
+      v = create<mlir::arith::SubFOp>(l, a.value, c.value, fm);
     else if (op == "*")
-      v = create<mlir::arith::MulFOp>(l, a.value, c.value);
+      v = create<mlir::arith::MulFOp>(l, a.value, c.value, fm);
     else if (op == "/")
-      v = create<mlir::arith::DivFOp>(l, a.value, c.value);
+      v = create<mlir::arith::DivFOp>(l, a.value, c.value, fm);
     else
       return fail(n, "'" + op + "' is not defined on " + typeName(a.type) +
                          "; floats have + - * /, negation and comparisons");
@@ -14051,6 +14082,8 @@ class Gen {
   std::vector<std::map<std::string, BindingPtr>> scopes_;
   bool contract_ = false;
   OverflowMode overflow_ = OverflowMode::proof;
+  // @fp(reassoc, contract) on the function being generated (ADR 0012).
+  mlir::arith::FastMathFlags fpFlags_ = mlir::arith::FastMathFlags::none;
   // The expression an `@wrap`-style mode was written on, and the mode: an
   // atomic add takes only a mode stated on itself (ADR 0052).
   const Node *statedNode_ = nullptr;

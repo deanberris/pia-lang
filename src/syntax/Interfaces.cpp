@@ -596,6 +596,18 @@ interfaceArtifacts(const Node &program, std::string_view source, bool literate,
   return out;
 }
 
+namespace {
+std::map<std::string, std::string> &definitionTexts() {
+  static std::map<std::string, std::string> texts;
+  return texts;
+}
+} // namespace
+
+std::string importedDefinitionText(const std::string &qualified) {
+  auto it = definitionTexts().find(qualified);
+  return it == definitionTexts().end() ? std::string() : it->second;
+}
+
 void resolveImports(Node &program, const std::vector<std::string> &paths,
                     Diagnostics &diags,
                     std::vector<InterfaceArtifact> *loaded) {
@@ -742,6 +754,12 @@ void resolveImports(Node &program, const std::vector<std::string> &paths,
                         "lists");
         continue;
       }
+      uint32_t end = i + 1 < artifact->kids.size()
+                         ? artifact->kids[i + 1]->loc.offset
+                         : static_cast<uint32_t>(text->size());
+      if (def.loc.offset < end)
+        definitionTexts()[module + "." + def.text] =
+            text->substr(def.loc.offset, end - def.loc.offset);
       NodePtr copy = clone(def);
       copy->text = module + "." + def.text;
       copy->flags += copy->flags.empty() ? "from:" + module : " from:" + module;

@@ -89,5 +89,20 @@ common:rbe --jobs=100
 # The Linux settings, whatever the host.
 build:rbe --config=linux
 
+# Claude Code cloud sessions (docs/cloud.md): remote execution as CI's Linux
+# job, since the container's 4 cores cannot build LLVM in a session. The API
+# key is the environment's BUILDBUDDY_API_KEY variable, which the credential
+# helper hands to Bazel, so it is never written to a file. The egress proxy
+# refuses github.com source archives of repositories outside the session, so
+# BuildBuddy downloads external archives (Remote Asset API) and caches them.
+# tools/cloud/setup.sh turns this on in user.bazelrc.
+common:cloud --config=rbe
+common:cloud --credential_helper=remote.buildbuddy.io=%workspace%/tools/cloud/buildbuddy-credential-helper
+common:cloud --experimental_remote_downloader=grpcs://remote.buildbuddy.io
+common:cloud --build_metadata=ROLE=CLOUD
+# Bazel's build event upload does not use credential helpers, so cloud
+# builds send no results to BuildBuddy's UI; logs stay in the session.
+common:cloud --bes_backend= --bes_results_url=
+
 # Local overrides (remote caches, jobs) go in user.bazelrc, which is ignored.
 try-import %workspace%/user.bazelrc
