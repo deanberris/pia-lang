@@ -1,8 +1,8 @@
 (* A box over a concept (ADR 0046, steps 2 to 4): `box Shape` holds a
    value of any type that meets Shape, and a call through it is proved from
    Shape alone. `box`'s parameter is `@unsized`, so it may be a concept;
-   `box Shape` is then, in code, the tagged union of the types this module
-   widens (ADR 0046, step 5; tests/codegen/box_concept.pia runs it), and
+   `box Shape` is then, in code, one cache line holding the boxed type's
+   descriptor and the object (tests/codegen/box_concept.pia runs it), and
    the verifier knows its object only through Shape's requirement
    contracts and its laws over one value. `widen` boxes a full `box t` and runs the use
    check there: t must meet Shape, contracts and laws included, so those

@@ -1,7 +1,8 @@
-(* A call through a box whose tag is known is a direct call (ADR 0046,
-   step 5): straight after widen, the box's tag is the square's, so the
-   switch folds away, and so does the square's area, to 49. Through a box
-   from a slice, the tag is not known, and it is tested.
+(* A call through a box whose descriptor is known is a direct call (ADR
+   0046, the cache-line amendment): straight after widen, the box holds the
+   square's descriptor, a constant, so the load of its entry folds, and so
+   does the square's area, to 49. Through a box from a slice, the
+   descriptor is not known, and the call is indirect.
 // RUN: piac --emit=llvm --no-lint -O2 %s | FileCheck %s
 *)
 module BoxDirect : Calls
@@ -61,10 +62,11 @@ let area (s : rect) : u32 ensures result <= 10000 =
 
 let fits (s : rect) (w : u32) : bool requires w > 0 = s.w <= w
 
-(* No test of the tag: 7 * 7, computed at compile time.
+(* No load of an entry and no indirect call: 7 * 7, computed at compile
+   time.
 // CHECK-LABEL: define {{.*}}@known(
-// CHECK-NOT: icmp eq i8
-// CHECK-NOT: switch
+// CHECK-NOT: load ptr
+// CHECK-NOT: call {{.*}} %
 // CHECK: phi i32 [ 49,
 // CHECK: ret i32
 *)
@@ -75,11 +77,10 @@ let known (sq : borrowed mutable [square]) : u32
   | Ok b -> area (widen b)
   | Err _ -> 0
 
-(* The tag is tested: a square (0) or a rect.
+(* The entry is loaded from the box's descriptor and called.
 // CHECK-LABEL: define {{.*}}@unknown(
-// CHECK: icmp eq i8 {{.*}}, 0
-// CHECK: mul nuw nsw i32
-// CHECK: mul nuw nsw i32
+// CHECK: load ptr
+// CHECK: call {{.*}}i32 %
 *)
 let unknown (xs : [box Shape]) : u32
   requires len xs = 1
