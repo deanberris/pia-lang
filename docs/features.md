@@ -22,6 +22,9 @@ Every feature `piac` builds today, with the page that explains it and a working 
 | Floats, `f32` and `f64` | [tour](tour.md#floats), [verifier](verifier.md#floats) | [floats](../tests/verify/floats.pia) |
 | Floats as reals: `to_real`, `finite`, `eps`, `tiny` and rounding error | [tour](tour.md#floats), [verifier](verifier.md#floats-as-reals) | [float_reals](../tests/verify/float_reals.pia) |
 | Error bounds of long sums and dot products (`Pia.Float.Error`) | [verifier](verifier.md#floats-as-reals), [library](library.md#numerics) | [float_error_use](../tests/std/float_error_use.pia) |
+| `exp` on `f32` for `x <= 0`, proved finite and in `[0, 1]` (`Pia.Float.Exp`) | [verifier](verifier.md#floats-as-reals), [library](library.md#numerics) | [float_exp](../tests/std/float_exp.pia) |
+| softmax summing to within 5γₙ of 1, SiLU and rmsnorm, proved finite and bounded (`Pia.Float.Nn`) | [verifier](verifier.md#floats-as-reals), [library](library.md#numerics) | [float_nn](../tests/std/float_nn.pia) |
+| Error bounds of matrix-vector products, one opaque fact per row (`Pia.Float.Matvec`) | [verifier](verifier.md#floats-as-reals), [library](library.md#numerics) | [float_matvec](../tests/std/float_matvec.pia) |
 | Licensed reassociation and FMA, `@fp(reassoc, contract)` | [tour](tour.md#licensed-reassociation-and-fma), [codegen](codegen.md) | [fp_licence](../tests/verify/fp_licence.pia) |
 
 ## Contracts and proofs
