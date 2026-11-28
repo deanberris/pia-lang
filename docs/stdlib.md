@@ -542,7 +542,7 @@ flowchart TD
 | `Pia.Sys` | groups 7 and 8 | `fd`, `mapping`, `errno`, `args`, `exit`, clocks, threads: POSIX in strong types, fully proved |
 | `Pia.Mem` | group 7 | the `Allocator` concept; `pages` `fixed_buffer` `arena` `scratch` `pool` `general` `shared`; `vec`, `string`, `hash_map`, `heap` |
 | `Pia.Io` | `Pia.Sys`, `Pia.Mem` | `reader` and `writer` concepts with bounds-proved reads, buffered file I/O, `str` as `[u8]` refined to valid UTF-8, printing |
-| `Pia.Math` | floats | elementary functions with error bounds |
+| `Pia.Math` | floats | `sqrt` on `f32`, proved correctly rounded and lowered to `math.sqrt` (built); `f64`, then elementary functions with error bounds |
 | `Pia.Par` | atomics, threads | the `spread` worker pool, collectives |
 | `Image.Bmp`, `Image.Png`, `Image.Gif` | all of the above | BMP first, to replace the demo's `main.c`; then zlib inflate and deflate, PNG unfiltering, GIF LZW (M13) |
 

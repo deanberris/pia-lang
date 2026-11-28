@@ -9,12 +9,22 @@ package(default_visibility = ["//visibility:public"])
 exports_files([
     "Fn.pia",
     "Gpu.pia",
+    "Math.pia",
     "Time.pia",
 ])
 
 pia_library(
     name = "fn",
     src = "Fn.pia",
+    target_compatible_with = PIA_TARGETS,
+)
+
+# Pia.Math (#487): sqrt, proved correctly rounded over the bits and
+# lowered to math.sqrt (ADR 0078). tests/std/math.pia checks its goals and
+# lowering; tests/std:math_test runs it against C's sqrtf.
+pia_library(
+    name = "math",
+    src = "Math.pia",
     target_compatible_with = PIA_TARGETS,
 )
 

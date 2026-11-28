@@ -71,7 +71,11 @@ class Parser {
     skipSeps();
     while (!at(K::Eof)) {
       try {
-        firstItem_ = prog->kids.empty();
+        // `@trusted` may come before a module header, which is still the
+        // first item.
+        firstItem_ = std::all_of(
+            prog->kids.begin(), prog->kids.end(),
+            [](const NodePtr &k) { return k->kind == N::FileAttr; });
         prog->add(item());
         if (!at(K::Eof) && !at(K::Sep))
           fail("expected the end of the item; a new top-level item starts in "

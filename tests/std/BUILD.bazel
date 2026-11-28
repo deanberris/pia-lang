@@ -63,6 +63,7 @@ filegroup(
         "//lib/Pia/Text/Json:spec",
         "//lib/Pia/Text/Json:write",
         "//lib/Pia:fn",
+        "//lib/Pia:math",
     ],
     output_group = "report",
     target_compatible_with = PIA_TARGETS,
@@ -109,6 +110,7 @@ lit_tests(
         "//lib/Pia/Core/Algo:SetSymmetric.pia",
         "//lib/Pia/Core/Algo:SetUnion.pia",
         "//lib/Pia:Fn.pia",
+        "//lib/Pia:Math.pia",
         "//lib/Pia/Compress:Huffman.pia",
         "//lib/Pia/Compress:Inflate.pia",
         "//lib/Pia/Compress:Zlib.pia",
@@ -609,6 +611,17 @@ sh_test(
     srcs = ["hash_run_test.sh"],
     args = ["$(rootpath :hash_run)"],
     data = [":hash_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+# Pia.Math's sqrt, lowered and in software, against C's sqrtf bit for bit.
+cc_test(
+    name = "math_test",
+    srcs = [
+        "math_test.c",
+        "//lib/Pia:math",
+    ],
+    linkopts = ["-lm"],
     target_compatible_with = PIA_TARGETS,
 )
 
