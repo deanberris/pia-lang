@@ -3,7 +3,9 @@
    the same for a reading, whose option fields may be null or missing,
    for a sample, whose fields are fixed arrays, and for a segment, whose
    fields are points. A route, two points and an option of one,
-   is read straight from its text and from a document. *)
+   is read straight from its text and from a document. A signal, a
+   variant of every kind of constructor, is read from a document and
+   written as one. *)
 module JsonShapeRun : Run
 
 import Pia.Core.Order.Ops
@@ -30,6 +32,8 @@ interface Run @abi(c) = sig
   let round_trip_route : (x : i32) -> (has_last : bool) -> (text : borrowed inout mutable [u8]) -> i64
   let read_route_dom : (s : [u8]) -> (cells : borrowed mutable [Pia.Text.Json.Dom.json]) -> (mems : borrowed mutable [Pia.Text.Json.Dom.member]) -> i64
   let round_trip_route_dom : (x : i32) -> (has_last : bool) -> (text : borrowed inout mutable [u8]) -> (cells : borrowed mutable [Pia.Text.Json.Dom.json]) -> (mems : borrowed mutable [Pia.Text.Json.Dom.member]) -> i64
+  let read_signal_dom : (s : [u8]) -> (cells : borrowed mutable [Pia.Text.Json.Dom.json]) -> (mems : borrowed mutable [Pia.Text.Json.Dom.member]) -> i64
+  let round_trip_signal_dom : (k : int{0..4}) -> (text : borrowed inout mutable [u8]) -> (cells : borrowed mutable [Pia.Text.Json.Dom.json]) -> (mems : borrowed mutable [Pia.Text.Json.Dom.member]) -> i64
 end
 
 let point = type { x : i32 @json(name = "xx"); y : u8; ok : bool } @derive(json, json_dom)
@@ -194,3 +198,43 @@ let round_trip_route_dom (x : i32) (has_last : bool) (text : borrowed inout muta
   match to_dom_json_route { a = { x = x; y = 1; ok = true }; b = { x = nx; y = 2; ok = false }; last = last } text vs ms with
   | Err _ -> -1
   | Ok v -> route_code (from_dom_json_route text v)
+
+let signal = type
+  | Off
+  | On of bool
+  | Level of int{0..9}
+  | Peak of int{100..999}
+  | Spot of point
+  @derive(json, json_dom)
+
+(* A signal's code: 0 when off, 1 or 2 when on, 10 + its level, its
+   peak, or 2000 + its spot's code. *)
+let signal_code (g : signal) : i64 =
+  match g with
+  | Off -> 0
+  | On b -> if b then 2 else 1
+  | Level n -> (let m : i64 = n in 10 + m)
+  | Peak n -> n
+  | Spot p -> 2000 + code p
+
+(* The signal s denotes as a document, as its code; -1 if s is no
+   document and -2 if it is one that is not a signal. *)
+let read_signal_dom (s : [u8]) (cells : borrowed mutable [Pia.Text.Json.Dom.json]) (mems : borrowed mutable [Pia.Text.Json.Dom.member]) : i64 =
+  let vs : mutable Pia.Mem.Alloc.bump Pia.Text.Json.Dom.json = { mem = cells; used = 0 } in
+  let ms : mutable Pia.Mem.Alloc.bump Pia.Text.Json.Dom.member = { mem = mems; used = 0 } in
+  match Pia.Text.Json.Dom.parse s 4 vs ms with
+  | Err _ -> -1
+  | Ok v -> if check_json_signal s v then signal_code (from_dom_json_signal s v) else -2
+
+(* The k-th constructor, Off, On true, Level 7, Peak 512 or a spot at
+   (-5, 6, true), as a document over text, read back, as its code; -1
+   if to_dom made none. *)
+let round_trip_signal_dom (k : int{0..4}) (text : borrowed inout mutable [u8]) (cells : borrowed mutable [Pia.Text.Json.Dom.json]) (mems : borrowed mutable [Pia.Text.Json.Dom.member]) : i64 =
+  let vs : mutable Pia.Mem.Alloc.bump Pia.Text.Json.Dom.json = { mem = cells; used = 0 } in
+  let ms : mutable Pia.Mem.Alloc.bump Pia.Text.Json.Dom.member = { mem = mems; used = 0 } in
+  let g : signal =
+    if k = 0 then Off else if k = 1 then On true else if k = 2 then Level 7
+    else if k = 3 then Peak 512 else Spot { x = -5; y = 6; ok = true } in
+  match to_dom_json_signal g text vs ms with
+  | Err _ -> -1
+  | Ok v -> signal_code (from_dom_json_signal text v)
