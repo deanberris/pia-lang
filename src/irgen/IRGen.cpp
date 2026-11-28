@@ -534,6 +534,15 @@ class Gen {
   // Converts `v` to `target`: integers convert between range types
   // (narrowing becomes a proof obligation); other types must match.
   R coerce(const TV &v, Type target, const Node &at) {
+    // A bare arrow's place, such as `option (u8 -> u8)`'s payload, has the
+    // machine type of every arrow of its shape, contracted or not, so it
+    // takes only a reference known to have no contract (ADR 0071).
+    if (mlir::isa<mlir::FunctionType>(target) && !referenceSelf_.count(&at) &&
+        !bareReference(at))
+      return fail(at, "this place holds a function reference of no "
+                      "contract, so it takes a function's name or another "
+                      "such reference; a reference with a contract goes in "
+                      "a distinct arrow type (ADR 0071)");
     if (v.type == target) return v;
     // An array passes as a slice of all of it.
     if (auto a = mlir::dyn_cast<ArrayType>(v.type))
@@ -3051,6 +3060,12 @@ class Gen {
       sema::FuncSig &sig = *set[0];
       if (sig.isGeneric())
         return genGenericCall(n, sig, nullptr, {}, expected);
+      // `Some succ` for an `option (u8 -> u8)`: a reference checked
+      // against the bare arrow (ADR 0071).
+      if (auto ft = mlir::dyn_cast_or_null<mlir::FunctionType>(expected);
+          ft && !sig.params.empty())
+        if (const Node *bare = types_.bareArrow(ft))
+          return referenceValue(n, arrowOf(*bare), ft, "'" + n.text + "'");
       // A distinct arrow type is made only by applying it (ADR 0064).
       if (!sig.params.empty() && arrowField(expected)) {
         std::string t = typeName(expected);
@@ -13880,6 +13895,31 @@ class Gen {
                 : RecordType();
   }
 
+  // Whether the arrow `a` has a contract on any of its levels.
+  static bool hasContract(const Node &a) {
+    for (const Node *n = &a; n->kind == NodeKind::ArrowType;
+         n = n->kids[1].get())
+      if (n->kids.size() > 2 && !n->kids[2]->kids.empty())
+        return true;
+    return false;
+  }
+
+  // Whether `at` makes a function reference known to have no contract: a
+  // top-level function's name, which the context checked against a bare
+  // arrow, a local bound to a bare arrow, or a payload of one, which only
+  // such references fill.
+  bool bareReference(const Node &at) {
+    if (at.kind == NodeKind::Name && at.flags.empty()) {
+      BindingPtr b = lookup(at.text);
+      if (!b)
+        return !overloadSet(at.text).empty();
+      return b->arrowType && !hasContract(*b->arrowType);
+    }
+    return at.kind == NodeKind::Apply && !at.kids.empty() &&
+           at.kids[0]->kind == NodeKind::Name &&
+           at.kids[0]->flags == "prelude" && at.kids[0]->text == "#payload";
+  }
+
   // The field of a distinct arrow type (ADR 0071, amendment of
   // 2026-11-28), a record whose one field holds a function reference, or
   // none for any other type.
@@ -13931,6 +13971,7 @@ class Gen {
     if (!proxy)
       return std::nullopt;
     std::vector<const Node *> all{&fn};
+    referenceSelf_.insert(&fn);
     for (size_t i = 1; i < n.kids.size(); ++i)
       all.push_back(n.kids[i].get());
     std::vector<std::optional<TV>> early(all.size());
@@ -13979,6 +14020,7 @@ class Gen {
       return std::nullopt;
     auto self = syntax::makeNode(NodeKind::Name, n.kids[0]->loc, h->name);
     std::vector<const Node *> all{keep(std::move(self))};
+    referenceSelf_.insert(all[0]);
     all.insert(all.end(), args.begin(), args.end());
     std::vector<std::optional<TV>> early(all.size());
     early[0] = TV{h->value, ft};
@@ -14125,6 +14167,12 @@ class Gen {
     pushScope();
     BindingPtr b =
         bind(n.text, v->value, v->type, sema::hasModifier(modifiers, "mutable"));
+    // `| Some f -> f y` on an `option (u8 -> u8)`: the payload is a
+    // reference of no contract, called through the bare arrow.
+    if (auto ft = mlir::dyn_cast<mlir::FunctionType>(v->type);
+        ft && bareReference(valueNode) && !b->arrowType)
+      if (valueNode.kind != NodeKind::Name)
+        b->arrowType = types_.bareArrow(ft);
     b->lenders = lendersOf(valueNode);
     b->writable = writable(valueNode);
     b->closure = valueNode.kind == NodeKind::Lambda;
@@ -14313,6 +14361,8 @@ class Gen {
   // The functions calls through mutable references go to (ADR 0071).
   std::set<std::string> proxies_;
   std::map<const void *, std::string> placeholders_; // by function type
+  // The reference a call through it passes to its proxy (ADR 0071).
+  std::set<const Node *> referenceSelf_;
   // Lemmas queued and functions matched to requirements, in order, so a
   // concept check can tell which are its own (certify).
   std::vector<std::string> queuedLog_, matchedLog_;

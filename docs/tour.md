@@ -865,7 +865,22 @@ let run (h : option op) (y : u8) : u8 requires y < 100 ensures result >= y =
 let start () : option op = Some (op succ)
 ```
 
-A function's name is never an `op` by itself: `let h : op = succ` is an error that suggests `op succ`. A stored reference takes and returns integers, bools and floats for now. Copies of a mutable reference into a local, `option (u8 -> u8)` of a bare arrow, `option` laid out as one nullable address, and references passed to C come later.
+A function's name is never an `op` by itself: `let h : op = succ` is an error that suggests `op succ`. An arrow with no contract is a type argument as it is, so `option (u8 -> u8)` holds any function that takes every `u8`: its name goes in directly, and a function with a precondition goes in only when the precondition holds for every argument. An arrow with a contract is never a type argument; name it as a type first:
+
+```ocaml
+let option = let (t : type) => type | None | Some of t
+
+let half (x : u8) : u8 = x / 2
+
+let run (h : option (u8 -> u8)) (y : u8) : u8 =
+  match h with
+  | Some f -> f y
+  | None -> y
+
+let start () : option (u8 -> u8) = Some half
+```
+
+A stored reference takes and returns integers, bools and floats for now. Copies of a mutable reference into a local, `option` laid out as one nullable address, and references passed to C come later.
 
 ## Parallel loops
 

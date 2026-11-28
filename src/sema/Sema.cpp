@@ -389,6 +389,11 @@ bool TypeResolver::plainElement(mlir::Type elem, syntax::SourceLoc at) {
   return true;
 }
 
+namespace {
+mlir::Type functionReferenceType(const Node &arrow, TypeResolver &types,
+                                 syntax::Diagnostics &diags);
+} // namespace
+
 mlir::Type TypeResolver::resolve(const Node &type) {
   switch (type.kind) {
     case NodeKind::Annot:  // `(borrowed(m) [u8])` in a result type (#70)
@@ -544,6 +549,25 @@ mlir::Type TypeResolver::resolve(const Node &type) {
       if (!elem) return {};
       if (!plainElement(elem, type.kids[0]->loc)) return {};
       return SliceType::get(&ctx_, elem);
+    }
+    case NodeKind::ArrowType: {
+      // `option (u8 -> u8)`: a bare arrow as a type is a function reference
+      // with no contract (ADR 0071). A contract would be lost here, since
+      // arrows with different contracts share one type, so it goes on a
+      // distinct arrow type instead (the amendment of 2026-11-28).
+      for (const Node *a = &type; a->kind == NodeKind::ArrowType;
+           a = a->kids[1].get())
+        if (a->kids.size() > 2) {
+          diags_.error(a->kids[2]->loc,
+                       "an arrow in a type takes no contract; name it with "
+                       "'let op = type (x : u8) -> u8 requires ...' and use "
+                       "'op' (ADR 0071)");
+          return {};
+        }
+      mlir::Type t = functionReferenceType(type, *this, diags_);
+      if (t && !bareArrows_.count(t.getAsOpaquePointer()))
+        bareArrows_[t.getAsOpaquePointer()] = &type;
+      return t;
     }
     default:
       diags_.error(type.loc, std::string("the type form '") +
