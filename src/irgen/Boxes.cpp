@@ -292,17 +292,13 @@ std::string erasedSource(const std::string &cname, const Node &concept,
       out += "  let spec " + q.name + "_of : " + sig + q.result + "\n";
     }
     // A box's state (the amendment's theory of a box's state): whether it
-    // holds an object, which of this module's widened types that is, and
-    // the always-true fact a contract names to say its caller cannot know.
+    // holds an object, and which of this module's widened types that is.
     // Spec only: nothing at run time.
     const std::string arg = "(" + self + " : " + recvType + ")";
     out += "  let spec full_box : " + arg + " -> bool\n";
-    out += "  let spec unknown_box : " + arg + " -> bool\n";
     if (closed)
       for (const std::string &t : *closed)
         out += "  let spec holds_" + t + " : " + arg + " -> bool\n";
-    out += "  let axiom unknown_box_true " + arg + "\n  ensures unknown_box " +
-           self + "\n";
     // A box that holds a type is full, and holds at most one type.
     if (closed)
       for (size_t i = 0; i < closed->size(); ++i) {
@@ -361,8 +357,10 @@ std::string erasedSource(const std::string &cname, const Node &concept,
   // unknown b` (every contract states it, the amendment's theory).
   src += "let spec full (b : " + boxType + ") : bool = " + theory +
          ".full_box b\n";
-  src += "let spec unknown (b : " + boxType + ") : bool = " + theory +
-         ".unknown_box b\n\n";
+  // `unknown` is true of every box: it only says a contract states that
+  // the caller cannot know the state, so it gives the solver nothing to
+  // instantiate, even under a `forall` over a slice.
+  src += "let spec unknown (b : " + boxType + ") : bool = true\n\n";
   if (!closed)
     src += "let is_full (b : " + boxType +
            ") : bool\n  ensures result = " + theory +
@@ -617,13 +615,18 @@ bool hasWord(const std::string &mods, const std::string &word) {
 // Whether `n` states the state of the box `name`: applies `full` or
 // `unknown` to it (or the theory's facts they stand for).
 bool statesState(const Node &n, const std::string &name) {
-  if (n.kind == NodeKind::Apply && n.kids.size() == 2 &&
-      n.kids[1]->kind == NodeKind::Name && n.kids[1]->text == name) {
+  // The box itself, or an element of a slice of boxes, `xs.[i]`.
+  auto names = [&](const Node &a) {
+    const Node *b = &a;
+    if (b->kind == NodeKind::Index && !b->kids.empty())
+      b = b->kids[0].get();
+    return b->kind == NodeKind::Name && b->text == name;
+  };
+  if (n.kind == NodeKind::Apply && n.kids.size() == 2 && names(*n.kids[1])) {
     const Node &f = *n.kids[0];
     if ((f.kind == NodeKind::Name &&
          (f.text == "full" || f.text == "unknown")) ||
-        (f.kind == NodeKind::Field &&
-         (f.text == "full_box" || f.text == "unknown_box")))
+        (f.kind == NodeKind::Field && f.text == "full_box"))
       return true;
   }
   for (const NodePtr &k : n.kids)
@@ -655,11 +658,42 @@ void checkStated(const std::string &fn, syntax::SourceLoc at,
   auto isBox = [&](const Node *t) {
     return t && t->kind == NodeKind::TypeName && boxes.count(t->text);
   };
+  // A slice or array of boxes: each element is a box of its own, so its
+  // state is stated element by element, `forall (i in 0 .. len xs). full
+  // xs.[i]`.
+  auto isBoxes = [&](const Node *t) {
+    return t &&
+           (t->kind == NodeKind::SliceType || t->kind == NodeKind::ArrayType) &&
+           !t->kids.empty() && isBox(t->kids[0].get());
+  };
   for (const auto &[name, mods, type] : params) {
-    if (!isBox(type))
+    bool many = isBoxes(type);
+    if (!isBox(type) && !many)
       continue;
     bool out = hasWord(mods, "out");
-    bool inout = hasWord(mods, "inout");
+    // A caller sees what a function writes into a mutable slice.
+    bool inout = hasWord(mods, "inout") || (many && hasWord(mods, "mutable"));
+    if (many) {
+      std::string each =
+          "forall (i in 0 .. len " + name + "). full " + name + ".[i]";
+      if (!out && !statedIn(contracts, NodeKind::Requires, name))
+        diags.error(at, "'" + fn + "' takes the boxes in '" + name +
+                            "' and states no state for them: add 'requires " +
+                            each +
+                            "', or 'unknown' for an element callers "
+                            "may pass in any state (ADR 0046: each box in a "
+                            "slice is its own, and every contract states its "
+                            "state)");
+      if ((out || inout) && !statedIn(contracts, NodeKind::Ensures, name))
+        diags.error(at, "'" + fn + "' may write the boxes in '" + name +
+                            "' and states no state it leaves them in: add "
+                            "'ensures " +
+                            each +
+                            "' (ADR 0046: each box in a "
+                            "slice is its own, and every contract states its "
+                            "state)");
+      continue;
+    }
     if (!out && !statedIn(contracts, NodeKind::Requires, name))
       diags.error(at, "'" + fn + "' takes the box '" + name +
                           "' and states no state for it: add 'requires full " +

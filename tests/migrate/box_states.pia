@@ -31,15 +31,22 @@ let make (b : box square) : box Shape
 let swap (x : inout mutable box Shape) (y : box Shape) : unit
 = x <- y
 
+let sum (xs : [box Shape]) (i : usize) : u32
+  requires i < len xs
+= area xs.[i]
+
 let stated (x : box Shape) : u32
   requires full x
 = area x
 
-(* Expected: one rewrite for each of size, make and swap; stated already
-   states its box's state.
+(* Expected: one rewrite for each of size, make, swap and sum, whose
+   slice holds boxes that are each their own, so the clause is a `forall`
+   over a name new in `sum` (it has an `i`); stated already states its
+   box's state.
 // CHECK: old.pia:25:1: [box-states] 'size' states no state for a box over a concept, which ADR 0046 requires of every contract; before, a box was full by its type. Add 'requires full x' (piac migrate rewrites it)
 // CHECK: old.pia:27:1: [box-states] 'make' states no state for a box over a concept, which ADR 0046 requires of every contract; before, a box was full by its type. Add 'ensures full result' (piac migrate rewrites it)
 // CHECK: old.pia:31:1: [box-states] 'swap' states no state for a box over a concept, which ADR 0046 requires of every contract; before, a box was full by its type. Add 'requires full x', 'requires full y', 'ensures full x' (piac migrate rewrites it)
+// CHECK: old.pia:34:1: [box-states] 'sum' states no state for a box over a concept, which ADR 0046 requires of every contract; before, a box was full by its type. Add 'requires forall (i1 in 0 .. len xs). full xs.[i1]' (piac migrate rewrites it)
 // CHECK-NOT: box-states
 // REJECTED: error: 'size' takes the box 'x' and states no state for it
 // NONE-NOT: {{.}}

@@ -31,6 +31,12 @@ let swap (x : inout mutable box Shape) (y : box Shape) : unit
   requires full x && full y
 = x <- y
 
+(* CHECK: box_state_errors.pia:[[@LINE+2]]:1: error: 'first' takes the boxes in 'xs' and states no state for them: add 'requires forall (i in 0 .. len xs). full xs.[i]', or 'unknown' for an element callers may pass in any state (ADR 0046: each box in a slice is its own, and every contract states its state)
+*)
+let first (xs : [box Shape]) : u32
+  requires len xs > 0
+= area xs.[0]
+
 (* Stated: no error. *)
 let fine (x : box Shape) : u32
   requires unknown x

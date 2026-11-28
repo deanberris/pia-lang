@@ -10085,7 +10085,7 @@ class Gen {
     Value v = create<LoadOp>(loc(n), elem, buf->value, *idx);
     if (!contract_ && !ghost_ && ownsSlices(elem))
       noteMoveOut(n, buf->value, *idx, v, elem);
-    return stored(n, TV{v, elem});
+    return TV{v, elem};
   }
 
   // `xs.[i]` read as a value moves the element out when it owns slices,
@@ -10661,10 +10661,12 @@ class Gen {
     return true;
   }
 
-  // A box read from a slice, a field or a payload is full until the
-  // amendment's step 3 states them (Dean, 2026-11-28): only a local or a
-  // `moved` parameter can be left empty, and the move checker keeps a box
-  // so left from being stored anywhere, so no empty box is there.
+  // A box read from a field or a payload is full until the amendment's
+  // step 3 states them: only a local or a `moved` parameter can be left
+  // empty, and the move checker keeps a box so left from being stored
+  // anywhere, so no empty box is there. A slice's boxes are each their own
+  // (Dean, 2026-11-28): their states are stated in contracts, element by
+  // element, and never assumed.
   R stored(const Node &at, R r) {
     if (r && !boxFull(at, r->value, r->type, /*assume=*/true, ""))
       return std::nullopt;

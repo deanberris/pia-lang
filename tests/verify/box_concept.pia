@@ -58,10 +58,15 @@ let fits (s : rect) (w : u32) : bool requires w > 0 = s.w <= w
 let total (xs : [box Shape]) : u32
   requires len xs = 2
   ensures result <= 20000
+  requires forall (i in 0 .. len xs). full xs.[i]
 = area xs.[0] + area xs.[1]
 
 let two (sq : borrowed mutable [square]) (rc : borrowed mutable [rect]) (xs : borrowed inout mutable [box Shape]) : result u32 oom
   requires len sq = 1 && len rc = 1 && len xs = 2
+  requires forall (i in 0 .. len xs). unknown xs.[i]
+  ensures (match result with
+           | Ok _ -> forall (i in 0 .. len xs). full xs.[i]
+           | Err _ -> forall (i in 0 .. len xs). unknown xs.[i])
 = let ms : mutable bump square = { mem = sq; used = 0 } in
   let mr : mutable bump rect = { mem = rc; used = 0 } in
   let a = make ms { side = 3 }? in
@@ -79,12 +84,13 @@ let twice (t : type where Shape t) (s : t) : u32
 let doubled (xs : [box Shape]) : u32
   requires len xs = 2
   ensures result <= 20000
+  requires forall (i in 0 .. len xs). full xs.[i]
 = twice xs.[1]
 
 (* A width of 0 breaks fits's precondition, through the box too. *)
-let narrow (xs : [box Shape]) : bool
-  requires len xs = 2
-= fits xs.[0] 0
+let narrow (x : box Shape) : bool
+  requires full x
+= fits x 0
 
 (* Taking the object out names the type expected. `take b d` moves the
    square into the empty `box square` d, and `consume<square> b` copies it
@@ -131,24 +137,25 @@ let refill (b : inout mutable box Shape) (x : box Shape) : unit
    instantiated at box Shape and discharged by that proof, with a goal
    that the box it is given is full; and fits through a box with a width
    of 0 fails its precondition. `take` is proved for each type widened,
-   and its caller's goals as for any call. A box read from a slice is full
-   until the amendment's step 3. Each call through `x` is proved from its
+   and its caller's goals as for any call. A box read from a slice is
+   in no state but the one its contract states: each element of a slice
+   is a box of its own, so `total` requires each full and `two`, which
+   fills them, ensures it on Ok. Each call through `x` is proved from its
    stated state or a query, except in `blind`, whose box may be empty.
-// CHECK: box_concept.pia:61:3: proved: the precondition of 'area(box_Shape)' holds [smt]
+// CHECK: box_concept.pia:62:3: proved: the precondition of 'area(box_Shape)' holds [smt]
 // CHECK: box_concept.pia:60:3: proved: the postcondition holds [smt]
-// CHECK: box_concept.pia:69:13: proved: the precondition of 'widen(box<square>)' holds [smt]
-// CHECK: box_concept.pia:70:13: proved: the precondition of 'widen(box<rect>)' holds [smt]
-// CHECK: box_concept.pia:71:7: proved: the precondition of 'total' holds [smt]
-// CHECK: box_concept.pia:82:9: proved: the box passed as 't' to 'twice' is full [smt]
-// CHECK: box_concept.pia:81:3: proved: the postcondition holds [smt]
-// CHECK: box_concept.pia:87:3: failed: the precondition of 'fits(box_Shape, u32)' holds
-// CHECK: box_concept.pia:97:9: proved: the precondition of 'take(box_Shape, box<square>)' holds [smt]
-// CHECK: box_concept.pia:98:11: proved: the index is within bounds [smt]
-// CHECK: box_concept.pia:99:14: proved: the precondition of 'area(box_Shape)' holds [smt]
-// CHECK: box_concept.pia:113:21: proved: the precondition of 'area(box_Shape)' holds [smt]
-// CHECK: box_concept.pia:117:24: proved: the precondition of 'area(box_Shape)' holds [smt]
-// CHECK: box_concept.pia:121:3: failed: the precondition of 'area(box_Shape)' holds
-// CHECK: box_concept.pia:125:3: proved: the postcondition holds [smt]
+// CHECK: box_concept.pia:74:13: proved: the precondition of 'widen(box<square>)' holds [smt]
+// CHECK: box_concept.pia:75:13: proved: the precondition of 'widen(box<rect>)' holds [smt]
+// CHECK: box_concept.pia:76:7: proved: the precondition of 'total' holds [smt]
+// CHECK: box_concept.pia:67:3: proved: the postcondition holds [smt]
+// CHECK: box_concept.pia:88:9: proved: the box passed as 't' to 'twice' is full [smt]
+// CHECK: box_concept.pia:86:3: proved: the postcondition holds [smt]
+// CHECK: box_concept.pia:93:3: failed: the precondition of 'fits(box_Shape, u32)' holds
+// CHECK: box_concept.pia:103:9: proved: the precondition of 'take(box_Shape, box<square>)' holds [smt]
+// CHECK: box_concept.pia:105:14: proved: the precondition of 'area(box_Shape)' holds [smt]
+// CHECK: box_concept.pia:119:21: proved: the precondition of 'area(box_Shape)' holds [smt]
+// CHECK: box_concept.pia:123:24: proved: the precondition of 'area(box_Shape)' holds [smt]
+// CHECK: box_concept.pia:127:3: failed: the precondition of 'area(box_Shape)' holds
 // CHECK: 'twice<box_Shape>' is an instance of the generic proof of 'twice' [generic]
-// CHECK: 88 proved, 2 failed, 0 skipped
+// CHECK: 89 proved, 2 failed, 0 skipped
 *)

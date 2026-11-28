@@ -72,12 +72,25 @@ bool isConceptBox(const Node *t, const Scope &s) {
   return !s.types.count(c) && !last.empty() && last[0] >= 'A' && last[0] <= 'Z';
 }
 
+// Whether a slice or array of `t`s holds boxes over a concept.
+bool isConceptBoxes(const Node *t, const Scope &s) {
+  return t &&
+         (t->kind == NodeKind::SliceType || t->kind == NodeKind::ArrayType) &&
+         !t->kids.empty() && isConceptBox(t->kids[0].get(), s);
+}
+
+// Whether `n` applies `full` or `unknown` to the box `name` or to an
+// element of it, `name.[i]`.
 bool statesState(const Node &n, const std::string &name) {
   if (n.kind == NodeKind::Apply && n.kids.size() == 2 &&
       n.kids[0]->kind == NodeKind::Name &&
-      (n.kids[0]->text == "full" || n.kids[0]->text == "unknown") &&
-      n.kids[1]->kind == NodeKind::Name && n.kids[1]->text == name)
-    return true;
+      (n.kids[0]->text == "full" || n.kids[0]->text == "unknown")) {
+    const Node *a = n.kids[1].get();
+    if (a->kind == NodeKind::Index && !a->kids.empty())
+      a = a->kids[0].get();
+    if (a->kind == NodeKind::Name && a->text == name)
+      return true;
+  }
   for (const NodePtr &k : n.kids)
     if (statesState(*k, name))
       return true;
@@ -93,14 +106,40 @@ bool stated(const Node *contracts, NodeKind kind, const std::string &name) {
   return false;
 }
 
+bool mentions(const Node &n, const std::string &name) {
+  if (n.text == name)
+    return true;
+  for (const NodePtr &k : n.kids)
+    if (mentions(*k, name))
+      return true;
+  return false;
+}
+
 // The clauses a signature lacks: `requires full b` for each box taken,
-// `ensures full b` for each handed back, and `ensures full result`.
+// `ensures full b` for each handed back, and `ensures full result`; for a
+// slice of boxes, the same of each element, under a `forall` whose name is
+// new in `item`, since Pia has no shadowing.
 std::vector<std::string>
 missing(const std::vector<std::tuple<std::string, std::string, const Node *>>
             &params,
-        const Node *result, const Node *contracts, const Scope &s) {
+        const Node *result, const Node *contracts, const Scope &s,
+        const Node &item) {
   std::vector<std::string> pre, post;
   for (const auto &[name, mods, type] : params) {
+    if (isConceptBoxes(type, s)) {
+      std::string i = "i";
+      for (int n = 1; mentions(item, i); ++n)
+        i = "i" + std::to_string(n);
+      std::string each = "forall (" + i + " in 0 .. len " + name + "). full " +
+                         name + ".[" + i + "]";
+      bool out = hasWord(mods, "out");
+      if (!out && !stated(contracts, NodeKind::Requires, name))
+        pre.push_back("requires " + each);
+      if ((out || hasWord(mods, "inout") || hasWord(mods, "mutable")) &&
+          !stated(contracts, NodeKind::Ensures, name))
+        post.push_back("ensures " + each);
+      continue;
+    }
     if (!isConceptBox(type, s))
       continue;
     bool out = hasWord(mods, "out");
@@ -153,7 +192,7 @@ void find(const Rule &rule, const syntax::Node &program,
           params.emplace_back(d.text, d.kids[0]->text, d.kids[1].get());
       }
       std::vector<std::string> clauses =
-          missing(params, cur, k->kids[2].get(), s);
+          missing(params, cur, k->kids[2].get(), s, *k);
       if (clauses.empty())
         continue;
       syntax::Lint l;
@@ -185,7 +224,8 @@ void find(const Rule &rule, const syntax::Node &program,
           p->kids[0]->kind == NodeKind::Annot && p->kids[0]->kids.size() > 1)
         params.emplace_back(p->text, p->kids[0]->kids[0]->text,
                             p->kids[0]->kids[1].get());
-    std::vector<std::string> clauses = missing(params, ret, contracts, s);
+    std::vector<std::string> clauses =
+        missing(params, ret, contracts, s, *item);
     if (clauses.empty())
       continue;
     // The clauses go on lines of their own before the body's `=`.

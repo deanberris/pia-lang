@@ -12,10 +12,11 @@ interface Calls @abi(c) = sig
   let known : (sq : borrowed mutable [square]) -> u32
     requires len sq = 1
   let unknown : (xs : [box Shape]) -> u32
-    requires len xs = 1
+    requires len xs = 1 && forall (k in 0 .. len xs). full xs.[k]
   let rect = type { w : u8; h : u8 }
   let both : (sq : borrowed mutable [square]) -> (rc : borrowed mutable [rect]) -> (xs : borrowed inout mutable [box Shape]) -> u32
-    requires len sq = 1 && len rc = 1 && len xs = 2
+    requires len sq = 1 && len rc = 1 && len xs = 2 && forall (k in 0 .. len xs). unknown xs.[k]
+    ensures forall (k in 0 .. len xs). unknown xs.[k]
 end
 
 let oom = type | OutOfMemory
@@ -87,10 +88,15 @@ let unknown (xs : [box Shape]) : u32
 let total (xs : [box Shape]) : u32
   requires len xs = 2
   ensures result <= 20000
+  requires forall (i in 0 .. len xs). full xs.[i]
 = area xs.[0] + area xs.[1]
 
 let two (sq : borrowed mutable [square]) (rc : borrowed mutable [rect]) (xs : borrowed inout mutable [box Shape]) : result u32 oom
   requires len sq = 1 && len rc = 1 && len xs = 2
+  requires forall (i in 0 .. len xs). unknown xs.[i]
+  ensures (match result with
+           | Ok _ -> forall (i in 0 .. len xs). full xs.[i]
+           | Err _ -> forall (i in 0 .. len xs). unknown xs.[i])
 = let ms : mutable bump square = { mem = sq; used = 0 } in
   let mr : mutable bump rect = { mem = rc; used = 0 } in
   let a = make ms { side = 3 }? in
