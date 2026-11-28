@@ -76,6 +76,17 @@ interface Shapes = sig
   (** No member but the one at i is called name. *)
   let only : (s : [u8]) -> (items : [Pia.Text.Json.Dom.member]) -> (name : [u8]) -> (i : usize) -> bool
     ensures result = (forall (j in 0 .. len items). key_is s items.[j].key name ==> j = i)
+  (** v is a string whose span is name, in quotes. *)
+  let spec str_is : (s : [u8]) -> (v : Pia.Text.Json.Dom.json) -> (name : [u8]) -> bool @opaque
+  (** Whether v is a string whose span is name, in quotes. *)
+  let check_str : (s : [u8]) -> (v : Pia.Text.Json.Dom.json) -> (name : [u8]) -> bool
+    ensures result = str_is s v name
+  (** Exactly one member is called tag, and its value is the string name:
+      a tagged variant's constructor. *)
+  let spec tag_is : (s : [u8]) -> (items : [Pia.Text.Json.Dom.member]) -> (tag : [u8]) -> (name : [u8]) -> bool @opaque
+  (** Whether tag_is holds. *)
+  let check_tag : (s : [u8]) -> (items : [Pia.Text.Json.Dom.member]) -> (tag : [u8]) -> (name : [u8]) -> bool
+    ensures result = tag_is s items tag name
   (** @derive(json_dom): a record's or a variant's conforms, check,
       from_dom and to_dom. *)
   let meta derive_json_dom : list
@@ -323,6 +334,28 @@ let only (s : [u8]) (items : [Pia.Text.Json.Dom.member]) (name : [u8]) (i : usiz
   done;
   ok
 
+let spec str_is (s : [u8]) (v : Pia.Text.Json.Dom.json) (name : [u8]) : bool @opaque =
+  match v with
+  | Str sp -> key_is s sp name
+  | _ -> false
+
+let check_str (s : [u8]) (v : Pia.Text.Json.Dom.json) (name : [u8]) : bool
+  with str_is
+= match v with
+  | Str sp -> key_matches s sp name
+  | _ -> false
+
+let spec tag_is (s : [u8]) (items : [Pia.Text.Json.Dom.member]) (tag : [u8]) (name : [u8]) : bool @opaque =
+  exists (j in 0 .. len items).
+    key_is s items.[j].key tag && str_is s items.[j].value name
+    && (forall (q in 0 .. len items). key_is s items.[q].key tag ==> q = j)
+
+let check_tag (s : [u8]) (items : [Pia.Text.Json.Dom.member]) (tag : [u8]) (name : [u8]) : bool
+  with tag_is
+= match find s items tag with
+  | Err _ -> false
+  | Ok i -> only s items tag i && check_str s items.[i].value name
+
 (* @derive(json_dom) (ADR 0045, section 6, step 7): for a record of
    integers, range types and bools, and options and fixed arrays of them, with @derive(json)'s member names
    (@json(name = "...") or the field's own):
@@ -349,8 +382,9 @@ let only (s : [u8]) (items : [Pia.Text.Json.Dom.member]) (name : [u8]) (i : usiz
    nested object, which that record's own conforms, check and from_dom
    take; `json_is_<t> s v x` says x holds what each member says. An
    option of such a record is that record, null, or missing.
-   A variant is one of its constructors' JSON (json_dom_variant).
-   Not yet: a tagged variant, and an array of records. *)
+   A variant is one of its constructors' JSON (json_dom_variant), or,
+   tagged, an object whose tag member names the constructor.
+   Not yet: an array of records. *)
 (* How deep a document of the record named rn nests: the object, and
    inside it an array field's array or a nested record's own depth. *)
 let meta json_depth_of (rn : string) : int =
@@ -379,7 +413,10 @@ let meta derive_json_dom (t : type_decl) : list =
    record payload, which derives json_dom too. @derive(json) has proved
    at derive time that no two constructors share a JSON shape, so
    from_dom takes the first that fits, and `json_is_<t> s v x` says x is
-   that constructor with that payload. *)
+   that constructor with that payload. With @json(tag = "..."), the
+   document is an object: its tag member's string names the
+   constructor, and the rest are that constructor's payload's members,
+   as the record's own json_ok_<r>_<f> say. *)
 let meta json_dom_variant (t : type_decl) : list =
   let tn = name t in
   let shape = let (f) => concat "Pia.Text.Json.Shape." f in
@@ -389,17 +426,19 @@ let meta json_dom_variant (t : type_decl) : list =
     else if eq (kind ty) "TypeName" then fold (let (h) (n) => or h (eq n (name ty))) false ints
     else false in
   let is_bool_type = let (ty) => if eq (kind ty) "TypeName" then eq (name ty) "bool" else false in
-  let tagged = fold (let (acc) (a) =>
+  let tag = fold (let (acc) (a) =>
       if eq (nth a 0) "json" then
-        fold (let (acc2) (arg) => or acc2 (eq (nth arg 0) "tag")) acc (nth a 1)
-      else acc) false (attrs t) in
-  let vs = if tagged then fail (concat "@derive(json_dom): '" (concat tn "' has a tag, which @derive(json_dom) cannot read yet")) else variants t in
+        fold (let (acc2) (arg) => if eq (nth arg 0) "tag" then nth arg 1 else acc2) acc (nth a 1)
+      else acc) "" (attrs t) in
+  let tagged = ne tag "" in
+  let vs = variants t in
   let cidx = range (length vs) in
   let cname = let (i) => nth (nth vs i) 0 in
   let payload = let (i) => nth (nth vs i) 1 in
   let sort = let (i) =>
     let p = payload i in
     if eq (kind p) "Unit" then "null"
+    else if tagged then "object"
     else if is_bool_type p then "bool"
     else if is_int_type p then "number"
     else if eq (kind p) "TypeName" then "object"
@@ -409,17 +448,109 @@ let meta json_dom_variant (t : type_decl) : list =
     if gt (nth b 1) 9223372036854775807 then
       fail (concat "@derive(json_dom): the payload of '" (concat (cname i) "' may be above the largest i64, which a document's conformance cannot state yet"))
     else b in
+  (* ---- With a tag (ADR 0045, section 2) ----
+     The document is an object with exactly one member called the tag,
+     whose value is the constructor's name, its own or @json(name = ...)
+     on it; the payload record's members, each as that record's own
+     json_ok_<r>_<f> says; and no other member. With no option field the
+     count says the last, as for a record. *)
+  let rn = let (i) => name (payload i) in
+  let rfs = let (i) => if eq (kind (payload i)) "Unit" then [] else fields (rn i) in
+  let ckey = let (i) =>
+    fold (let (acc) (a) =>
+            if eq (nth a 0) "json" then
+              fold (let (acc2) (arg) => if eq (nth arg 0) "name" then nth arg 1 else acc2) acc (nth a 1)
+            else acc)
+         (cname i) (ctor_attrs t (cname i)) in
+  let rkey = let (i) (f) =>
+    fold (let (acc) (a) =>
+            if eq (nth a 0) "json" then
+              fold (let (acc2) (arg) => if eq (nth arg 0) "name" then nth arg 1 else acc2) acc (nth a 1)
+            else acc)
+         f (field_attrs (rn i) f) in
+  let clash = if eq tagged false then [] else map (let (i) =>
+      map (let (f) =>
+          if eq (rkey i f) tag then
+            fail (concat "@derive(json_dom): the tag '" (concat tag (concat "' is also a member of '" (concat (rn i) "'"))))
+          else true) (rfs i)) cidx in
+  let r_opt = let (i) (f) =>
+    let ft = field_type (rn i) f in
+    if eq (kind ft) "TypeApp" then
+      (let h = name (nth (children ft) 0) in or (eq h "option") (eq h "Pia.Core.Option.option"))
+    else false in
+  let any_opt_c = let (i) => fold (let (h) (f) => or h (r_opt i f)) false (rfs i) in
+  let per = let (pre) (i) (f) => concat (concat (concat pre (rn i)) "_") f in
+  let tagc = concat "json_tag_" tn in
+  let ckc = let (i) => concat (concat (concat "json_ckey_" tn) "_") (cname i) in
+  let tag_consts =
+    if tagged then
+      (let tb = bytes tag in
+       let tl = length tb in
+       concat [ `( let $tagc : [u8; $tl] = [ $tb ] ) ]
+         (map (let (i) =>
+             let kc = ckc i in
+             let kb = bytes (ckey i) in
+             let kl = length kb in
+             `( let $kc : [u8; $kl] = [ $kb ] )) cidx))
+    else [] in
+  let tkn = let (i) => concat (concat (concat "json_tknown_" tn) "_") (cname i) in
+  let tkc = let (i) => concat (concat (concat "json_check_tknown_" tn) "_") (cname i) in
+  let tnamed = let (i) (e) =>
+    fold (let (acc) (f) => let kn = per "json_name_" i f in `( $acc || $(shape "key_is") $!s $e $kn ))
+      `( $(shape "key_is") $!s $e $tagc ) (rfs i) in
+  let tnamed_check = let (i) (e) =>
+    fold (let (acc) (f) => let kn = per "json_name_" i f in `( $acc || $(shape "key_matches") $!s $e $kn ))
+      `( $(shape "key_matches") $!s $e $tagc ) (rfs i) in
+  let known_fns = let (i) =>
+    if any_opt_c i then
+      (let kn = tkn i in
+       let kc = tkc i in
+       [ `( let spec $kn ($!s : [u8]) ($!items : [Pia.Text.Json.Dom.member]) : bool =
+              forall (json_dom_j in 0 .. len $!items). (let $!kj = $!items.[json_dom_j].key in $(tnamed i `( $!kj ))) );
+         `( let $kc ($!s : [u8]) ($!items : [Pia.Text.Json.Dom.member]) : bool
+              ensures $!result = $kn $!s $!items
+            = (let $!ok : mutable bool = true in
+               for $!k in 0 .. len $!items
+                 invariant $!ok = (forall (json_dom_j in 0 .. $!k). (let $!kj = $!items.[json_dom_j].key in $(tnamed i `( $!kj ))))
+               do
+                 if $(tnamed_check i `( $!items.[$!k].key )) = false then $!ok <- false
+               done;
+               $!ok) ) ])
+    else [] in
+  let tagged_fns = if tagged then fold (let (acc) (i) => concat acc (known_fns i)) [] cidx else [] in
+  let nmem = let (i) => add (length (rfs i)) 1 in
+  let tok = let (i) =>
+    let kc = ckc i in
+    let known = if any_opt_c i then (let kn = tkn i in `( $kn $!s $!o.items )) else (let n = nmem i in `( len $!o.items = $n )) in
+    fold (let (acc) (f) => let okn = per "json_ok_" i f in `( $acc && $okn $!s $!o.items ))
+      `( $(shape "tag_is") $!s $!o.items $tagc $kc && $known ) (rfs i) in
+  let tcheck = let (i) =>
+    let kc = ckc i in
+    let known = if any_opt_c i then (let kc2 = tkc i in `( $kc2 $!s $!o.items )) else (let n = nmem i in `( len $!o.items = $n )) in
+    fold (let (acc) (f) => let chn = per "json_check_" i f in `( $acc && $chn $!s $!o.items ))
+      `( $(shape "check_tag") $!s $!o.items $tagc $kc && $known ) (rfs i) in
+  let tval = let (i) =>
+    let c = cname i in
+    if eq (kind (payload i)) "Unit" then `( $c )
+    else
+      (let lit = map (let (f) => let vn = per "json_value_" i f in [ f; `( $vn $!s $!o.items ) ]) (rfs i) in
+       let dn = concat "json_default_" (rn i) in
+       `( match $!v with
+          | Obj $!o -> $c { $lit }
+          | _ -> $c $dn )) in
   (* Constructor i's JSON, of the document e. *)
   let ok = let (i) (e) =>
     let k = sort i in
-    if eq k "null" then `( $(shape "is_null") $e )
+    if tagged then `( match $e with | Obj $!o -> $(tok i) | _ -> false )
+    else if eq k "null" then `( $(shape "is_null") $e )
     else if eq k "bool" then `( $(shape "is_bool") $e )
     else if eq k "number" then (let l = nth (bounds i) 0 in let h = nth (bounds i) 1 in `( $(shape "int_in") $!s $e $l $h ))
     else (let cn = concat "conforms_json_" (name (payload i)) in `( $cn $!s $e )) in
   (* Deciding it. *)
   let chk = let (i) =>
     let k = sort i in
-    if eq k "null" then `( $(shape "check_null") $!v )
+    if tagged then `( (match $!v with | Obj $!o -> $(tcheck i) | _ -> false) )
+    else if eq k "null" then `( $(shape "check_null") $!v )
     else if eq k "bool" then `( $(shape "check_bool") $!v )
     else if eq k "number" then
       (let l = nth (bounds i) 0 in let h = nth (bounds i) 1 in
@@ -429,7 +560,8 @@ let meta json_dom_variant (t : type_decl) : list =
   let val = let (i) =>
     let c = cname i in
     let k = sort i in
-    if eq k "null" then `( $c )
+    if tagged then tval i
+    else if eq k "null" then `( $c )
     else if eq k "bool" then `( $c ($(shape "bool_value") $!v) )
     else if eq k "number" then
       (let l = nth (bounds i) 0 in let h = nth (bounds i) 1 in
@@ -442,7 +574,8 @@ let meta json_dom_variant (t : type_decl) : list =
   let is_arm = let (acc) (i) =>
     let c = cname i in
     let k = sort i in
-    if eq k "null" then `( match $!x with | $c -> $(ok i `( $!v )) | _ -> $acc )
+    if and tagged (eq (kind (payload i)) "Unit") then `( match $!x with | $c -> $(ok i `( $!v )) | _ -> $acc )
+    else if eq k "null" then `( match $!x with | $c -> $(ok i `( $!v )) | _ -> $acc )
     else if eq k "bool" then
       `( match $!x with | $c $!p -> $(ok i `( $!v )) && $!p = ($!v = Pia.Text.Json.Dom.Bool true) | _ -> $acc )
     else if eq k "number" then
@@ -491,7 +624,7 @@ let meta json_dom_variant (t : type_decl) : list =
             match Pia.Text.Json.Dom.parse $!text $depth $!values $!members with
             | Err $!e -> Err (Unparsed $!e)
             | Ok $!d -> if $chname $!text $!d then Ok $!d else Err Unconforming) ) in
-  [ conforms_fn; check_fn; is_fn; from_fn; to_fn ]
+  concat (concat tag_consts tagged_fns) [ conforms_fn; check_fn; is_fn; from_fn; to_fn ]
 
 let meta json_dom_record (t : type_decl) : list =
   let tn = name t in

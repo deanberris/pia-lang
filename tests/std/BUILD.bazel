@@ -150,6 +150,8 @@ lit_tests(
         "json_derive_variant.pia": "large",
         "json_shape_derive.pia": "large",
         "json_shape_records.pia": "large",
+        "json_shape_tagged.pia": "large",
+        "json_shape_variants.pia": "large",
         "time_civil.pia": "large",
     },
     tools = ["//tools/piac"],
@@ -1008,6 +1010,64 @@ cc_test(
     srcs = [
         "json_shape_variant_run_test.c",
         ":json_shape_variant_run_lib",
+    ],
+    target_compatible_with = PIA_TARGETS,
+)
+
+# A route, read and written from C, in a module of its own, so that
+# json_shape_run's proof does not grow past an executor's memory.
+pia_library(
+    name = "json_shape_route_run_lib",
+    src = "Inputs/json_shape_route_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia/Core:option",
+        "//lib/Pia/Core:order",
+        "//lib/Pia/Mem:alloc",
+        "//lib/Pia/Text/Json:derive",
+        "//lib/Pia/Text/Json:dom",
+        "//lib/Pia/Text/Json:lex",
+        "//lib/Pia/Text/Json:read",
+        "//lib/Pia/Text/Json:shape",
+        "//lib/Pia/Text/Json:spec",
+        "//lib/Pia/Text/Json:write",
+    ],
+)
+
+cc_test(
+    name = "json_shape_route_run_test",
+    srcs = [
+        "json_shape_route_run_test.c",
+        ":json_shape_route_run_lib",
+    ],
+    target_compatible_with = PIA_TARGETS,
+)
+
+# A tagged variant read and written from C, in a module of its own, as
+# json_shape_variant_run is.
+pia_library(
+    name = "json_shape_tagged_run_lib",
+    src = "Inputs/json_shape_tagged_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia/Core:option",
+        "//lib/Pia/Core:order",
+        "//lib/Pia/Mem:alloc",
+        "//lib/Pia/Text/Json:derive",
+        "//lib/Pia/Text/Json:dom",
+        "//lib/Pia/Text/Json:lex",
+        "//lib/Pia/Text/Json:read",
+        "//lib/Pia/Text/Json:shape",
+        "//lib/Pia/Text/Json:spec",
+        "//lib/Pia/Text/Json:write",
+    ],
+)
+
+cc_test(
+    name = "json_shape_tagged_run_test",
+    srcs = [
+        "json_shape_tagged_run_test.c",
+        ":json_shape_tagged_run_lib",
     ],
     target_compatible_with = PIA_TARGETS,
 )
