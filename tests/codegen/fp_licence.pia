@@ -31,14 +31,14 @@
    NEON: fmla.4s
    NEON-LABEL: {{^}}_strict_dot:
    NEON-NOT: fmla
-   NEON-LABEL: {{^}}_axpy_rows:
+   NEON-LABEL: {{^}}___pia$FpLicence$axpy_rows:
    NEON: fmla.2d
 
    AVX-LABEL: {{^}}dot:
    AVX: vfmadd{{[0-9]+}}ps {{.*}}%ymm
    AVX-LABEL: {{^}}strict_dot:
    AVX-NOT: vfmadd
-   AVX-LABEL: {{^}}axpy_rows:
+   AVX-LABEL: {{^}}__pia$FpLicence$axpy_rows:
    AVX: vfmadd{{[0-9]+}}pd {{.*}}%ymm
 *)
 module FpLicence : Kernels
@@ -56,14 +56,13 @@ end
 
 (* A reduction: reordering the sum is what lets it vectorise. *)
 let dot (xs : [f32]) (ys : [f32]) : f32 @fp(reassoc, contract)
-  requires len xs = len ys
 =
   let s : mutable f32 = 0.0 in
   for i in 0..len xs do s <- s + xs.[i] * ys.[i] done;
   s
 
-let strict_dot (xs : [f32]) (ys : [f32]) : f32
-  requires len xs = len ys
+(* The same body as dot's on purpose: only the licence differs. *)
+let strict_dot (xs : [f32]) (ys : [f32]) : f32 @allow(generic_candidate)
 =
   let s : mutable f32 = 0.0 in
   for i in 0..len xs do s <- s + xs.[i] * ys.[i] done;
