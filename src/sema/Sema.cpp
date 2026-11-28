@@ -965,6 +965,48 @@ bool lowerRecord(const std::string &name, const Node &attr,
   return true;
 }
 
+// The function type a function reference field holds at run time
+// (ADR 0071): integers, bools and floats in, one of them or unit out, as
+// a mutable local reference takes.
+mlir::Type functionReferenceType(const Node &arrow, TypeResolver &types,
+                                 syntax::Diagnostics &diags) {
+  auto scalar = [](mlir::Type t) {
+    return t && (mlir::isa<IntType>(t) || t.isInteger(1) ||
+                 mlir::isa<mlir::FloatType>(t));
+  };
+  llvm::SmallVector<mlir::Type> inputs, results;
+  const Node *cur = &arrow;
+  for (; cur->kind == NodeKind::ArrowType; cur = cur->kids[1].get()) {
+    const Node &d = *cur->kids[0];
+    if (!d.kids[0]->text.empty()) {
+      diags.error(d.loc, "a parameter of a stored function reference takes "
+                         "no modifiers yet (ADR 0071)");
+      return {};
+    }
+    mlir::Type t = types.resolve(*d.kids[1]);
+    if (!t)
+      return {};
+    if (!scalar(t)) {
+      diags.error(d.loc, "a stored function reference takes integers, bools "
+                         "and floats for now (ADR 0071)");
+      return {};
+    }
+    inputs.push_back(t);
+  }
+  mlir::Type r = types.resolve(*cur);
+  if (!r)
+    return {};
+  if (!scalar(r) && !types.isUnit(r)) {
+    diags.error(cur->loc, "a stored function reference returns an integer, a "
+                          "bool, a float or unit for now (ADR 0071)");
+    return {};
+  }
+  if (!types.isUnit(r))
+    results.push_back(r);
+  return mlir::FunctionType::get(types.boolType().getContext(), inputs,
+                                 results);
+}
+
 }  // namespace
 
 // The type a `type <body>` value denotes, named `name`: a record, a
@@ -1014,8 +1056,18 @@ static mlir::Type buildType(const std::string &name, const Node &value,
     const Node &annot = *f->kids[0];
     bool where = annot.kids.size() > 2 && annot.kids[2]->kind != NodeKind::None;
     if (where) refined.emplace_back(f->text, annot.kids[2].get());
-    mlir::Type t = where ? types.resolve(*annot.kids[1])
-                         : types.resolveAnnot(annot);
+    const Node &ftype = *annot.kids[1];
+    mlir::Type t;
+    if (ftype.kind == NodeKind::ArrowType && !where) {
+      // `op : (x : u8) -> u8 requires x < 50`: the field holds a function
+      // reference (ADR 0071), the address of a function checked against
+      // the arrow where it is stored.
+      t = functionReferenceType(ftype, types, diags);
+      if (t)
+        types.setFieldArrow(name, f->text, &ftype);
+    } else {
+      t = where ? types.resolve(ftype) : types.resolveAnnot(annot);
+    }
     if (!t) return {};
     if (!f->kids[0]->kids[0]->text.empty()) {
       diags.error(f->loc, "a field cannot have modifiers");

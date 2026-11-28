@@ -1,0 +1,58 @@
+(* Function references stored in records and buffers (ADR 0071), compiled
+   and run from C by fn_tables_test.c: a handler table, one buffer of
+   addresses once its records are scalarized, called indirectly.
+// RUN: piac --emit=llvm -O2 %s | FileCheck %s
+*)
+
+(* CHECK-LABEL: define {{.*}}$dispatch"(
+// CHECK: store i64 ptrtoint (ptr @"keep@
+// CHECK: inttoptr i64 %{{[0-9]+}} to ptr
+// CHECK: call i8 %{{[0-9]+}}(
+// CHECK-LABEL: define {{.*}}$rewrite"(
+// CHECK: inttoptr
+// CHECK: call i8 %{{[0-9]+}}(
+*)
+module FnTables : Tables
+
+interface Tables @abi(c) = sig
+  let dispatch : (op : u8) -> (y : u8) -> u8
+  let rewrite : (n : u8) -> (y : u8) -> u8
+  let one : (op : u8) -> (y : u8) -> u8
+end
+
+let succ (x : u8) : u8 requires x < 255 ensures result = x + 1 = (x + 1)
+let twice (x : u8) : u8 requires x < 128 ensures result = x + x = (x + x)
+let keep (x : u8) : u8 ensures result = x = x
+let add3 (x : u8) : u8 requires x < 200 ensures result = x + 3 = (x + 3)
+
+(* A handler: its function takes what is under 100 and never shrinks it. *)
+let handler = type {
+  f : (x : u8) -> u8 requires x < 100 ensures result >= x;
+  tag : u8
+}
+
+(* The handler numbered op % 4 of a table, applied to y. *)
+let dispatch (op : u8) (y : u8) : u8 =
+  let t : [handler; 4] =
+    [{ f = keep; tag = 0 }; { f = succ; tag = 1 };
+     { f = twice; tag = 2 }; { f = add3; tag = 3 }] in
+  if y < 100 then t.[op % 4].f y else y
+
+(* n steps through a table rewritten as it goes: each step applies one
+   handler, then copies the next handler's function over it. *)
+let rewrite (n : u8) (y : u8) : u8 =
+  let t : mutable [handler; 4] =
+    [{ f = keep; tag = 0 }; { f = succ; tag = 1 };
+     { f = twice; tag = 2 }; { f = add3; tag = 3 }] in
+  let v : mutable u8 = y in
+  for i in 0 .. n do
+    if v < 100 then v <- t.[i % 4].f v else ();
+    t.[i % 4].f <- t.[(i + 1) % 4].f
+  done;
+  v
+
+(* One record's function, rebound by op. *)
+let one (op : u8) (y : u8) : u8 =
+  let h : mutable handler = { f = keep; tag = 0 } in
+  if op = 1 then h.f <- succ else if op = 2 then h.f <- twice else ();
+  if y < 100 then h.f y else y

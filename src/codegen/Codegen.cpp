@@ -437,6 +437,12 @@ class CoreTypes : public mlir::TypeConverter {
     if (c && mlir::isa<mlir::IntegerType, mlir::IndexType, mlir::FloatType,
                        mlir::LLVM::LLVMStructType>(c))
       return c;
+    // A buffer of function references, such as a handler table's field
+    // once its records are scalarized, holds addresses (ADR 0071), as
+    // 64-bit integers: a memref holds no pointers, and both targets'
+    // addresses are 64 bits (ADR 0049).
+    if (c && mlir::isa<mlir::FunctionType>(c))
+      return mlir::IntegerType::get(t.getContext(), 64);
     return {};
   }
 
@@ -754,8 +760,19 @@ struct LoadLowering : mlir::OpConversionPattern<LoadOp> {
   LogicalResult matchAndRewrite(
       LoadOp op, OpAdaptor adaptor,
       mlir::ConversionPatternRewriter &rw) const override {
-    rw.replaceOpWithNewOp<mlir::memref::LoadOp>(
-        op, adaptor.getBuffer(), mlir::ValueRange{adaptor.getIndex()});
+    Value load =
+        make<mlir::memref::LoadOp>(rw, op.getLoc(), adaptor.getBuffer(),
+                                   mlir::ValueRange{adaptor.getIndex()});
+    // A function reference is held as its address (ADR 0071), and is a
+    // function value again once read.
+    Type want = getTypeConverter()->convertType(op.getType());
+    if (want && mlir::isa<mlir::FunctionType>(want)) {
+      auto ptr = mlir::LLVM::LLVMPointerType::get(rw.getContext());
+      load = make<mlir::LLVM::IntToPtrOp>(rw, op.getLoc(), ptr, load);
+      load = make<mlir::UnrealizedConversionCastOp>(rw, op.getLoc(), want, load)
+                 .getResult(0);
+    }
+    rw.replaceOp(op, load);
     return mlir::success();
   }
 };
@@ -1395,9 +1412,16 @@ struct StoreLowering : mlir::OpConversionPattern<StoreOp> {
   LogicalResult matchAndRewrite(
       StoreOp op, OpAdaptor adaptor,
       mlir::ConversionPatternRewriter &rw) const override {
+    Value v = adaptor.getValue();
+    // A function reference is stored as its address (ADR 0071).
+    if (mlir::isa<mlir::FunctionType>(v.getType())) {
+      auto ptr = mlir::LLVM::LLVMPointerType::get(rw.getContext());
+      v = make<mlir::UnrealizedConversionCastOp>(rw, op.getLoc(), ptr, v)
+              .getResult(0);
+      v = make<mlir::LLVM::PtrToIntOp>(rw, op.getLoc(), rw.getI64Type(), v);
+    }
     rw.replaceOpWithNewOp<mlir::memref::StoreOp>(
-        op, adaptor.getValue(), adaptor.getBuffer(),
-        mlir::ValueRange{adaptor.getIndex()});
+        op, v, adaptor.getBuffer(), mlir::ValueRange{adaptor.getIndex()});
     return mlir::success();
   }
 };
