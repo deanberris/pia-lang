@@ -73,6 +73,7 @@ Every feature `piac` builds today, with the page that explains it and a working 
 | Captures, partial application and closures as results | [tour](tour.md#function-values) | [lambda_captures](../tests/verify/lambda_captures.pia), [lambda_results](../tests/verify/lambda_results.pia) |
 | Function references: `let h : (x : u8) -> u8 requires ... = succ`, and `mutable` ones rebound with `<-` and called indirectly | [tour](tour.md#function-values), [ADR 0071](adr/0071-function-references.md) | [fn_references](../tests/verify/fn_references.pia), [fn_references_mutable](../tests/verify/fn_references_mutable.pia) |
 | Function reference fields: `type { f : (x : u8) -> u8 requires ...; ... }`, stored and rebound with `<-`, buffers of them as tables called indirectly, and variant payloads holding them | [tour](tour.md#function-values), [codegen](codegen.md), [ADR 0071](adr/0071-function-references.md) | [fn_reference_fields](../tests/verify/fn_reference_fields.pia), [fn_reference_variants](../tests/verify/fn_reference_variants.pia) |
+| Distinct arrow types: `let op = type (x : u8) -> u8 requires ...`, made by `op f`, called as `f y`, and nullable as `option op` | [tour](tour.md#function-values), [ADR 0071](adr/0071-function-references.md#amendment-2026-11-28-a-nullable-reference-with-a-contract-is-option-of-a-distinct-arrow-type) | [fn_arrow_types](../tests/verify/fn_arrow_types.pia) |
 | Function objects, any type with an `apply` | [tour](tour.md#function-values) | [function_object](../tests/verify/function_object.pia) |
 
 ## Errors, resources and memory

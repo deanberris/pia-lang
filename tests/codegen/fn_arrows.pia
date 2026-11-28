@@ -1,0 +1,29 @@
+(* A distinct arrow type in an `option` (ADR 0071, amendment of
+   2026-11-28), compiled and run from C by fn_arrows_test.c.
+// RUN: piac --emit=llvm -O2 %s | FileCheck %s
+*)
+
+(* CHECK-LABEL: define {{.*}}$pick"(
+*)
+module FnArrows : Arrows
+
+interface Arrows @abi(c) = sig
+  let pick : (k : u8) -> (y : u8) -> u8
+end
+
+let option = let (t : type) => type | None | Some of t
+
+let succ (x : u8) : u8 requires x < 255 ensures result = x + 1 = (x + 1)
+let add3 (x : u8) : u8 requires x < 200 ensures result = x + 3 = (x + 3)
+
+let op = type (x : u8) -> u8 requires x < 100 ensures result > x
+
+let choose (k : u8) : option op =
+  if k = 1 then Some (op succ) else if k = 2 then Some (op add3) else None
+
+let run (h : option op) (y : u8) : u8 requires y < 100 ensures result >= y =
+  match h with
+  | Some f -> f y
+  | None -> y
+
+let pick (k : u8) (y : u8) : u8 = if y < 100 then run (choose k) y else y

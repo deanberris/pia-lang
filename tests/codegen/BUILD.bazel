@@ -396,6 +396,26 @@ cc_test(
     target_compatible_with = PIA_TARGETS,
 )
 
+# fn_arrows.pia, an option of a distinct arrow type (ADR 0071), run
+# against the same steps in C.
+genrule(
+    name = "fn_arrows_run_obj",
+    srcs = ["fn_arrows.pia"],
+    outs = ["fn_arrows_run.o"],
+    cmd = "$(location //tools/piac) --emit=obj " + PIAC_TARGET_FLAGS + " -o $@ $<",
+    target_compatible_with = PIA_TARGETS,
+    tools = ["//tools/piac"],
+)
+
+cc_test(
+    name = "fn_arrows_run_test",
+    srcs = [
+        "fn_arrows_test.c",
+        ":fn_arrows_run_obj",
+    ],
+    target_compatible_with = PIA_TARGETS,
+)
+
 # box_concept.pia, a box over a concept compiled to a tagged union and
 # called through by a switch on the tag (ADR 0046, step 5).
 genrule(

@@ -3042,6 +3042,12 @@ class Gen {
       sema::FuncSig &sig = *set[0];
       if (sig.isGeneric())
         return genGenericCall(n, sig, nullptr, {}, expected);
+      // A distinct arrow type is made only by applying it (ADR 0064).
+      if (!sig.params.empty() && arrowField(expected)) {
+        std::string t = typeName(expected);
+        return fail(n, "'" + n.text + "' is a function, not a value of " + t +
+                           "; write '" + t + " " + n.text + "' (ADR 0071)");
+      }
       if (!sig.params.empty())
         return fail(n, "functions as values are not supported yet; apply '" +
                            n.text + "' to all its arguments");
@@ -4880,6 +4886,18 @@ class Gen {
       if (BindingPtr h = lookup(fn.text);
           mlir::isa<mlir::FunctionType>(h->type))
         return genReferenceCall(n, h, expected);
+    // `f x` for `f` of a distinct arrow type calls through its one field.
+    if (local && !targs)
+      if (BindingPtr f = lookup(fn.text); arrowField(f->type)) {
+        auto field =
+            syntax::makeNode(NodeKind::Field, fn.loc, *arrowField(f->type));
+        field->add(syntax::clone(fn));
+        auto call = syntax::makeNode(NodeKind::Apply, n.loc);
+        call->add(std::move(field));
+        for (size_t i = 1; i < n.kids.size(); ++i)
+          call->add(syntax::clone(*n.kids[i]));
+        return genFieldReferenceCall(*keep(std::move(call)));
+      }
     // `g x` for a function object `g` is `apply g x` (ADR 0044, section 4).
     if (local && !targs)
       if (BindingPtr g = lookup(fn.text);
@@ -13739,13 +13757,38 @@ class Gen {
                 : RecordType();
   }
 
+  // The field of a distinct arrow type (ADR 0071, amendment of
+  // 2026-11-28), a record whose one field holds a function reference, or
+  // none for any other type.
+  std::optional<std::string> arrowField(Type t) {
+    auto rt = mlir::dyn_cast_or_null<RecordType>(t);
+    if (!rt || types_.isVariant(rt) || rt.getFieldNames().size() != 1 ||
+        !mlir::isa<mlir::FunctionType>(rt.getFieldTypes()[0]))
+      return std::nullopt;
+    std::string field = rt.getFieldNames()[0].str();
+    if (!llvm::StringRef(field).starts_with("raw#") ||
+        !types_.fieldArrow(rt.getName().str(), field))
+      return std::nullopt;
+    return field;
+  }
+
   // `r.op x` through a function reference field: a call of the field's
-  // proxy, which every record with this field shares.
+  // proxy, which every record with this field shares. A field of a
+  // distinct arrow type is called through that type's own field.
   R genFieldReferenceCall(const Node &n) {
-    const Node &fn = *n.kids[0];
-    R f = genField(fn);
+    const Node *fnp = n.kids[0].get();
+    R f = genField(*fnp);
     if (!f)
       return f;
+    if (std::optional<std::string> inner = arrowField(f->type)) {
+      auto field = syntax::makeNode(NodeKind::Field, fnp->loc, *inner);
+      field->add(syntax::clone(*fnp));
+      fnp = keep(std::move(field));
+      f = genField(*fnp);
+      if (!f)
+        return f;
+    }
+    const Node &fn = *fnp;
     auto ft = mlir::dyn_cast<mlir::FunctionType>(f->type);
     if (!ft)
       return fail(fn, "'." + fn.text + "' is " + typeName(f->type) +

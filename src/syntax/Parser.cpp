@@ -1286,6 +1286,17 @@ class Parser {
       }
     } else {
       n->add(type());
+      // `type (x : u8) -> u8 requires x < 100`: a distinct arrow type
+      // (ADR 0071, amendment of 2026-11-28), whose contracts are its
+      // arrow's and so part of the new type.
+      if (n->kids[0]->kind == N::ArrowType && atContract()) {
+        Node *arrow = n->kids[0].get();
+        while (arrow->kids[1]->kind == N::ArrowType)
+          arrow = arrow->kids[1].get();
+        Node *cs = arrow->add(makeNode(N::Contracts, loc()));
+        while (atContract())
+          cs->add(contract());
+      }
     }
     NodePtr as = attrs();
     NodePtr where = makeNode(N::None, loc());
