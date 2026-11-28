@@ -1293,7 +1293,7 @@ struct BoxEmptyLowering : mlir::OpConversionPattern<BoxEmptyOp> {
     llvm::StringRef sym = op.getDescriptor();
     if (!module.lookupSymbol<mlir::LLVM::GlobalOp>(sym)) {
       llvm::SmallVector<Type> entries{i64, i64, ptr};
-      for (int64_t i = 0; i < op.getEntries(); ++i)
+      for (uint64_t i = 0; i < op.getEntries(); ++i)
         entries.push_back(ptr);
       auto type = mlir::LLVM::LLVMStructType::getLiteral(ctx, entries);
       mlir::OpBuilder::InsertionGuard guard(rw);
