@@ -1,17 +1,19 @@
-(* A call of a function with a lowering is `pia_lib.call` (ADR 0078, step
-   1): the op names the Pia function whose body is its meaning, and stays
-   one until codegen goes to LLVM, where `pia-lib-lower` expands it into a
-   call of the function. The function's own body is its lowering, or its
-   Pia body with --lower=off. Nothing is substituted at the call yet.
+(* A call of a function with a lowering is `pia_lib.call` (ADR 0078): the
+   op names the Pia function whose body is its meaning, and stays one until
+   codegen goes to LLVM. There `pia-lib-lower` substitutes the rule's MLIR
+   for the call, so `dec2` has no call of `dec`, or with --lower=off
+   expands it into a call of the Pia body. `dec`'s lowering gives its
+   value as `$result`, which codegen returns.
 // RUN: piac --emit=core %s | FileCheck %s
 // RUN: piac --emit=core --lower=off %s | FileCheck %s --check-prefix=OFF
 // RUN: piac --emit=core --lower=off %s | pia-opt | FileCheck %s --check-prefix=OFF
 // RUN: piac --emit=llvm -O0 %s | FileCheck %s --check-prefix=LLVM
+// RUN: piac --emit=llvm -O0 --lower=off %s | FileCheck %s --check-prefix=LLVMOFF
 *)
 @trusted
 
 let dec (x : u8) : u8
-  @lower("%one = arith.constant 1 : i8\n%r = arith.subi $x, %one : i8\nreturn %r : i8")
+  @lower("%one = arith.constant 1 : i8\n$result = arith.subi $x, %one : i8")
   requires x > 0
   ensures result = x - 1
 = x - 1
@@ -35,5 +37,13 @@ let dec2 (x : u8) : u8
 
 // LLVM-NOT: pia_lib
 // LLVM-LABEL: define {{.*}}@dec2(
-// LLVM: call {{.*}}@dec(
+// LLVM-NOT: call
+// LLVM: sub i8
+// LLVM-NOT: call
+// LLVM: sub i8
+// LLVM-NOT: call
+// LLVM: ret i8
+
+// LLVMOFF-LABEL: define {{.*}}@dec2(
+// LLVMOFF: call {{.*}}@dec(
 *)

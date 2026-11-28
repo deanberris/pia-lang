@@ -10453,6 +10453,18 @@ class Gen {
                    "the parameter 'name', and '$name.type' its MLIR type");
         return false;
       }
+      // `$result` is the lowering's value (ADR 0078, section 2), which
+      // codegen returns.
+      if (splice == "result") {
+        if (!sig.result || isUnit(sig.result)) {
+          fail(attr, "@lower splices '$result', the value of a function "
+                     "that returns one; '" +
+                         name + "' returns unit");
+          return false;
+        }
+        i = end - 1;
+        continue;
+      }
       auto p = llvm::find_if(
           sig.params, [&](const sema::Param &q) { return q.name == splice; });
       if (p == sig.params.end()) {

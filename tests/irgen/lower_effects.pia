@@ -31,12 +31,19 @@ let copied (a : [u8; 4]) (b : out mutable [u8; 4]) (c : inout mutable [u8; 4]) :
   @lower("%t = memref.alloca() : memref<4xi8>\nmemref.copy $a, %t : $a.type to memref<4xi8>\nmemref.copy %t, $b : memref<4xi8> to $b.type\nmemref.copy $a, $c : $a.type to $c.type")
 = for i in 0 .. 4 do b.[i] <- a.[i]; c.[i] <- a.[i] done
 
+(* A lowering that defines `$result` gives only its result, so even an
+   `out` buffer is not its to write (ADR 0078). *)
+let set_first (a : out mutable [u8; 4]) : u8
+  @lower("%z = arith.constant 0 : index\n%v = arith.constant 7 : i8\nmemref.store %v, $a[%z] : $a.type\n$result = arith.constant 1 : i8")
+= a.[0] <- 7; 1
+
 (*
 // CHECK: lower_effects.pia":13:3): error: the @lower of 'fill' writes '$a' in 'linalg.fill', but 'a' is not an 'out' or 'inout' parameter, so the lowering may only read it (ADR 0065)
 // CHECK: lower_effects.pia":17:3): error: the @lower of 'poke' writes '$a' in 'memref.store'
 // CHECK: lower_effects.pia":21:3): error: the @lower of 'viewed' writes '$a' in 'linalg.fill'
 // CHECK: lower_effects.pia":25:3): error: the @lower of 'freed' frees '$a' in 'memref.dealloc'
 // CHECK-NOT: copied
+// CHECK: lower_effects.pia":37:3): error: the @lower of 'set_first' writes '$a' in 'memref.store', but a lowering that defines '$result' gives only its result and may not write any buffer (ADR 0078)
 
 // VERIFY: error: the @lower of 'fill' writes '$a'
 // VERIFY-NOT: proved
