@@ -6,6 +6,16 @@ def _pia_lean_proof_impl(ctx):
     if len(lean) != 1:
         fail("the Lean toolchain has no bin/lean")
     receipt = ctx.actions.declare_file(ctx.label.name + ".receipt")
+    args = []
+    inputs = [ctx.file.src, ctx.file.proofs]
+    transitive = [lean_files]
+    if ctx.attr.mathlib:
+        oleans = ctx.attr.mathlib[DefaultInfo].files
+        rev = [f for f in oleans.to_list() if f.basename == "rev"]
+        if len(rev) != 1:
+            fail("mathlib must be @mathlib//:oleans, which has a rev file")
+        args = ["--mathlib-root", rev[0].dirname]
+        transitive.append(oleans)
     ctx.actions.run(
         executable = ctx.executable._lean_proof,
         arguments = [
@@ -19,8 +29,8 @@ def _pia_lean_proof_impl(ctx):
             ctx.file.proofs.path,
             "--out",
             receipt.path,
-        ],
-        inputs = depset([ctx.file.src, ctx.file.proofs], transitive = [lean_files]),
+        ] + args,
+        inputs = depset(inputs, transitive = transitive),
         tools = [ctx.executable._piac],
         outputs = [receipt],
         mnemonic = "PiaLeanProof",
@@ -38,7 +48,9 @@ pia_lean_proof = rule(
 `src` has lemmas `let lemma l ... = by lean T`. `proofs` is a Lean file that
 starts with `import Statements` and proves each `T : <ns>.l`, where `<ns>`
 is the module of `src`, or its file name, and `Statements` is what
-`piac --emit=lean src` writes. The output, `<name>.receipt`, has a receipt
+`piac --emit=lean src` writes. A statement over `real` imports Mathlib, so
+its target sets `mathlib = "@mathlib//:oleans"`, and its receipts name the
+Mathlib commit with the Lean toolchain. The output, `<name>.receipt`, has a receipt
 for each lemma; pass it to `piac --verify --lean-receipt=<file>`. Lean never
 runs in piac: a receipt for an older statement is stale, and piac fails its
 goal.
@@ -46,6 +58,7 @@ goal.
     attrs = {
         "src": attr.label(allow_single_file = [".pia", ".pia.md"], mandatory = True),
         "proofs": attr.label(allow_single_file = [".lean"], mandatory = True),
+        "mathlib": attr.label(doc = "@mathlib//:oleans, for proofs that import Mathlib."),
         "_piac": attr.label(default = "//tools/piac", executable = True, cfg = "exec"),
         "_lean_proof": attr.label(default = "//tools/lean:lean_proof", executable = True, cfg = "exec"),
         "_lean": attr.label(default = "//third_party/lean:lean", cfg = "exec"),

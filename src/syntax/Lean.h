@@ -33,6 +33,8 @@ struct LeanStatement {
 struct LeanFile {
   // The definitions and statements, inside `namespace <ns>`.
   std::string text;
+  // Whether they use `real`, as Mathlib's ℝ, so the file imports Mathlib.
+  bool real = false;
   std::vector<LeanStatement> statements;
 };
 

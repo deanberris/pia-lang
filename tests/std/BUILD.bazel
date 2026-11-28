@@ -2,7 +2,7 @@ load("@rules_cc//cc:defs.bzl", "cc_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//tests/lit:lit.bzl", "lit_tests")
 load("//tools/piac:pia.bzl", "pia_binary", "pia_library")
-load("//tools/piac:targets.bzl", "PIA_TARGETS", "PIAC_TARGET_FLAGS")
+load("//tools/piac:targets.bzl", "PIA_TARGETS")
 
 # The goal reports of the library modules, written by the build that
 # proved them (pia_library's `report` output group, `<name>.goals`). A
@@ -1095,22 +1095,14 @@ cc_test(
     target_compatible_with = PIA_TARGETS,
 )
 
-# Pia.Float.Exp's exp against libm's (ADR 0067, X2): its accuracy is
-# measured here, since the proof bounds only its range.
-genrule(
-    name = "float_exp_obj",
-    srcs = ["//lib/Pia/Float:Exp.pia"],
-    outs = ["float_exp.o"],
-    cmd = "$(location //tools/piac) --emit=obj -O2 " + PIAC_TARGET_FLAGS + " -o $@ $<",
-    target_compatible_with = PIA_TARGETS,
-    tools = ["//tools/piac"],
-)
-
+# Pia.Float.Exp's exp against libm's (ADR 0067, X2): the proof bounds its
+# error by 1e-7 of the real exp, and this checks the compiled code meets
+# that bound and measures how close it comes.
 cc_test(
     name = "float_exp_run_test",
     srcs = [
         "float_exp_run_test.c",
-        ":float_exp_obj",
+        "//lib/Pia/Float:exp",
     ],
     linkopts = ["-lm"],
     target_compatible_with = PIA_TARGETS,

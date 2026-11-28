@@ -1,3 +1,4 @@
+load("//tools/lean:lean.bzl", "pia_lean_proof")
 load("//tools/piac:pia.bzl", "pia_library")
 load("//tools/piac:targets.bzl", "PIA_TARGETS")
 
@@ -33,11 +34,21 @@ pia_library(
     deps = [":error"],
 )
 
-# exp for f32 on x <= 0 (ADR 0067, X2): tests/std/float_exp.pia checks
-# its goals, and tests/std/float_exp_run_test.c runs it against libm.
+# exp for f32 on x <= 0 (ADR 0067, X2), proved within 1e-7 of the real
+# exp: exp_proof checks ExpProofs.lean, the Lean model of its theory, with
+# Mathlib. tests/std/float_exp.pia checks its goals, and
+# tests/std/float_exp_run_test.c runs it against libm.
+pia_lean_proof(
+    name = "exp_proof",
+    src = "Exp.pia",
+    mathlib = "@mathlib//:oleans",
+    proofs = "ExpProofs.lean",
+)
+
 pia_library(
     name = "exp",
     src = "Exp.pia",
+    lean_receipts = [":exp_proof"],
     target_compatible_with = PIA_TARGETS,
 )
 

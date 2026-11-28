@@ -2,15 +2,15 @@
    and SiLU need: softmax subtracts the maximum first, and a stable
    sigmoid takes exp of -|x|.
 
-   exp reduces x by n ln 2, n = round(-x / ln 2), with ln 2 split in two
-   so n ln2_hi is exact (Cody and Waite), evaluates a degree-6
-   polynomial on the remainder r, |r| <= ln 2 / 2, and scales it by 2^-n
-   with one multiplication per bit of n. It is proved finite and in
-   [0, 1], and at least 0.25 for x >= -0.34, so a max-subtracted softmax
-   never divides by less than that; its error against a real exp is not
-   proved yet (a real exp theory waits on Mathlib in Lean). Measured
-   against libm's double exp, it is within 2.5e-7 relative for x in
-   [-87.33, 0] (tests/std/float_exp_run_test.c), and below that it is 0. *)
+   exp reduces x by n ln 2, n = round(-x / ln 2), in f64, evaluates the
+   degree-7 Taylor polynomial on the remainder r, |r| <= 0.36, in f64,
+   scales it by 2^-n with one multiplication per bit of n, and rounds once
+   to f32. Its error against the real exp is proved: within 1e-7 of
+   exp x, relative, plus 2^-149, absolute, below f32's normals. The real
+   exp is the theory RealExp, whose Lean model is Mathlib's Real.exp, so
+   nothing of it is trusted (ExpProofs.lean, ADR 0061). The interface
+   gives the range, finite, in [0, 1] and at least 0.25 for x >= -0.34,
+   since interfaces do not carry theories yet. *)
 module Pia.Float.Exp : Exp
 
 interface Exp = sig
@@ -20,62 +20,267 @@ interface Exp = sig
     ensures -0.34 <= to_real x ==> 0.25 <= to_real result
 end
 
-(* One Horner step a + r * q, for |r| <= 0.5 and q in [lo, hi]. *)
-let step (a : f32) (r : f32) (q : f32) (alo : real) (ahi : real) (lo : real) (hi : real) : f32
-  requires finite a && finite r && finite q
-  requires -0.5 <= to_real r && to_real r <= 0.5
-  requires alo <= to_real a && to_real a <= ahi && -2.0 <= alo && ahi <= 2.0
-  requires lo <= to_real q && to_real q <= hi && 0.0 <= lo && hi <= 4.0
+(* |x| and |x - c| <= b, over reals. *)
+let spec rabs (x : real) : real = if x >= 0.0 then x else 0.0 - x
+let spec near (x : real) (c : real) (b : real) : bool = x - c <= b && c - x <= b
+
+(* The degree-7 Taylor polynomial of exp at 0, by Horner. Opaque, so the
+   goals that only carry it along do not unfold a degree-8 polynomial. *)
+let spec t7 (r : real) : real @opaque =
+  1.0 + r * (1.0 + r * (0.5 + r * (1.0 / 6.0 + r * (1.0 / 24.0 + r * (1.0 / 120.0 + r * (1.0 / 720.0 + r * (1.0 / 5040.0)))))))
+
+(* One Horner step in f64, s = fl(c + fl(r q)), against its exact value
+   C + r Q: the error shrinks by |r| and grows by a few f64 roundings. *)
+let lemma pstep (r : real) (q : real) (Q : real) (e : real) (c : real) (C : real) (t : real) (s : real) : unit
+  requires -0.36 <= r && r <= 0.36
+  requires near q Q e && 0.0 <= e && e <= 1.0e-14
+  requires -2.0 <= Q && Q <= 2.0 && 0.0 <= C && C <= 1.0 && near c C 1.2e-16
+  requires near t (r * q) (eps f64 * rabs (r * q) + tiny f64)
+  requires near s (c + t) (eps f64 * rabs (c + t) + tiny f64)
+  ensures near s (C + r * Q) (0.36 * e + 6.0e-16)
+  ensures -2.0 <= C + r * Q && C + r * Q <= 2.0
+= ()
+
+(* t7 r in f64, within 1e-15 of its exact value. *)
+let poly (r : f64) : f64
+  requires finite r && -0.36 <= to_real r && to_real r <= 0.36
+  ensures finite result && near (to_real result) (t7 (to_real r)) 1.0e-15
+  with t7
+= let q7 : f64 = 0.0001984126984126984 in
+  let c6 : f64 = 0.001388888888888889 in
+  let t6 = r * q7 in
+  let q6 = c6 + t6 in
+  pstep (to_real r) (to_real q7) (1.0 / 5040.0) 2.7e-20 (to_real c6) (1.0 / 720.0) (to_real t6) (to_real q6);
+  let c5 : f64 = 0.008333333333333333 in
+  let t5 = r * q6 in
+  let q5 = c5 + t5 in
+  pstep (to_real r) (to_real q6) (1.0 / 720.0 + to_real r * (1.0 / 5040.0)) (0.36 * 2.7e-20 + 6.0e-16) (to_real c5) (1.0 / 120.0) (to_real t5) (to_real q5);
+  let c4 : f64 = 0.041666666666666664 in
+  let t4 = r * q5 in
+  let q4 = c4 + t4 in
+  pstep (to_real r) (to_real q5) (1.0 / 120.0 + to_real r * (1.0 / 720.0 + to_real r * (1.0 / 5040.0))) (0.36 * (0.36 * 2.7e-20 + 6.0e-16) + 6.0e-16) (to_real c4) (1.0 / 24.0) (to_real t4) (to_real q4);
+  let c3 : f64 = 0.16666666666666666 in
+  let t3 = r * q4 in
+  let q3 = c3 + t3 in
+  pstep (to_real r) (to_real q4) (1.0 / 24.0 + to_real r * (1.0 / 120.0 + to_real r * (1.0 / 720.0 + to_real r * (1.0 / 5040.0)))) (0.36 * (0.36 * (0.36 * 2.7e-20 + 6.0e-16) + 6.0e-16) + 6.0e-16) (to_real c3) (1.0 / 6.0) (to_real t3) (to_real q3);
+  let c2 : f64 = 0.5 in
+  let t2 = r * q3 in
+  let q2 = c2 + t2 in
+  pstep (to_real r) (to_real q3) (1.0 / 6.0 + to_real r * (1.0 / 24.0 + to_real r * (1.0 / 120.0 + to_real r * (1.0 / 720.0 + to_real r * (1.0 / 5040.0))))) (0.36 * (0.36 * (0.36 * (0.36 * 2.7e-20 + 6.0e-16) + 6.0e-16) + 6.0e-16) + 6.0e-16) (to_real c2) (0.5) (to_real t2) (to_real q2);
+  let c1 : f64 = 1.0 in
+  let t1 = r * q2 in
+  let q1 = c1 + t1 in
+  pstep (to_real r) (to_real q2) (0.5 + to_real r * (1.0 / 6.0 + to_real r * (1.0 / 24.0 + to_real r * (1.0 / 120.0 + to_real r * (1.0 / 720.0 + to_real r * (1.0 / 5040.0)))))) (0.36 * (0.36 * (0.36 * (0.36 * (0.36 * 2.7e-20 + 6.0e-16) + 6.0e-16) + 6.0e-16) + 6.0e-16) + 6.0e-16) (to_real c1) (1.0) (to_real t1) (to_real q1);
+  let c0 : f64 = 1.0 in
+  let t0 = r * q1 in
+  let q0 = c0 + t0 in
+  pstep (to_real r) (to_real q1) (1.0 + to_real r * (0.5 + to_real r * (1.0 / 6.0 + to_real r * (1.0 / 24.0 + to_real r * (1.0 / 120.0 + to_real r * (1.0 / 720.0 + to_real r * (1.0 / 5040.0))))))) (0.36 * (0.36 * (0.36 * (0.36 * (0.36 * (0.36 * 2.7e-20 + 6.0e-16) + 6.0e-16) + 6.0e-16) + 6.0e-16) + 6.0e-16) + 6.0e-16) (to_real c0) (1.0) (to_real t0) (to_real q0);
+  q0
+
+(* Scaling by 2^-n, one factor 2^-b for each bit b of n, as the code
+   does it, so the code and the spec match step by step. *)
+let spec bit_f (k : int) (b : int) (c : real) : real = if k >= b then c else 1.0
+let spec bit_r (k : int) (b : int) : int = if k >= b then k - b else k
+
+(* v * 2^-n for 0 <= n < 256, a factor for each bit of n, as exp scales. *)
+let spec scaled (v : real) (n : int) : real @opaque =
+  let n6 = bit_r n 128 in
+  let n5 = bit_r n6 64 in
+  let n4 = bit_r n5 32 in
+  let n3 = bit_r n4 16 in
+  let n2 = bit_r n3 8 in
+  let n1 = bit_r n2 4 in
+  let n0 = bit_r n1 2 in
+  v * bit_f n 128 (1.0 / 340282366920938463463374607431768211456.0)
+    * bit_f n6 64 (1.0 / 18446744073709551616.0)
+    * bit_f n5 32 (1.0 / 4294967296.0)
+    * bit_f n4 16 (1.0 / 65536.0)
+    * bit_f n3 8 (1.0 / 256.0)
+    * bit_f n2 4 (1.0 / 16.0)
+    * bit_f n1 2 0.25
+    * bit_f n0 1 0.5
+
+(* scaled is linear in v, and positive: Lean proves it (ExpProofs.lean),
+   since Z3 would multiply out eight branches. *)
+let lemma scaled_lin (v : real) (n : int) : unit
+  requires 0 <= n && n <= 255
+  ensures scaled v n = v * scaled 1.0 n && scaled 1.0 n > 0.0
+= by lean ExpProofs.scaled_lin
+
+(* The real exp, as a theory: Lean's model is Mathlib's Real.exp, with
+   pw n = 2^-n, and proves each axiom (ExpProofs.lean), so none is
+   trusted. taylor is Mathlib's Real.exp_bound for 8 terms; reduce uses
+   exp (x + n ln 2) = 2^n exp x and |ln 2 - 0.6931471805599453| <= 1.1e-10
+   (Real.log_two_near_10); tiny_below uses e > 2.71. *)
+let theory RealExp = sig
+  let spec rexp : (x : real) -> real
+  let spec pw : (n : int) -> real
+  let axiom pos_le1 (x : real) requires x <= 0.0 ensures 0.0 < rexp x && rexp x <= 1.0
+  let axiom lower (x : real) ensures 1.0 + x <= rexp x
+  let axiom taylor (r : real)
+    requires -0.36 <= r && r <= 0.36
+    ensures near (rexp r) (t7 r) 8.0e-9
+  let axiom pw_def (n : int) requires 0 <= n && n <= 255 ensures pw n = scaled 1.0 n
+  let axiom reduce (x : real) (n : int) (r : real) @trigger(rexp x, rexp r, pw n)
+    requires 0 <= n && n <= 150 && near r (x + real n * 0.6931471805599453) 1.0e-12
+    ensures near (rexp x) (rexp r * pw n) (2.0e-8 * (rexp r * pw n))
+  let axiom tiny_below (x : real) requires x <= -104.0 ensures rexp x <= 1.0e-45
+end
+
+let model reals : RealExp = by lean ExpProofs.reals
+
+(* t7 on |r| <= 0.36, where exp is in [0.69, 1.44]. *)
+let lemma t7_range (r : real) : unit
+  requires -0.36 <= r && r <= 0.36
+  ensures 0.6 <= t7 r && t7 r <= 1.5
+  with t7
+= ()
+
+(* Clamping to [0, 1] moves a value only toward X, which is in (0, 1]. *)
+let lemma clamp_near (v : real) (w : real) (X : real) (b : real) : unit
+  requires 0.0 < X && X <= 1.0 && near v X b
+  requires 0.0 <= v && v <= 1.0 ==> w = v
+  requires v > 1.0 ==> w = 1.0
+  requires v < 0.0 ==> w = 0.0
+  ensures near w X b
+= ()
+
+(* Below -104, exp x < 2^-150 rounds to 0 in f32. *)
+let lemma at_lower (x : real) : unit
+  ensures 1.0 + x <= RealExp.rexp x
+= ()
+
+let lemma at_tiny (x : real) : unit
+  requires x < -104.0
+  ensures near 0.0 (RealExp.rexp x) (1.0e-7 * RealExp.rexp x + 2.0 * tiny f32)
+= ()
+
+(* The theory's facts at one point, each a goal of its own. *)
+let lemma at_taylor (r : real) : unit
+  requires -0.36 <= r && r <= 0.36
+  ensures near (RealExp.rexp r) (t7 r) 8.0e-9 && RealExp.rexp r >= 0.6
+= ()
+
+let lemma at_reduce (x : real) (n : int) (r : real) : unit
+  requires -104.0 <= x && x <= 0.0 && 0 <= n && n <= 150
+  requires near r (x + real n * 0.6931471805599453) 1.0e-12
+  ensures near (RealExp.rexp x) (RealExp.rexp r * RealExp.pw n) (2.0e-8 * (RealExp.rexp r * RealExp.pw n))
+  ensures 0.0 < RealExp.rexp x && RealExp.rexp x <= 1.0
+= ()
+
+(* s * c when bit b of k is set, tracking s against its exact value a
+   relative to it: c is a power of two at least 2^-128 and a stays far
+   from f64's subnormals, so each step adds one f64 rounding. *)
+let halve (s : f64) (k : u8) (b : u8) (c : f64) (a : real) (d : real) : f64
+  requires finite s && finite c && 1.0e-39 <= to_real c && to_real c <= 0.5
+  requires a >= 1.0e-200 && 0.0 <= d && d <= 1.0e-14 && near (to_real s) a (d * a)
   ensures finite result
-  ensures alo - 0.5 * hi - 0.000001 <= to_real result && to_real result <= ahi + 0.5 * hi + 0.000001
-= a + r * q
+  ensures near (to_real result) (a * bit_f (int k) (int b) (to_real c)) ((d + 2.3e-16) * (a * bit_f (int k) (int b) (to_real c)))
+  ensures a * bit_f (int k) (int b) (to_real c) >= a * to_real c
+= if k >= b then s * c else s
 
-(* 1 + r + r^2/2 + ... + r^6/720 by Horner, as steps whose bounds are
-   intervals: each goal is one rounding of one step, where the whole
-   polynomial as one goal took Z3 minutes. *)
-let poly (r : f32) : f32
-  requires finite r && -0.5 <= to_real r && to_real r <= 0.5
-  ensures finite result && 0.25 <= to_real result && to_real result <= 2.0
-= let q5 = step 0.008333334 r 0.0013888889 0.0083333 0.0083334 0.0013 0.0014 in
-  let q4 = step 0.041666668 r q5 0.0416666 0.0416667 0.0076 0.0091 in
-  let q3 = step 0.16666667 r q4 0.1666665 0.1666668 0.037 0.047 in
-  let q2 = step 0.5 r q3 0.4999995 0.5000005 0.143 0.191 in
-  let q1 = step 1.0 r q2 0.999999 1.000001 0.404 0.596 in
-  step 1.0 r q1 0.999999 1.000001 0.70 1.30
+(* The errors put together: reduction 2e-8, Taylor 8e-9 over exp r >= 0.6,
+   f64 work 2e-15, and the final rounding to f32, eps f32. *)
+let lemma assemble (X : real) (R : real) (P : real) (p : real) (s : real) (v : real) (r : real) : unit
+  requires 0.0 < X && X <= 1.0 && 0.0 < P && R >= 0.6
+  requires near X (R * P) (2.0e-8 * (R * P))
+  requires near R (t7 r) 8.0e-9 && near p (t7 r) 1.0e-15
+  requires near s (p * P) (2.0e-15 * (p * P))
+  requires near v s (eps f32 * rabs s + tiny f32)
+  ensures near v X (1.0e-7 * X + 2.0 * tiny f32)
+= ()
 
-(* The result held to [0, 1], which exp of x <= 0 is in. *)
+(* The result held to [0, 1], where exp of x <= 0 is. *)
 let clamp01 (v : f32) : f32
   requires finite v
   ensures finite result && 0.0 <= to_real result && to_real result <= 1.0
-  ensures 0.25 <= to_real v ==> 0.25 <= to_real result
+  ensures 0.0 <= to_real v && to_real v <= 1.0 ==> to_real result = to_real v
+  ensures to_real v > 1.0 ==> to_real result = 1.0
+  ensures to_real v < 0.0 ==> to_real result = 0.0
 = if v > 1.0 then 1.0 else if v < 0.0 then 0.0 else v
 
-(* s * 2^-bit if bit is set in n: each factor is a power of two at most
-   1/2, so s stays finite and within [0, 2]. *)
-let halve (s : f32) (n : u8) (bit : int{1..128}) (c : f32) : f32
-  requires finite s && 0.0 <= to_real s && to_real s <= 2.0
-  requires finite c && 0.0 < to_real c && to_real c <= 0.5
-  ensures finite result && 0.0 <= to_real result && to_real result <= 2.0
-= if (n / bit) % 2 = 1 then (let v = s * c in if v < 0.0 then 0.0 else v) else s
+(* n = round(-x / ln 2), for -104 <= x <= 0. *)
+let count (x : f32) : u8
+  requires finite x && -104.0 <= to_real x && to_real x <= 0.0
+  ensures int result <= 150
+  ensures real (int result) <= 0.5 - to_real x * 1.442695 + 5.0e-5
+  ensures 0.5 - to_real x * 1.442695 - 5.0e-5 < real (int result) + 1.0
+= let y = 0.5 - x * 1.442695 in
+  assert near (to_real y) (0.5 - to_real x * 1.442695) 5.0e-5;
+  u8 y
 
-(* Near 0 the polynomial alone; below -87.33 the result is under f32's
-   smallest normal, 0; else n = round(-x / ln 2) as the truncation of a
-   positive float, and the remainder held to |r| <= 1/2 for the proof
-   (it is within ln 2 / 2 already). *)
-let exp (x : f32) : f32
-= if x >= -0.34 then clamp01 (poly x)
-  else if x < -87.33 then 0.0
+(* r = x + n ln 2, in f64, so it is within 1e-12 of its exact value. *)
+let remainder (x : f32) (n : u8) : f64
+  requires finite x && -104.0 <= to_real x && to_real x <= 0.0 && int n <= 150
+  requires real (int n) <= 0.5 - to_real x * 1.442695 + 5.0e-5
+  requires 0.5 - to_real x * 1.442695 - 5.0e-5 < real (int n) + 1.0
+  ensures finite result && -0.36 <= to_real result && to_real result <= 0.36
+  ensures near (to_real result) (to_real x + real (int n) * 0.6931471805599453) 1.0e-12
+= let d = f64 x in
+  let m = f64 n in
+  let l : f64 = 0.6931471805599453 in
+  assert near (to_real m) (real (int n)) 1.0e-13;
+  let t = m * l in
+  assert near (to_real t) (real (int n) * 0.6931471805599453) 1.0e-12;
+  d + t
+
+(* v * 2^-n, a multiplication by 2^-b for each bit b of n. *)
+let scale (p : f64) (n : u8) : f64
+  requires finite p && 0.5 <= to_real p && to_real p <= 2.0
+  ensures finite result
+  ensures near (to_real result) (scaled (to_real p) (int n)) (1.9e-15 * scaled (to_real p) (int n))
+  with scaled
+=
+  let c128 : f64 = 2.938735877055719e-39 in
+  let s128 = halve p n 128 c128 (to_real p) 0.0 in
+  let k128 = if n >= 128 then n - 128 else n in
+  let c64 : f64 = 5.421010862427522e-20 in
+  let s64 = halve s128 k128 64 c64 (to_real p * bit_f (int n) 128 (to_real c128)) (2.30e-16) in
+  let k64 = if k128 >= 64 then k128 - 64 else k128 in
+  let c32 : f64 = 2.3283064365386963e-10 in
+  let s32 = halve s64 k64 32 c32 (to_real p * bit_f (int n) 128 (to_real c128) * bit_f (int k128) 64 (to_real c64)) (4.60e-16) in
+  let k32 = if k64 >= 32 then k64 - 32 else k64 in
+  let c16 : f64 = 1.52587890625e-05 in
+  let s16 = halve s32 k32 16 c16 (to_real p * bit_f (int n) 128 (to_real c128) * bit_f (int k128) 64 (to_real c64) * bit_f (int k64) 32 (to_real c32)) (6.90e-16) in
+  let k16 = if k32 >= 16 then k32 - 16 else k32 in
+  let c8 : f64 = 0.00390625 in
+  let s8 = halve s16 k16 8 c8 (to_real p * bit_f (int n) 128 (to_real c128) * bit_f (int k128) 64 (to_real c64) * bit_f (int k64) 32 (to_real c32) * bit_f (int k32) 16 (to_real c16)) (9.20e-16) in
+  let k8 = if k16 >= 8 then k16 - 8 else k16 in
+  let c4 : f64 = 0.0625 in
+  let s4 = halve s8 k8 4 c4 (to_real p * bit_f (int n) 128 (to_real c128) * bit_f (int k128) 64 (to_real c64) * bit_f (int k64) 32 (to_real c32) * bit_f (int k32) 16 (to_real c16) * bit_f (int k16) 8 (to_real c8)) (1.15e-15) in
+  let k4 = if k8 >= 4 then k8 - 4 else k8 in
+  let c2 : f64 = 0.25 in
+  let s2 = halve s4 k4 2 c2 (to_real p * bit_f (int n) 128 (to_real c128) * bit_f (int k128) 64 (to_real c64) * bit_f (int k64) 32 (to_real c32) * bit_f (int k32) 16 (to_real c16) * bit_f (int k16) 8 (to_real c8) * bit_f (int k8) 4 (to_real c4)) (1.38e-15) in
+  let k2 = if k4 >= 2 then k4 - 2 else k4 in
+  let c1 : f64 = 0.5 in
+  let s1 = halve s2 k2 1 c1 (to_real p * bit_f (int n) 128 (to_real c128) * bit_f (int k128) 64 (to_real c64) * bit_f (int k64) 32 (to_real c32) * bit_f (int k32) 16 (to_real c16) * bit_f (int k16) 8 (to_real c8) * bit_f (int k8) 4 (to_real c4) * bit_f (int k4) 2 (to_real c2)) (1.61e-15) in
+  s1
+
+(* exp, its error against the real exp proved: the theory's axioms bound
+   each step, and the rounding facts each operation. *)
+let accurate (x : f32) : f32
+  requires finite x && to_real x <= 0.0
+  ensures finite result && 0.0 <= to_real result && to_real result <= 1.0
+  ensures near (to_real result) (RealExp.rexp (to_real x)) (1.0e-7 * RealExp.rexp (to_real x) + 2.0 * tiny f32)
+= if x < -104.0 then (at_tiny (to_real x); 0.0)
   else (
-    let n = u8 (0.5 - x * 1.442695) in
-    let m = f32 n in
-    let r = (x + m * 0.693145752) + m * 1.42860677e-6 in
-    let r1 : f32 = if r > 0.5 then 0.5 else if r < -0.5 then -0.5 else r in
-    let s0 = poly r1 in
-    let s1 = halve s0 n 128 2.938736e-39 in
-    let s2 = halve s1 n 64 5.421011e-20 in
-    let s3 = halve s2 n 32 2.3283064e-10 in
-    let s4 = halve s3 n 16 1.5258789e-05 in
-    let s5 = halve s4 n 8 0.00390625 in
-    let s6 = halve s5 n 4 0.0625 in
-    let s7 = halve s6 n 2 0.25 in
-    clamp01 (halve s7 n 1 0.5))
+    let n = count x in
+    let r = remainder x n in
+    let p = poly r in
+    t7_range (to_real r);
+    let s = scale p n in
+    scaled_lin (to_real p) (int n);
+    let v = f32 s in
+    at_taylor (to_real r);
+    at_reduce (to_real x) (int n) (to_real r);
+    assemble (RealExp.rexp (to_real x)) (RealExp.rexp (to_real r)) (RealExp.pw (int n)) (to_real p) (to_real s) (to_real v) (to_real r);
+    let w = clamp01 v in
+    clamp_near (to_real v) (to_real w) (RealExp.rexp (to_real x)) (1.0e-7 * RealExp.rexp (to_real x) + 2.0 * tiny f32);
+    w)
+
+(* The exported exp: accurate's range, and at least 0.25 near 0, from its
+   error bound and exp x >= 1 + x. *)
+let exp (x : f32) : f32
+= let v = accurate x in
+  at_lower (to_real x);
+  v

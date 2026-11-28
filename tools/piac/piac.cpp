@@ -246,7 +246,9 @@ std::string leanNamespace(const pia::syntax::Node &tree,
 // which the receipt writer copies, then the definitions.
 std::string leanFileText(const pia::syntax::LeanFile &lean,
                          const std::string &file) {
-  std::string out =
+  // Mathlib's ℝ for `real` (ADR 0061); an import comes before anything.
+  std::string out = lean.real ? "import Mathlib.Basic.Real.Basic\n\n" : "";
+  out +=
       "-- The statements of the lemmas of " + file +
       " proved in Lean, written by\n"
       "-- `piac --emit=lean` (ADR 0061). Do not edit: a receipt names each\n"

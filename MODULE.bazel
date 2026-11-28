@@ -131,6 +131,16 @@ http_archive(
     urls = ["https://github.com/leanprover/lean4/releases/download/v%s/lean-%s-darwin_aarch64.tar.zst" % (LEAN_VERSION, LEAN_VERSION)],
 )
 
+# Mathlib (ADR 0061, section Mathlib), for Lean proofs over reals: its
+# prebuilt .olean files for the commit tagged v4.36.0, whose toolchain is
+# LEAN_VERSION's. Only pia_lean_proof targets that set `mathlib` fetch it.
+mathlib_repository = use_repo_rule("//tools/lean:mathlib.bzl", "mathlib_repository")
+
+mathlib_repository(
+    name = "mathlib",
+    commit = "fc4f59e577feb1a4956671bc04ac18aaaf8cd842",
+)
+
 # --------------------------------------------------------------- LLVM and MLIR
 #
 # LLVM's Bazel build lives in llvm-project at utils/bazel. Its MODULE.bazel

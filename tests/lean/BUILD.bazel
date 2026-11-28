@@ -44,12 +44,22 @@ pia_lean_proof(
     proofs = "Variants.lean",
 )
 
+# reals_proof proves reals.pia's lemma over reals and its theory's Lean
+# model with Mathlib, whose exp meets the theory's axioms.
+pia_lean_proof(
+    name = "reals_proof",
+    src = "reals.pia",
+    mathlib = "@mathlib//:oleans",
+    proofs = "Reals.lean",
+)
+
 lit_tests(
     name = "lean_tests",
     srcs = glob(["*.pia"]),
     data = [
         ":bytes_proof",
         ":native_proof",
+        ":reals_proof",
         ":slices_proof",
         ":variants_proof",
         ":sums_proof",
