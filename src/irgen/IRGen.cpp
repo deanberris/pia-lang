@@ -35,6 +35,7 @@
 #include "sema/Sema.h"
 #include "syntax/Interfaces.h"
 #include "syntax/Parser.h"
+#include "transforms/ScalarizeRecords.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SetVector.h"
@@ -1186,7 +1187,12 @@ class Gen {
       // it (ADR 0058).
       if (sig.params[i].spec)
         fn.setArgAttr(i, PiaDialect::getSpecStateAttrName(), b_.getUnitAttr());
+      if (auto marks = oneAddresses(sig.params[i].type))
+        fn.setArgAttr(i, PiaDialect::getOneAddressAttrName(), marks);
     }
+    if (sig.result && !isUnit(sig.result))
+      if (auto marks = oneAddresses(sig.result))
+        fn.setResultAttr(0, PiaDialect::getOneAddressAttrName(), marks);
     Block *entry = fn.addEntryBlock();
     b_.setInsertionPointToStart(entry);
 
@@ -3775,6 +3781,59 @@ class Gen {
       }
     }
     return TV{create<RecordOp>(l, rt, fields).getResult(), rt};
+  }
+
+  // The tag of the constructor that carries a reference, when `t` is a
+  // variant of two constructors, one with no payload and one whose
+  // payload is only a function reference, perhaps inside one-field
+  // records such as a distinct arrow type (ADR 0071, amendment of
+  // 2026-11-28). Such a value crosses the C boundary as one address, zero
+  // for the constructor without a payload.
+  std::optional<unsigned> oneAddressTag(Type t) {
+    std::vector<const sema::Ctor *> ctors = types_.ctorsOf(t);
+    if (ctors.size() != 2)
+      return std::nullopt;
+    const sema::Ctor *some = ctors[0]->payload ? ctors[0] : ctors[1];
+    const sema::Ctor *none = some == ctors[0] ? ctors[1] : ctors[0];
+    if (none->payload || !some->payload)
+      return std::nullopt;
+    Type leaf = some->payload;
+    while (auto r = mlir::dyn_cast<RecordType>(leaf)) {
+      if (r.getFieldTypes().size() != 1 || types_.isVariant(r))
+        return std::nullopt;
+      leaf = r.getFieldTypes()[0];
+    }
+    if (!mlir::isa<mlir::FunctionType>(leaf))
+      return std::nullopt;
+    return some->tag;
+  }
+
+  // Where a value of `t` holds an `option` of a reference, as pairs of
+  // its tag's leaf, in the order ScalarizeRecords gives a record's leaves,
+  // and the tag of the constructor with the reference; null when it holds
+  // none. A buffer's elements keep their own layout.
+  mlir::DenseI64ArrayAttr oneAddresses(Type t) {
+    llvm::SmallVector<int64_t> marks;
+    int64_t leaf = 0;
+    std::function<void(Type)> walk = [&](Type u) {
+      if (auto tag = oneAddressTag(u)) {
+        marks.append({leaf, int64_t(*tag)});
+        leaf += 2;
+        return;
+      }
+      if (auto r = mlir::dyn_cast<RecordType>(u)) {
+        for (Type f : r.getFieldTypes())
+          walk(f);
+        return;
+      }
+      llvm::SmallVector<Type> leaves;
+      transforms::recordLeaves(u, leaves);
+      leaf += leaves.size();
+    };
+    walk(t);
+    if (marks.empty())
+      return {};
+    return b_.getDenseI64ArrayAttr(marks);
   }
 
   // A function reference that nothing calls, for an unused payload of a

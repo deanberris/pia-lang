@@ -120,6 +120,16 @@ void opaque_all(uint8_t *r, uint64_t n, uint8_t *g, uint8_t *b, uint8_t *a,
                 uint8_t v);
 ```
 
+An `option` of a function reference, a variant of two constructors where one has no payload and the other carries only a reference, perhaps inside a distinct arrow type, crosses the boundary as one address, `NULL` for the constructor without a payload ([ADR 0071](adr/0071-function-references.md#amendment-2026-11-28-a-nullable-reference-with-a-contract-is-option-of-a-distinct-arrow-type)). Every function has a nonzero address, so nothing is lost. IRGen marks such a parameter or result with `{pia.one_address}`, the tag of the constructor with the reference at each of its tag leaves; inside Pia the value stays its tag and its reference, so only the C entry point turns the pair into one address and back. It holds as a top-level parameter or result and as a record's field, so a record holding one has a pointer field (tests/codegen/fn_null.pia, run by fn_null_test.c):
+
+```c
+// apply (h : option (u8 -> u8)) (y : u8) : u8, and get (k : u8) : option (u8 -> u8)
+uint8_t apply(uint8_t (*h)(uint8_t), uint8_t y);
+uint8_t (*get(uint8_t k))(uint8_t);
+```
+
+C passes `NULL` or an address a Pia function returned; a C function's address is a reference C vouches for, which comes with ADR 0071's step 3. A buffer of them keeps one buffer per field, tags and addresses.
+
 A buffer of slices is passed the same way, as the buffer of its elements' addresses and the buffer of their lengths, which shares the first's count (tests/codegen/slice_buffers_run.pia, run by slice_buffers_run_test.c):
 
 ```c

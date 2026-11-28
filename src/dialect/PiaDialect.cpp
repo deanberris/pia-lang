@@ -181,6 +181,15 @@ LogicalResult PiaDialect::verifyRegionArgAttribute(Operation *op, unsigned,
     return op->emitError() << "'pia.lower_threaded' on argument " << argIndex
                            << " must be a unit attribute";
   }
+  // `{pia.one_address = 1}`: an `option` of a function reference, which
+  // the C entry point passes as one address (ADR 0071).
+  if (attr.getName() == getOneAddressAttrName()) {
+    if (isa<IntegerAttr, DenseI64ArrayAttr>(attr.getValue()))
+      return success();
+    return op->emitError() << "'" << getOneAddressAttrName() << "' on argument "
+                           << argIndex
+                           << " must be a tag or pairs of a leaf and a tag";
+  }
   if (attr.getName() != getModifiersAttrName())
     return op->emitError() << "unknown pia argument attribute '"
                            << attr.getName() << "'";

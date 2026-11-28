@@ -896,7 +896,7 @@ let run (h : option (u8 -> u8)) (y : u8) : u8 =
 let start () : option (u8 -> u8) = Some half
 ```
 
-A stored reference takes and returns integers, bools and floats for now. Copies of a mutable reference into a local, `option` laid out as one nullable address, and references passed to C come later.
+A stored reference takes and returns integers, bools and floats for now. At the C boundary, an `option` of a reference is one address, `NULL` for `None` ([codegen](codegen.md#c-abi)). Copies of a mutable reference into a local, and C functions passed in as references, come later.
 
 ## Parallel loops
 
