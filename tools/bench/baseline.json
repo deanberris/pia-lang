@@ -380,11 +380,11 @@
       "wall_ms_n": 2047.6
     },
     "lib/Pia/Text/Json/Write.pia": {
-      "cost": 471487058,
-      "goals": 571,
-      "solve_ms_n": 26279,
-      "solved": 561,
-      "wall_ms_n": 66240.0
+      "cost": 544214082,
+      "goals": 604,
+      "solve_ms_n": 30332,
+      "solved": 594,
+      "wall_ms_n": 76458.0
     },
     "lib/Pia/Time.pia": {
       "cost": 803930194,
@@ -1236,10 +1236,10 @@
   },
   "host": "github-ubuntu-24.04",
   "total": {
-    "cost": 8228477563,
-    "goals": 14837,
-    "solved": 13366,
+    "cost": 8301204587,
+    "goals": 14870,
+    "solved": 13399,
     "wall_ms_1": 0,
-    "wall_ms_n": 1620493.0
+    "wall_ms_n": 1630711.0
   }
 }
