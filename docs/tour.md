@@ -934,7 +934,7 @@ let share (xs : [u32]) (ys : out mutable [u64]) : unit
 
 In the spread, each iteration knows its own argument's cell of the gathered array, so `sum`'s postcondition says `total` is at least `xs.[i]`, which proves the subtraction, and `sum`'s precondition is a goal on the spread's range. `Pia.Par` defines the usual collectives this way: `sum`, `least`, `most`, `any`, `every` and `exchange` ([Library](library.md)).
 
-Every iteration must reach the same collectives in the same order, or the others would wait forever, and piac checks this as it reads the body: an `if` or `for` around a collective must have a condition or range that is the same in every iteration, computed from names bound before the spread, collective results and buffers no iteration writes, and so must every argument it does not gather. `if i = 0 then exchange a else ()` is a compile error at the collective, naming the condition. A value an iteration computes before a collective and uses after it is an error too, with a hint to keep it in a cell the iteration owns: codegen runs the code between collectives as its own parallel loop, so the join at its end is the barrier, and no new runtime is needed.
+Every iteration must reach the same collectives in the same order, or the others would wait forever, and piac checks this as it reads the body: an `if` or `for` around a collective must have a condition or range that is the same in every iteration, computed from names bound before the spread, collective results and buffers no iteration writes, and so must every argument it does not gather. `if i = 0 then exchange a else ()` is a compile error at the collective, naming the condition. A value an iteration computes before a collective and uses after it is an error too, with a hint to keep it in a cell the iteration owns: codegen runs the code between collectives as its own parallel loop, so the join at its end is the barrier, and no new runtime is needed. A buffer the spread writes may be passed to a function only while a collective has published it, and only to a parameter the function reads (no `mutable`, `out`, `inout` or `moved`); before that, piac rejects the call, since the function could read a cell another iteration is writing. [pull_spread.pia.md](pull_spread.pia.md) passes the published loads to its `gather` this way.
 
 ## Metaprograms
 
@@ -1016,7 +1016,7 @@ let describe (v : dyn) : str =
   | _         -> "other"
 ```
 
-**Tiles.** `spread`, `@place(gpu)` and collectives (`@collective`) are built ([Collectives](#collectives)); tiled grids with halo rows, and `@place(auto)`, which lets the compiler choose the device, are not:
+**Tiles.** `spread`, `@place(gpu)` and collectives (`@collective`) are built ([Collectives](#collectives)), and the sediment step runs as one spread with collectives between its waves ([pull_spread.pia.md](pull_spread.pia.md)); tiled grids with halo rows, and `@place(auto)`, which lets the compiler choose the device, are not:
 
 <!-- untested: tiled grids and @place(auto) are not implemented yet -->
 ```ocaml

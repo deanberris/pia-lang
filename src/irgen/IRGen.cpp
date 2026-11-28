@@ -1385,6 +1385,11 @@ class Gen {
         fn->setAttr("pia.import_ghost", b_.getStringAttr(isSpec    ? "spec"
                                                          : isLemma ? "lemma"
                                                                    : "axiom"));
+      // An imported collective is split into phases at like a local one:
+      // codegen calls it once for the whole spread (ADR 0086). Its module
+      // checked its `@collective`.
+      if (collectiveAttrOf(&item))
+        fn->setAttr("pia.collective", b_.getUnitAttr());
       genImport(item, sig, fn);
       return;
     }
@@ -12015,6 +12020,21 @@ class Gen {
                 return f.buf == at;
               });
         }
+      // A read-only argument, which is checked at the call: the buffer
+      // must be published there (ADR 0086).
+      if (!passed && parent && parent->kind == NodeKind::Apply &&
+          parent->kids[0]->kind == NodeKind::Name &&
+          parent->kids[0].get() != &n) {
+        size_t at = 0;
+        for (size_t k = 1; k < parent->kids.size(); ++k)
+          if (parent->kids[k].get() == &n)
+            at = k - 1;
+        auto set = overloadSet(parent->kids[0]->text);
+        passed = !set.empty() && llvm::all_of(set, [&](const sema::FuncSig *f) {
+          return !f->isGeneric() && at < f->params.size() &&
+                 readOnlyParam(f->params[at]);
+        });
+      }
       // A collective's argument, which publishes the buffer: a collective
       // takes no out or inout parameter, so it reads the buffer once every
       // iteration has written its cells (ADR 0086).
@@ -12156,6 +12176,14 @@ class Gen {
   // A buffer that a spread writes, or that a function owns, passed to a
   // call: the callee must own it by the same owner array, and the goal is
   // that it touches the iteration's cells, `b = i` (ADR 0060).
+  // Whether a call reads a buffer parameter and never writes it.
+  static bool readOnlyParam(const sema::Param &p) {
+    return !sema::hasModifier(p.modifiers, "mutable") &&
+           !sema::hasModifier(p.modifiers, "out") &&
+           !sema::hasModifier(p.modifiers, "inout") &&
+           !sema::hasModifier(p.modifiers, "moved");
+  }
+
   bool checkFootprintCall(const Node &n, const sema::FuncSig &sig,
                           const std::vector<const Node *> &args) {
     // A collective's buffer arguments are published, not written: it takes
@@ -12170,15 +12198,29 @@ class Gen {
       BindingPtr buf = lookup(arg.text);
       if (!buf || !spread_->outside.count(buf.get()))
         continue;
-      if (spread_->halo.count(arg.text))
+      if (spread_->halo.count(arg.text)) {
+        // A published buffer may be read by every iteration, so it may be
+        // passed where the callee only reads it (ADR 0086).
+        if (i < sig.params.size() && readOnlyParam(sig.params[i]))
+          continue;
         return fail(arg, "'" + arg.text +
                              "' was published by a collective, so no "
                              "iteration may write it until the next "
                              "collective (ADR 0086)"),
                false;
+      }
       auto fp =
           llvm::find_if(fps, [&](const Footprint &f) { return f.buf == i; });
       auto owner = spread_->owners.find(arg.text);
+      if (fp == fps.end() && i < sig.params.size() &&
+          readOnlyParam(sig.params[i]))
+        return fail(arg, "'" + arg.text + "' is written in this spread, so '" +
+                             sig.name +
+                             "' could read a cell another iteration is "
+                             "writing: pass it after a collective publishes "
+                             "it (ADR 0086), or give '" +
+                             sig.name + "' a footprint, @owns (ADR 0060)"),
+               false;
       if (fp == fps.end())
         return fail(arg, "'" + arg.text + "' is passed to '" + sig.name +
                              "', which has no footprint for it: give it "
@@ -12611,7 +12653,10 @@ class Gen {
                            "' must be a collective with the same range and "
                            "gathered parameters (ADR 0086)");
     size_t written = llvm::count(ranges, false);
-    if (n.kids.size() - 1 != written)
+    // `barrier ()`: a collective with no parameters, called with unit.
+    bool unitCall =
+        written == 0 && n.kids.size() == 2 && n.kids[1]->kind == NodeKind::Unit;
+    if (n.kids.size() - 1 != written && !unitCall)
       return fail(n, "'" + name + "' takes " + plural(written, "argument") +
                          ", given " + std::to_string(n.kids.size() - 1) +
                          "; its range is the spread's, which the call "
@@ -12734,6 +12779,8 @@ class Gen {
       bind(tmp, xs, st, false);
       call->add(syntax::makeNode(NodeKind::Name, arg.loc, tmp));
     }
+    if (unitCall)
+      call->add(syntax::clone(*n.kids[1]));
     spreadBarrier(l);
     const Node &c = *keep(std::move(call));
     const Node *saved = inCollective_;

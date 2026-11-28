@@ -2,10 +2,12 @@
    over every iteration's argument. A spread that imports them proves from
    their contracts alone: each iteration knows that the sum is at least its
    own argument and that the least is at most it, and a stencil reads its
-   neighbours after an exchange.
+   neighbours after an exchange. An imported collective is marked as a
+   local one is, so codegen splits the spread into phases at it.
 // RUN: FileCheck --check-prefix=LIB %s < %S/../../lib/Pia/par.goals
 // RUN: mkdir -p %t && piac --emit=interface -o %t %S/../../lib/Pia/Par.pia
 // RUN: piac --verify --iface-path=%t %s | FileCheck %s
+// RUN: piac --emit=mlir --iface-path=%t %s | FileCheck --check-prefix=MLIR %s
 *)
 import Pia.Par.Collectives
 
@@ -56,4 +58,5 @@ let relax (a : borrowed inout mutable [u32]) (b : borrowed inout mutable [u32]) 
 // CHECK-NOT: error
 // CHECK-NOT: failed
 // CHECK: 0 failed, 0 skipped
+// MLIR: func.func private @Pia.Par.sum({{.*}}attributes {pia.collective, pia.import = "Pia.Par"}
 *)

@@ -3,8 +3,8 @@
    spread, a value that crosses a collective, a write of a published
    buffer, a for range that depends on the iteration, a while loop, an
    argument a collective does not gather that depends on the iteration,
-   and collectives that gather a parameter that is not a slice or take
-   one they could write.
+   collectives that gather a non-slice or writable parameter, and a
+   written buffer passed to a function before a collective publishes it.
 // RUN: not piac --emit=mlir --no-lint %s 2>&1 | FileCheck %s
 *)
 
@@ -58,6 +58,16 @@ let plain (xs : [u32]) : u32 @collective(xs) = 0
 
 let loose (r : range) : unit = ()
 
+let peek (a : [u32]) (k : usize) : u32
+  requires k < len a
+= a.[k]
+
+let unpublished (a : borrowed inout mutable [u32]) : unit
+= spread i in 0 .. len a do
+    a.[i] <- peek a i;
+    exchange a
+  done
+
 (*
 // CHECK: 17:19: error: every iteration must reach this call of the collective 'exchange' in the same order, but it is reached only wh
 // CHECK: 21:34: error: 'exchange' is a collective (@collective), which every iteration of a spread joins: it can only be called in a 
@@ -70,4 +80,5 @@ let loose (r : range) : unit = ()
 // CHECK: 55:72: error: a collective takes no out, inout or mutable parameter: it runs once for every iteration, so what it writes wou
 // CHECK: 57:42: error: a gathered parameter is an array over a range parameter, '(r : range) (xs : [t; r])', which holds every iterat
 // CHECK: 59:1: error: a range parameter is for a collective, which gets the range of the spread that calls it (ADR 0086)
+// CHECK: 67:19: error: 'a' is written in this spread, so 'peek' could read a cell another iteration is writing: pass it after a collective publishes it
 *)
