@@ -35,7 +35,7 @@ let zero (a : out mutable [u8; 4]) (spec owner : u8) : unit
 
 let pixel = type { r : u8; g : u8 }
 
-(* CHECK: lower_errors.pia:[[@LINE+2]]:26: error: @lower splices '$p', of type pixel; a splice is an integer, a bool, a buffer of them, or a value of a type with @lower
+(* CHECK: lower_errors.pia:[[@LINE+2]]:26: error: @lower splices '$p', of type pixel; a splice is an integer, a bool, a float, a buffer of them, or a value of a type with @lower
 *)
 let red (p : pixel) : u8 @lower("return $p : i8") = p.r
 
@@ -43,7 +43,7 @@ let red (p : pixel) : u8 @lower("return $p : i8") = p.r
 *)
 let cost (x : u8) : u8 @lower("$ 1") = x
 
-(* CHECK: lower_errors.pia:[[@LINE+2]]:36: error: a lowered function returns unit, an integer or a bool; 'pair' returns pixel
+(* CHECK: lower_errors.pia:[[@LINE+2]]:36: error: a lowered function returns unit, an integer, a float or a bool; 'pair' returns pixel
 *)
 let pair (r : u8) (g : u8) : pixel @lower("") = { r = r; g = g }
 

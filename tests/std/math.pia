@@ -1,0 +1,28 @@
+(* Pia.Math (#487): `sqrt` on f32 is proved correctly rounded by an integer
+   algorithm over its bits, and compiled to `math.sqrt` by its @lower
+   (ADR 0078), which LLVM makes one instruction; with --lower=off it is the
+   algorithm. tests/std/math_test.c runs both against C's sqrtf.
+// RUN: FileCheck %s < %S/../../lib/Pia/math.goals
+// RUN: piac --emit=core %S/../../lib/Pia/Math.pia | FileCheck --check-prefix=CORE %s
+// RUN: piac --emit=llvm -O2 %S/../../lib/Pia/Math.pia | FileCheck --check-prefix=LLVM %s
+// RUN: piac --emit=llvm -O2 --lower=off %S/../../lib/Pia/Math.pia | FileCheck --check-prefix=OFF %s
+// RUN: piac --verify --trust-report --verify-only=sqrt %S/../../lib/Pia/Math.pia | FileCheck --check-prefix=TRUST %s
+*)
+
+(* The rounding theorem, the root's bounds, and each of the interface's
+   contracts, for sqrt_soft and for sqrt.
+// CHECK-NOT: failed
+// CHECK-DAG: Math.pia:129:3: proved: the postcondition holds
+// CHECK-DAG: Math.pia:102:3: proved: the postcondition holds
+// CHECK-DAG: Math.pia:104:3: proved: the postcondition holds
+// CHECK-DAG: Math.pia:41:5: proved: the postcondition holds
+// CHECK: {{[0-9]+}} proved, 0 failed, 0 skipped
+
+// CORE: math.sqrt %{{.*}} : f32
+
+// LLVM: call float @llvm.sqrt.f32(
+
+// OFF-NOT: llvm.sqrt
+
+// TRUST: Math.pia:157:3: trusted: the lowering of 'sqrt' to MLIR (math.sqrt; sha256 {{[0-9a-f]+}})
+*)

@@ -10697,8 +10697,8 @@ class Gen {
   }
 
   // Whether codegen can hand `t` to MLIR text as one value: an integer, a
-  // bool, or a buffer of them, which is one memref, or a record whose type
-  // has `@lower`, which is a view of its buffer. Any other record becomes
+  // bool, a float, or a buffer of them, which is one memref, or a record whose
+  // type has `@lower`, which is a view of its buffer. Any other record becomes
   // its fields and a buffer of records one buffer per field, so neither
   // has a single value to splice.
   bool spliceable(Type t) {
@@ -10708,7 +10708,7 @@ class Gen {
       t = a.getElementType();
     else if (auto s = mlir::dyn_cast<SliceType>(t))
       t = s.getElementType();
-    return mlir::isa<IntType>(t) || isBool(t);
+    return mlir::isa<IntType>(t) || isBool(t) || mlir::isa<mlir::FloatType>(t);
   }
 
   // Checks `@lower` on `fn` and marks it for codegen: the MLIR text, with
@@ -10740,8 +10740,9 @@ class Gen {
       return false;
     }
     if (sig.result && !isUnit(sig.result) && !mlir::isa<IntType>(sig.result) &&
-        !isBool(sig.result)) {
-      fail(attr, "a lowered function returns unit, an integer or a bool; '" +
+        !isBool(sig.result) && !mlir::isa<mlir::FloatType>(sig.result)) {
+      fail(attr, "a lowered function returns unit, an integer, a float or a "
+                 "bool; '" +
                      name + "' returns " + typeName(sig.result));
       return false;
     }
@@ -10796,8 +10797,8 @@ class Gen {
       if (!spliceable(p->type)) {
         fail(attr, "@lower splices '$" + splice + "', of type " +
                        typeName(p->type) +
-                       "; a splice is an integer, a bool, a buffer of "
-                       "them, or a value of a type with @lower");
+                       "; a splice is an integer, a bool, a float, a "
+                       "buffer of them, or a value of a type with @lower");
         return false;
       }
       i = end - 1;
