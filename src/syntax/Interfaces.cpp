@@ -983,6 +983,10 @@ std::vector<InheritedContract> inheritedContracts(const Node &program,
 void inheritInterfaceContracts(Node &program, Diagnostics &diags) {
   for (InheritedContract &h : inheritedContracts(program, diags)) {
     Node &contracts = *program.kids[h.item]->kids[2];
+    // Marked, so that IRGen need not prove that the interface's contract
+    // implies itself where a lemma over the definition cannot be formed,
+    // as for a collective's (ADR 0086).
+    contracts.flags = "inherited";
     for (const NodePtr &c : h.entry->kids[2]->kids) {
       if (!callerClause(*c))
         continue;

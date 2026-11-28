@@ -8008,6 +8008,12 @@ class Gen {
     bool ownRequires = false;
     for (const syntax::NodePtr &c : found->item->kids[2]->kids)
       ownRequires = ownRequires || c->kind == NodeKind::Requires;
+    // A collective that took the interface's contract meets it as stated,
+    // and the lemma, a call of it outside a spread, could not be formed
+    // (ADR 0086).
+    if (found->item->kids[2]->flags == "inherited" &&
+        collectiveAttrOf(found->item))
+      return std::nullopt;
     if (!r->kids[2]->kids.empty() || (strict && ownRequires))
       queueContractLemma(*r, key, names, *found, scope, via);
     return std::nullopt;
