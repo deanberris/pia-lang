@@ -285,7 +285,7 @@ So nothing the program computes depends on a spec-only value. The verifier sees 
 
 ## Floats
 
-`f32` and `f64` are IEEE 754 binary32 and binary64. No float operation raises a goal, since IEEE 754 defines every result: an overflow is an infinity and `0.0 / 0.0` is a NaN. Until the real-valued encoding of [ADR 0038](adr/0038-float-kernels-against-real-theories.md) lands, a float is its bit pattern, a bit-vector of its width, and the solver knows this much of it:
+`f32` and `f64` are IEEE 754 binary32 and binary64. No float operation raises a goal, since IEEE 754 defines every result: an overflow is an infinity and `0.0 / 0.0` is a NaN. A float is its bit pattern, a bit-vector of its width, and the solver knows this much of it:
 
 - A literal is its exact bits, and negation flips the sign bit, so both are exact. So are `to_bits x`, the bits as a `u32` or `u64`, and `from_bits u`, the float a `u32` or `u64` encodes.
 - `=`, `<` and `<=` are IEEE's, computed from the bits: a NaN (exponent all ones, fraction not zero) is unordered, so every comparison with it is false, and the other floats are ordered as their magnitudes with their signs are, so `-0.0 = 0.0` and the infinities lie past every finite float. `<>` is not `=`, and `>` and `>=` are `<` and `<=` with the operands swapped.
@@ -293,6 +293,16 @@ So nothing the program computes depends on a spec-only value. The verifier sees 
 - `i32 x`, or any integer type applied to a float, truncates toward zero and raises a `nooverflow` goal, "the float is a number that fits in i32 when truncated": `x` is not NaN and lies strictly between `lo - 1` and `hi + 1` for the type's range `[lo, hi]`, so the C conversion it compiles to is defined. Each bound is compared as the float nearest it inside that interval when it is not a float itself, so `-1.0 < x && x < 256.0` is exactly the goal for a `u8`. The result is uninterpreted, within the type's range.
 
 So a goal that follows from those facts is proved, such as `(x < y) = (-y < -x)`, and a goal that needs what a float operation computes, even one IEEE 754 guarantees such as `x + y = y + x`, fails rather than being proved wrongly. A float in a counterexample is shown as a float, read from its bits, such as `x = nan`. Indices, lengths and integer goals in float code are proved as anywhere else. `tests/verify/floats.pia` has examples of both.
+
+### Floats as reals
+
+Where a contract in the module uses `to_real`, each float also has a real value ([ADR 0038](adr/0038-float-kernels-against-real-theories.md), steps 1 and 2):
+
+- `to_real x` is a spec-only `real`, the exact value of `x` when `finite x` holds and some unknown real when it does not. `finite x` is `x`'s exponent bits not being all ones, so it is exact, and compiles. `eps t` and `tiny t` are exact `real` constants: the unit roundoff, 2⁻²⁴ for `f32` and 2⁻⁵³ for `f64`, and half the smallest subnormal, 2⁻¹⁵⁰ and 2⁻¹⁰⁷⁵.
+- A literal's value is its exact rational, negation is exact, a finite float lies within the largest finite magnitude and has the sign its bits say, and IEEE order on finite floats is the order of their values.
+- Each of `+ - * /` on finite operands, with a nonzero divisor, gives a result `r` of the exact value `e` with `|to_real r - e| <= eps t * |e| + tiny t` when `r` is finite, and `r` is finite when `|e|` is below the overflow threshold, the largest float plus half its ulp. `f32 n` of an integer is always finite, exact when `|n| <= 2^24` (2⁵³ for `f64`), and otherwise rounded the same way; `f64 x` is exact, and `f32 x` of an `f64` rounds.
+
+This is the standard model of rounding, written without a fresh error variable per operation, so a chain of operations stays a query that Z3 decides quickly. Z3's bit-precise floating-point theory would give `to_real` exactly, but even one order goal through it takes minutes, so it is not used. These facts cost real arithmetic in every query that sees a float operation, which is why a module turns them on only by using `to_real`. A loop keeps its error bound and finiteness in its invariant. `tests/verify/float_reals.pia` has examples: literals, order, one rounding, a two-term dot product, an overflow that is refused, and a bounded sum over a slice.
 
 ## Spec state
 
