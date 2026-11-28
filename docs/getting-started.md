@@ -32,6 +32,16 @@ Run the tests with:
 bazel test //...
 ```
 
+### In a Claude Code cloud session
+
+A cloud session's container has 4 cores, too few to build LLVM in a session, so it builds the way CI's Linux job does: every action runs on [BuildBuddy](https://www.buildbuddy.io)'s executors, and its cache holds what CI already built. The environment's setup script runs
+
+```sh
+sh pia-lang/tools/cloud/setup.sh
+```
+
+which installs Bazelisk as `bazel` and adds `--config=cloud` (in `.bazelrc`) to the ignored `user.bazelrc`. The BuildBuddy API key is the environment's `BUILDBUDDY_API_KEY` variable, which `tools/cloud/buildbuddy-credential-helper` hands to Bazel at build time, so it is never written to a file. The session's network proxy refuses GitHub source archives of repositories outside the session, so BuildBuddy also downloads external archives for these builds. After that, `bazel build` and `bazel test` work as above.
+
 ## Prove a program
 
 Save this as `clamp.pia`:
