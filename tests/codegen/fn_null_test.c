@@ -21,12 +21,12 @@ uint8_t use(step h, uint8_t n);
 
 static int failures = 0;
 
-#define EXPECT(cond, ...)             \
-  do {                                \
-    if (!(cond) && failures++ < 10) { \
-      fprintf(stderr, __VA_ARGS__);   \
-      fputc('\n', stderr);            \
-    }                                 \
+#define EXPECT(cond, ...)                                                      \
+  do {                                                                         \
+    if (!(cond) && failures++ < 10) {                                          \
+      fprintf(stderr, __VA_ARGS__);                                            \
+      fputc('\n', stderr);                                                     \
+    }                                                                          \
   } while (0)
 
 int main(void) {
