@@ -187,6 +187,13 @@ Cost in contracts ([ADR 0062](0062-cost-bounds-in-contracts.md)) needs no Lean a
 - The translation now types every literal as `Int`. A term of literals alone was a `Nat`, where `0 - 1 = 0` holds, so Lean could prove a statement that is false in Pia.
 - `pia-cert audit` replay waits for `pia-cert audit` itself ([docs/abi.md](../abi.md), step 8). Meanwhile a receipt comes only from a `pia_lean_proof` run, and its hash ties it to the statement.
 
+**Step 3, machine integers, as built (2026-11-28).** Step 3 lands in parts, one PR each. The first translates machine integers, and differs from the table above:
+
+- A machine integer is an `Int`, not a `BitVec n`. The verifier's encoding of one is a bit-vector wide enough never to wrap, with the type's range as a constraint ([verifier.md](../verifier.md#encoding)), which is an integer in that range, so an `Int` with the range as a hypothesis states the same thing, and `omega` proves it. A `BitVec n` would wrap where Pia's arithmetic does not.
+- The range is a hypothesis of the lemma, ahead of its `requires`; of a spec function's definition, which outside it is the opaque `f'outside`, as outside its `requires`; and of each bound variable. A range type `int{lo..hi}` adds its bounds the same way. A record field of a machine type has nowhere to put its range, so it waits for record invariants in Lean.
+- A literal's suffix only names its type, and `int x` is `x`, since both are exact. An integer meets a machine type with no conversion, where the verifier proves that it fits, so the value is the same `Int`.
+- Division, `mod`, `wrap` and `saturate` wait for the guarded translation above (tests/lean/bytes.pia).
+
 ## Answers to the open questions
 
 Dean answered when he accepted it (2026-11-24):

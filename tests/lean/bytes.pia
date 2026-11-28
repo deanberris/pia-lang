@@ -1,0 +1,58 @@
+(* Machine integers in lemmas proved in Lean (ADR 0061, step 3). The
+   verifier's integers are exact and never wrap, so in Lean each is an
+   `Int`, and its type's range is a hypothesis: of the lemma, of a spec
+   function's definition, which is opaque outside it, and of a bound
+   variable. A range type's bounds are one too, a literal's suffix only
+   names its type, and `int x` is `x`. Bytes.lean proves the lemmas, and
+   the bytes_proof target checks the proofs and writes their receipts.
+// RUN: piac --emit=lean %s | FileCheck %s --check-prefix=LEAN
+// RUN: piac --verify --lean-receipt=%S/bytes_proof.receipt %s | FileCheck %s
+*)
+
+let spec total (a : u8) (b : u8) : int = int a + int b
+
+let lemma total_fits (a : u8) (b : u8) : unit
+  ensures total a b <= 510
+= by lean Bytes.total_fits
+
+let lemma square_fits (a : u8) : unit
+  ensures int a * int a <= 65025
+= by lean Bytes.square_fits
+
+let lemma signed_gap (a : i8) (b : i8) : unit
+  requires a < b
+  ensures int b - int a <= 255
+= by lean Bytes.signed_gap
+
+let lemma digit_byte (d : int{0..9}) : unit
+  ensures exists (x : u8). x = d && x <= 9u8
+= by lean Bytes.digit_byte
+
+(* Proved by Z3, from the Lean lemma. *)
+let check (a : u8) (b : u8) : unit
+  ensures total a b < 511
+= total_fits a b
+
+(* Each range is a hypothesis, before the lemma's own `requires`.
+// LEAN: opaque total'outside : Int → Int → Int
+// LEAN: def total (a : Int) (b : Int) : Int :=
+// LEAN-NEXT:   if h_req : ((0 : Int) ≤ a ∧ a ≤ (255 : Int)) ∧ ((0 : Int) ≤ b ∧ b ≤ (255 : Int)) then
+// LEAN-NEXT:     (a + b)
+// LEAN-NEXT:   else total'outside a b
+// LEAN: def total_fits : Prop :=
+// LEAN-NEXT:   ∀ (a : Int) (b : Int),
+// LEAN-NEXT:     ((0 : Int) ≤ a ∧ a ≤ (255 : Int)) ∧ ((0 : Int) ≤ b ∧ b ≤ (255 : Int)) → ((total a b) ≤ (510 : Int))
+// LEAN: def signed_gap : Prop :=
+// LEAN-NEXT:   ∀ (a : Int) (b : Int),
+// LEAN-NEXT:     ((-128 : Int) ≤ a ∧ a ≤ (127 : Int)) ∧ ((-128 : Int) ≤ b ∧ b ≤ (127 : Int)) ∧ (a < b) → ((b - a) ≤ (255 : Int))
+// LEAN: def digit_byte : Prop :=
+// LEAN-NEXT:   ∀ (d : Int),
+// LEAN-NEXT:     ((0 : Int) ≤ d ∧ d ≤ (9 : Int)) → (∃ (x : Int), ((0 : Int) ≤ x ∧ x ≤ (255 : Int)) ∧ ((x = d) ∧ (x ≤ (9 : Int))))
+
+// CHECK-DAG: proved: the Lean theorem 'Bytes.total_fits' proves 'total_fits' [lean]
+// CHECK-DAG: proved: the Lean theorem 'Bytes.square_fits' proves 'square_fits' [lean]
+// CHECK-DAG: proved: the Lean theorem 'Bytes.signed_gap' proves 'signed_gap' [lean]
+// CHECK-DAG: proved: the Lean theorem 'Bytes.digit_byte' proves 'digit_byte' [lean]
+// CHECK-DAG: bytes.pia:{{[0-9]+}}:3: proved: the postcondition holds [{{smt|intervals}}]
+// CHECK: {{[0-9]+}} proved, 0 failed, 0 skipped
+*)
