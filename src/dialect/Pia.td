@@ -44,6 +44,17 @@ def Pia_Dialect : Dialect {
       return ::llvm::StringLiteral("pia.length_of");
     }
 
+    /// Where a parameter or result holds a variant of two constructors
+    /// whose one payload is a function reference, `option op`: pairs of
+    /// the tag's leaf, in scalarized order, and the tag of the constructor
+    /// with the payload, `{pia.one_address = array<i64: 0, 1>}`. Once
+    /// records are scalarized, each such tag's leaf has the tag itself,
+    /// `{pia.one_address = 1 : i64}`, and the reference's leaf follows. The C entry point passes the pair as one address,
+    /// zero for the other constructor (ADR 0071, amendment of 2026-11-28).
+    static constexpr ::llvm::StringLiteral getOneAddressAttrName() {
+      return ::llvm::StringLiteral("pia.one_address");
+    }
+
     /// The unit attribute on a field buffer's load, store or slice after
     /// the first, when a buffer of records is split into one buffer per
     /// field: every copy has the same index and the same length, so the

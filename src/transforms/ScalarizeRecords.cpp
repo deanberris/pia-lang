@@ -477,6 +477,20 @@ bool hasRecords(mlir::ModuleOp module) {
   return found;
 }
 
+// The tag IRGen's `pia.one_address` marks give leaf `leaf` of a value, as
+// pairs of a leaf and a tag, or null when it is not an `option` of a
+// reference's tag (ADR 0071).
+mlir::IntegerAttr oneAddressAt(mlir::DictionaryAttr d, unsigned leaf) {
+  auto marks =
+      d ? d.getAs<mlir::DenseI64ArrayAttr>(PiaDialect::getOneAddressAttrName())
+        : mlir::DenseI64ArrayAttr();
+  for (unsigned j = 0; marks && j + 1 < marks.size(); j += 2)
+    if (marks[j] == int64_t(leaf))
+      return mlir::IntegerAttr::get(mlir::IntegerType::get(d.getContext(), 64),
+                                    marks[j + 1]);
+  return {};
+}
+
 // A block argument's source name, from the NameLoc IRGen gives parameters.
 std::string argName(mlir::BlockArgument arg) {
   if (auto n = mlir::dyn_cast<mlir::NameLoc>(arg.getLoc()))
@@ -570,6 +584,12 @@ mlir::LogicalResult scalarizeRecordsIn(mlir::ModuleOp module) {
   // function, declarations included.
   std::vector<std::pair<mlir::func::FuncOp, llvm::SmallVector<bool>>>
       specResults;
+  // The results that are an `option` of a reference, by their first
+  // leaf, and the tag of the constructor with the reference (ADR 0071).
+  std::vector<
+      std::pair<mlir::func::FuncOp,
+                llvm::SmallVector<std::pair<unsigned, mlir::Attribute>>>>
+      oneAddressResults;
   // A declaration's arguments, likewise.
   std::vector<std::pair<mlir::func::FuncOp, llvm::SmallVector<Type>>> declArgs;
   for (auto f : module.getOps<mlir::func::FuncOp>()) {
@@ -580,6 +600,19 @@ mlir::LogicalResult scalarizeRecordsIn(mlir::ModuleOp module) {
       leafSpec(t, false, rs);
     if (llvm::is_contained(rs, true))
       specResults.emplace_back(f, rs);
+    llvm::SmallVector<std::pair<unsigned, mlir::Attribute>> marks;
+    unsigned first = 0;
+    for (unsigned i = 0; i < f.getNumResults(); ++i) {
+      auto m = mlir::dyn_cast_or_null<mlir::DenseI64ArrayAttr>(
+          f.getResultAttr(i, PiaDialect::getOneAddressAttrName()));
+      for (unsigned j = 0; m && j + 1 < m.size(); j += 2)
+        marks.emplace_back(
+            first + m[j],
+            mlir::IntegerAttr::get(mlir::IntegerType::get(ctx, 64), m[j + 1]));
+      first += leafCount(f.getResultTypes()[i]);
+    }
+    if (!marks.empty())
+      oneAddressResults.emplace_back(f, std::move(marks));
     if (f.isExternal())
       declArgs.emplace_back(f, llvm::SmallVector<Type>(f.getArgumentTypes()));
   }
@@ -716,6 +749,15 @@ mlir::LogicalResult scalarizeRecordsIn(mlir::ModuleOp module) {
           list.erase("pia.lower_name");
           d = list.getDictionary(ctx);
         }
+        // An `option` of a reference is one address at the C boundary:
+        // its tag's leaf says so, and the reference's leaf follows.
+        if (d && d.get(PiaDialect::getOneAddressAttrName())) {
+          mlir::NamedAttrList list(d);
+          list.erase(PiaDialect::getOneAddressAttrName());
+          if (auto tag = oneAddressAt(argAttrs[k][i], next - base))
+            list.set(PiaDialect::getOneAddressAttrName(), tag);
+          d = list.getDictionary(ctx);
+        }
         // A spec field's leaf is a spec parameter, which codegen erases.
         if (spec[next - base]) {
           mlir::NamedAttrList list(d);
@@ -737,6 +779,13 @@ mlir::LogicalResult scalarizeRecordsIn(mlir::ModuleOp module) {
       if (sp && i < f.getNumArguments())
         f.setArgAttr(i, PiaDialect::getSpecStateAttrName(),
                      mlir::UnitAttr::get(ctx));
+  }
+  for (auto &[f, marks] : oneAddressResults) {
+    for (unsigned i = 0; i < f.getNumResults(); ++i)
+      f.removeResultAttr(
+          i, mlir::StringAttr::get(ctx, PiaDialect::getOneAddressAttrName()));
+    for (auto &[i, m] : marks)
+      f.setResultAttr(i, PiaDialect::getOneAddressAttrName(), m);
   }
   for (auto &[f, rs] : specResults)
     for (auto [i, sp] : llvm::enumerate(rs))

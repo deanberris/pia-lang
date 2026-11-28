@@ -1,0 +1,59 @@
+(* An `option` of a function reference crosses the C boundary as one
+   address, zero for the constructor without a payload (ADR 0071,
+   amendment of 2026-11-28, step 2c). fn_null_test.c passes NULL and
+   Pia's own functions through it, in either constructor order and
+   inside a record.
+// RUN: piac --emit=llvm -O2 %s | FileCheck %s
+*)
+
+(* CHECK-LABEL: define {{.*}}ptr @get(
+   CHECK: select i1 {{.*}}, ptr {{.*}}, ptr null
+   CHECK-LABEL: define {{.*}} @apply(ptr
+   CHECK-LABEL: define {{.*}} @apply_has(ptr
+*)
+module FnNull : Nullable
+
+interface Nullable @abi(c) = sig
+  let option = let (t : type) => type | None | Some of t
+  let maybe = type | Has of (u8 -> u8) | Gone
+  let slot = type { h : maybe; n : u8 }
+  let get : (k : u8) -> option (u8 -> u8)
+  let apply : (h : option (u8 -> u8)) -> (y : u8) -> u8
+  let present : (h : option (u8 -> u8)) -> bool
+  let get_has : (k : u8) -> maybe
+  let apply_has : (h : maybe) -> (y : u8) -> u8
+  let make : (k : u8) -> slot
+  let use : (s : slot) -> u8
+end
+
+let option = let (t : type) => type | None | Some of t
+let maybe = type | Has of (u8 -> u8) | Gone
+let slot = type { h : maybe; n : u8 }
+
+let half (x : u8) : u8 = x / 2
+let flip (x : u8) : u8 = 255 - x
+
+let get (k : u8) : option (u8 -> u8) =
+  if k = 1 then Some half else if k = 2 then Some flip else None
+
+let apply (h : option (u8 -> u8)) (y : u8) : u8 =
+  match h with
+  | Some f -> f y
+  | None -> y
+
+let present (h : option (u8 -> u8)) : bool =
+  match h with
+  | Some _ -> true
+  | None -> false
+
+(* `Has` is the first constructor here, so its tag is 0. *)
+let get_has (k : u8) : maybe = if k = 1 then Has half else Gone
+
+let apply_has (h : maybe) (y : u8) : u8 =
+  match h with
+  | Has f -> f y
+  | Gone -> y
+
+let make (k : u8) : slot = { h = get_has k; n = k }
+
+let use (s : slot) : u8 = apply_has s.h s.n

@@ -2802,6 +2802,11 @@ struct Entry {
   // No C entry point, as for a function that takes or returns a
   // recursive value by value; only its link symbol, if it has one.
   bool noC = false;
+  // For each argument and result, the tag of the constructor that carries
+  // a reference when it is the tag of an `option` of one, whose reference
+  // is the next argument or result, or -1. C passes the pair as one
+  // address, zero for the other constructor (ADR 0071).
+  std::vector<int64_t> argOneAddress = {}, resultOneAddress = {};
 };
 
 // The C types of one core argument: a buffer is its data pointer, plus its
@@ -2884,8 +2889,17 @@ LogicalResult buildEntry(mlir::ModuleOp module, const Entry &entryInfo) {
 
   // A field buffer that shares another's length takes only its pointer.
   llvm::SmallVector<Type> argTypes;
+  auto ptrType = mlir::LLVM::LLVMPointerType::get(ctx);
   for (auto [i, t] : llvm::enumerate(e.type.getInputs())) {
     if (e.argErased[i]) continue;
+    // An `option` of a reference is one address; its reference's leaf
+    // adds nothing.
+    if (e.argOneAddress[i] >= 0) {
+      argTypes.push_back(ptrType);
+      continue;
+    }
+    if (i > 0 && e.argOneAddress[i - 1] >= 0)
+      continue;
     if (e.lengthOf[i] >= 0) {
       argTypes.push_back(mlir::LLVM::LLVMPointerType::get(ctx));
       continue;
@@ -2895,16 +2909,22 @@ LogicalResult buildEntry(mlir::ModuleOp module, const Entry &entryInfo) {
   // A record result comes back through a pointer to a C struct of its
   // fields, which is the last argument.
   // Spec-only results are not returned.
+  // An `option` of a reference is one result, its tag's, which C sees as
+  // an address.
   llvm::SmallVector<unsigned> kept;
+  auto pairedResult = [&](unsigned i) {
+    return i > 0 && e.resultOneAddress[i - 1] >= 0;
+  };
   for (unsigned i = 0; i < e.type.getNumResults(); ++i)
-    if (!e.resultErased[i]) kept.push_back(i);
+    if (!e.resultErased[i] && !pairedResult(i))
+      kept.push_back(i);
   bool outStruct = kept.size() > 1;
   if (outStruct) argTypes.push_back(mlir::LLVM::LLVMPointerType::get(ctx));
   Type resultType = mlir::LLVM::LLVMVoidType::get(ctx);
   if (kept.size() == 1) {
     llvm::SmallVector<Type, 1> r;
     cArgTypes(e.type.getResult(kept[0]), ctx, r);
-    resultType = r[0];
+    resultType = e.resultOneAddress[kept[0]] >= 0 ? ptrType : r[0];
   }
 
   OpBuilder b(ctx);
@@ -2948,11 +2968,50 @@ LogicalResult buildEntry(mlir::ModuleOp module, const Entry &entryInfo) {
       operands.append({data, data, c64(0), size, c64(1)});
       continue;
     }
+    if (int64_t some = e.argOneAddress[i]; some >= 0) {
+      // Zero is the constructor without a payload, whose reference slot
+      // no code reads, so the address goes in it either way.
+      Value address = block->getArgument(arg++);
+      Value null = make<mlir::LLVM::ZeroOp>(b, e.loc, ptrType);
+      Value absent = make<mlir::LLVM::ICmpOp>(
+          b, e.loc, mlir::LLVM::ICmpPredicate::eq, address, null);
+      auto tagOf = [&](int64_t v) -> Value {
+        return make<mlir::LLVM::ConstantOp>(b, e.loc, t,
+                                            b.getIntegerAttr(t, v));
+      };
+      operands.push_back(make<mlir::LLVM::SelectOp>(
+          b, e.loc, absent, tagOf(1 - some), tagOf(some)));
+      operands.push_back(address);
+      ++i;
+      continue;
+    }
     if (auto ext = extAttr(t, e.argSigned[i]))
       entry.setArgAttr(arg, *ext, b.getUnitAttr());
     operands.push_back(block->getArgument(arg++));
   }
   auto call = make<mlir::LLVM::CallOp>(b, e.loc, internal, operands);
+  // The result `i` as C sees it: an `option` of a reference is its
+  // reference when the tag is the constructor's that carries it, and zero
+  // otherwise.
+  auto cResult = [&](unsigned i) -> Value {
+    auto part = [&](unsigned j) -> Value {
+      if (e.type.getNumResults() == 1)
+        return call.getResult();
+      return make<mlir::LLVM::ExtractValueOp>(
+          b, e.loc, call.getResult(), llvm::ArrayRef<int64_t>{int64_t(j)});
+    };
+    Value v = part(i);
+    int64_t some = e.resultOneAddress[i];
+    if (some < 0)
+      return v;
+    Type tagType = e.type.getResult(i);
+    Value present = make<mlir::LLVM::ICmpOp>(
+        b, e.loc, mlir::LLVM::ICmpPredicate::eq, v,
+        make<mlir::LLVM::ConstantOp>(b, e.loc, tagType,
+                                     b.getIntegerAttr(tagType, some)));
+    Value null = make<mlir::LLVM::ZeroOp>(b, e.loc, ptrType);
+    return make<mlir::LLVM::SelectOp>(b, e.loc, present, part(i + 1), null);
+  };
   if (outStruct) {
     // Each field at its C offset: aligned to its own size.
     Value out = block->getArgument(arg);
@@ -2961,11 +3020,12 @@ LogicalResult buildEntry(mlir::ModuleOp module, const Entry &entryInfo) {
       Type t = e.type.getResult(i);
       llvm::SmallVector<Type, 1> c;
       cArgTypes(t, ctx, c);
-      unsigned width = c[0].getIntOrFloatBitWidth();
+      // An address is 64 bits on both targets (ADR 0049).
+      unsigned width =
+          e.resultOneAddress[i] >= 0 ? 64 : c[0].getIntOrFloatBitWidth();
       unsigned size = width <= 8 ? 1 : width / 8;
       offset = (offset + size - 1) / size * size;
-      Value field = make<mlir::LLVM::ExtractValueOp>(
-          b, e.loc, call.getResult(), llvm::ArrayRef<int64_t>{int64_t(i)});
+      Value field = cResult(i);
       if (width == 1)
         field = make<mlir::LLVM::ZExtOp>(b, e.loc, b.getI8Type(), field);
       Value at = make<mlir::LLVM::GEPOp>(
@@ -2976,13 +3036,10 @@ LogicalResult buildEntry(mlir::ModuleOp module, const Entry &entryInfo) {
     }
     make<mlir::LLVM::ReturnOp>(b, e.loc, mlir::ValueRange{});
   } else if (kept.size() == 1) {
-    if (auto ext = extAttr(e.type.getResult(kept[0]), e.resultSigned))
-      entry.setResultAttr(0, *ext, b.getUnitAttr());
-    Value result = call.getResult();
-    if (e.type.getNumResults() > 1)
-      result = make<mlir::LLVM::ExtractValueOp>(
-          b, e.loc, result, llvm::ArrayRef<int64_t>{int64_t(kept[0])});
-    make<mlir::LLVM::ReturnOp>(b, e.loc, result);
+    if (e.resultOneAddress[kept[0]] < 0)
+      if (auto ext = extAttr(e.type.getResult(kept[0]), e.resultSigned))
+        entry.setResultAttr(0, *ext, b.getUnitAttr());
+    make<mlir::LLVM::ReturnOp>(b, e.loc, cResult(kept[0]));
   } else {
     make<mlir::LLVM::ReturnOp>(b, e.loc, mlir::ValueRange{});
   }
@@ -3040,9 +3097,16 @@ LogicalResult lowerToLLVM(mlir::ModuleOp module, bool exportsOnly) {
           i, PiaDialect::getLengthOfAttrName());
       e.lengthOf.push_back(shared ? int(shared.getInt()) : -1);
       e.argErased.push_back(static_cast<bool>(f.getArgAttr(i, kErased)));
+      auto one = f.getArgAttrOfType<mlir::IntegerAttr>(
+          i, PiaDialect::getOneAddressAttrName());
+      e.argOneAddress.push_back(one ? one.getInt() : -1);
     }
-    for (unsigned i = 0; i < f.getNumResults(); ++i)
+    for (unsigned i = 0; i < f.getNumResults(); ++i) {
       e.resultErased.push_back(static_cast<bool>(f.getResultAttr(i, kErased)));
+      auto one = f.getResultAttrOfType<mlir::IntegerAttr>(
+          i, PiaDialect::getOneAddressAttrName());
+      e.resultOneAddress.push_back(one ? one.getInt() : -1);
+    }
     // The one result C sees, if there is one.
     llvm::SmallVector<unsigned> seen;
     for (unsigned i = 0; i < f.getNumResults(); ++i)
