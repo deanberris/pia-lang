@@ -1042,12 +1042,18 @@ class Expander {
       return false;
     const std::set<std::string> &done = derived_[item.text];
     bool changed = false;
-    auto settle = [&](Node &attrs, const std::string *member) {
+    auto settle = [&](Node &attrs, const std::string *member,
+                      const std::string &owner) {
       std::vector<NodePtr> kept;
       for (NodePtr &a : attrs.kids) {
         if (a->text == "derive" || pending.count(a->text)) {
           kept.push_back(std::move(a));
         } else if (done.count(a->text)) {
+          // Another type's derive may still read it, as a variant's
+          // reads its record payload's member names, so it is kept
+          // aside where field_attrs and ctor_attrs find it.
+          if (member)
+            interp_.settleAttr(owner, *member, std::move(a));
           changed = true;
         } else if (member) {
           diags_.error(a->loc, "the attribute @" + a->text + " on '" +
@@ -1061,19 +1067,21 @@ class Expander {
       }
       attrs.kids = std::move(kept);
     };
-    settle(*item.kids[3]->kids[1], nullptr);
+    settle(*item.kids[3]->kids[1], nullptr, item.text);
     Node &body = *item.kids[3]->kids[0];
     if (body.kind == NodeKind::RecordType || body.kind == NodeKind::Variants)
       for (NodePtr &m : body.kids)
         for (NodePtr &k : m->kids)
-          if (k->kind == NodeKind::Attrs) settle(*k, &m->text);
+          if (k->kind == NodeKind::Attrs)
+            settle(*k, &m->text, item.text);
     if (body.kind == NodeKind::Variants)
       for (NodePtr &c : body.kids)
         if (auto r = lifted_.find(item.text + "_" + c->text);
             r != lifted_.end() && !derives(*r->second))
           for (NodePtr &f : r->second->kids[3]->kids[0]->kids)
             for (NodePtr &k : f->kids)
-              if (k->kind == NodeKind::Attrs) settle(*k, &f->text);
+              if (k->kind == NodeKind::Attrs)
+                settle(*k, &f->text, r->second->text);
     return changed;
   }
 

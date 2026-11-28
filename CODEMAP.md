@@ -120,6 +120,7 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 - `src/dialect/Pia.td` and `src/dialect/PiaDialect.{h,cpp}` define `pia`: range integers, arrays, slices, records, `dyn` and scalar ops.
 - `src/dialect/Contract.td` and `src/dialect/ContractDialect.{h,cpp}` define `pia_contract`: requires, ensures, invariant, `obligation`, quantifiers and `old`.
 - `src/dialect/Par.td` and `src/dialect/ParDialect.{h,cpp}` define `pia_par`: tiled grids, `spread` and collectives. They are not lowered yet.
+- `src/dialect/Lib.td` and `src/dialect/LibDialect.{h,cpp}` define `pia_lib` (ADR 0078): its one op, `pia_lib.call`, is a call of a library function with a lowering rule. `markLibCalls` and `expandLibCalls` in `src/codegen/Lowerings.cpp` make and expand it; `tests/codegen/lib_call.pia` tests it.
 
 ### src/transforms, src/verify, src/codegen
 
@@ -202,6 +203,7 @@ Each module is a `pia_library` in the `BUILD.bazel` next to it, with its tests i
 - `skills/` holds the agent skills, listed in `skills/README.md`. Claude Code finds them through `.claude/skills/*`, which are symlinks. They are `skills/pia-language` (writing Pia), `skills/pia-porting` (a feature map from C, C++, Rust, OCaml, Zig and Go), `skills/pia-idioms` (acting on lints), `skills/pia-contracts` (fixing failed goals), `skills/piac-verify` and `skills/pia-fast-proofs` (running the prover), `skills/piac-build` (compiling, linking, trust reports, certificates), `skills/pia-repl` and `skills/pia-mcp` (cell by cell), `skills/pia-proof-debugging` (is this C, C++ or Rust correct?), and `skills/pia-lean` (lemmas proved in Lean).
 - `.claude-plugin/marketplace.json` and `.claude-plugin/plugin.json` make the repository a Claude Code plugin marketplace: the `pia` plugin installs the skills, `pia-lsp` as a language server and `pia mcp` as an MCP server (docs/agents.md).
 - `tools/skills/check.py` checks the pack is complete: each skill wired into tests, tables and links, the manifests, and every lexer keyword and piac flag taught by some skill. `.github/workflows/skills.yml` runs it.
+- `tools/migrate/check.py` fails a pull request that changes the grammar, keyword table or prelude, or deletes an ABI baseline, without adding a rule in `src/migrate/rules/` or saying `no-migration: <why>` in its description (ADR 0073). `.github/workflows/migrate.yml` runs it, and the Linux CI job runs `piac migrate --check` over `lib/` and `examples/`.
 - `CLAUDE.md` holds the instructions every agent session loads: this map, the skills and the house rules.
 - `third_party/rules_foreign_cc` holds the patches for the Z3 build.
 - `bench/codegen` holds the codegen benchmarks (ADR 0075): one package per problem (`bench/codegen/nqueen`, `bench/codegen/nsieve`, `bench/codegen/matmul`, `bench/codegen/base64`: the Pia port, its C driver `main.c`, a C control `control.c` where the proof changed the algorithm, and a README of what the proof changed), `defs.bzl`'s `codegen_benchmark` macro, which builds the Pia, C, C++, Rust and Zig programs and a `<problem>_test` that they print the same answer, `flags.bzl` (every program's flags), `same_output_test.sh`, `problems.json` (each problem's inputs and programs) and `baseline.json` (instruction counts from a main CI run, which `codegen_bench.py` compares against). `third_party/benchmarks` holds the reference programs, one directory per suite with its licence (`plb2`, CC0; `hanabi1224` and `kostya`, MIT), patched by genrules where they must change.
@@ -225,7 +227,7 @@ Each module is a `pia_library` in the `BUILD.bazel` next to it, with its tests i
 | `tests/dialect` | ODS round trips | |
 | `tests/repl`, `tests/lsp` | end to end over pipes | `tests/repl` runs in shards |
 | `tests/docs` | `doc_examples_test.py`: every doc, case study and skill example | its markers are `<!-- example: -->`, `<!-- expect: fail -->` and `<!-- untested: -->` |
-| `tests/lean` | lemmas proved in Lean (ADR 0061): `--emit=lean`, receipts from `pia_lean_proof`, stale receipts, the trust report and certificate lines, `native_decide` only in `@trusted` files; `CallRule.lean`, the verifier's call rule proved sound, modular and incomplete (ADR 0076) | `sums_proof` runs Lean on `Proofs.lean`, `native_proof` on `Native.lean`; `call_rule_test` checks `CallRule.lean` |
+| `tests/lean` | lemmas proved in Lean (ADR 0061): `--emit=lean`, receipts from `pia_lean_proof`, stale receipts, the trust report and certificate lines, `native_decide` only in `@trusted` files, machine integers as `Int` with their ranges (`bytes.pia`); `CallRule.lean`, the verifier's call rule proved sound, modular and incomplete (ADR 0076) | `sums_proof` runs Lean on `Proofs.lean`, `native_proof` on `Native.lean`, `bytes_proof` on `Bytes.lean`; `call_rule_test` checks `CallRule.lean` |
 | `tests/smoke` | the tools start | |
 | `tests/lit` | `run_lit.sh` and `lit.bzl`, the lit runner | |
 

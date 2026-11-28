@@ -808,7 +808,32 @@ let pick (op : u8) (y : u8) : u8 requires y < 100 ensures result >= y =
   h y
 ```
 
-The parentheses make `mutable` the reference's, not its parameter's. A stored reference takes and returns integers, bools and floats for now; copies of a mutable reference, references in records and buffers, and references passed to C come later.
+The parentheses make `mutable` the reference's, not its parameter's.
+
+A record field of an arrow type holds a reference too, so a buffer of such records is a table of functions. The field's contracts follow its arrow, and a function stored in the field, in a record literal or with `<-`, is proved against them there. A call through the field, `t.[op].f y`, is an indirect call that sees only the arrow's contract. A field can also take the same field of another record of its type, which was proved when it was stored:
+
+```ocaml
+let succ (x : u8) : u8 requires x < 255 ensures result = x + 1 = (x + 1)
+
+let add3 (x : u8) : u8 requires x < 200 ensures result = x + 3 = (x + 3)
+
+let handler = type {
+  f : (x : u8) -> u8 requires x < 100 ensures result > x;
+  tag : u8
+}
+
+let run (t : [handler; 4]) (op : usize) (y : u8) : u8
+  requires op < 4 && y < 100
+  ensures result > y
+= t.[op].f y
+
+let install (t : inout [handler; 4]) : unit =
+  t.[0] <- { f = succ; tag = 0 };
+  t.[1].f <- add3;
+  t.[2].f <- t.[1].f
+```
+
+A stored reference takes and returns integers, bools and floats for now. Copies of a mutable reference into a local, references in variants and `option`, and references passed to C come later.
 
 ## Parallel loops
 

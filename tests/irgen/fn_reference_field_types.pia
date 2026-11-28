@@ -1,0 +1,8 @@
+(* A function reference field carries integers, bools and floats for now
+   (ADR 0071).
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+(* CHECK: fn_reference_field_types.pia:[[@LINE+2]]:24: error: a stored function reference takes integers, bools and floats for now (ADR 0071)
+*)
+let table = type { g : [u8] -> u8; n : u8 }

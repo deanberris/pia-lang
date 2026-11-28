@@ -1076,9 +1076,24 @@ ValuePtr Interpreter::callBuiltin(const std::string &name,
     const Node &annot = *f.kids[0];
     return syntaxValue(clone(*annot.kids[1]));
   }
+  // A member's attributes, with those a derive has already read
+  // (settleAttr), which come after the ones still on it.
+  auto memberAttrs = [&](const Node &member) {
+    Node all;
+    all.kind = NodeKind::Attrs;
+    if (const Node *as = attrsOf(member))
+      for (const NodePtr &a : as->kids)
+        all.add(clone(*a));
+    if (const Node *item = findTypeItem(args[0]))
+      if (auto it = settled_.find(item->text + "." + member.text);
+          it != settled_.end())
+        for (const NodePtr &a : it->second)
+          all.add(clone(*a));
+    return attrList(&all);
+  };
   if (name == "field_attrs")
-    return attrList(attrsOf(child(needRecord(args[0]),
-                                  needName(args[1], "a field name"), "field")));
+    return memberAttrs(
+        child(needRecord(args[0]), needName(args[1], "a field name"), "field"));
   if (name == "variants") {
     std::vector<ValuePtr> out;
     for (const NodePtr &c : needVariants(args[0]).kids) {
@@ -1091,9 +1106,9 @@ ValuePtr Interpreter::callBuiltin(const std::string &name,
     return listValue(std::move(out));
   }
   if (name == "ctor_attrs")
-    return attrList(attrsOf(child(needVariants(args[0]),
-                                  needName(args[1], "a constructor name"),
-                                  "constructor")));
+    return memberAttrs(child(needVariants(args[0]),
+                             needName(args[1], "a constructor name"),
+                             "constructor"));
   if (name == "attrs") {
     const Node *item = findTypeItem(args[0]);
     if (item) return attrList(item->kids[3]->kids[1].get());

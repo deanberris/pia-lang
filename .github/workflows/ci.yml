@@ -343,6 +343,14 @@ jobs:
         timeout-minutes: 30
         run: env -u ANDROID_HOME -u ANDROID_SDK_ROOT -u ANDROID_NDK_HOME bazel test --config=ci --keep_going //...
 
+      # The library and examples stay migrated (ADR 0073, section 5): a
+      # migration rule's pending rewrite fails here, and its suggestions
+      # are printed for a person to judge.
+      - name: Keep the library migrated
+        if: steps.test.outcome == 'success'
+        timeout-minutes: 5
+        run: git ls-files 'lib/*.pia' 'lib/*.pia.md' 'examples/*.pia' 'examples/*.pia.md' | xargs bazel-bin/tools/piac/piac migrate --check
+
       # The codegen benchmark (ADR 0075): Pia against C, C++, Rust and Zig on
       # the binaries the build above made, with cachegrind's instruction
       # counts and wall times in the job summary. Report only: nothing gates

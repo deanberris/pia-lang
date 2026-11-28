@@ -32,7 +32,7 @@ let lemma sum_plus_one (m : int) : unit
 = sum_nonneg m
 ```
 
-What the translation supports in step 1: `int` and `bool`, records of them, `+ - *`, comparisons, `&& || ==> <==>`, `if`, `let ... in`, record literals, fields and updates, calls of spec functions in the same file, recursion with a `decreases` measure, and `forall`/`exists` in a lemma's contracts. Anything else, such as `u8`, `/`, a quantifier in a spec function's body or a `decreases` on the lemma, is an error from `--emit=lean` that says it has no translation yet. Only what a `by lean` lemma uses is translated.
+What the translation supports: `int` and `bool`, machine integers (`u8` ... `u64`, `usize`, `i8` ... `i64`, `isize`) and range types (`int{0..9}`), records of `int` and `bool`, `+ - *`, comparisons, `&& || ==> <==>`, `if`, `let ... in`, record literals, fields and updates, calls of spec functions in the same file, recursion with a `decreases` measure, and `forall`/`exists` in a lemma's contracts. A machine integer is a Lean `Int`, never a `BitVec`, because Pia's integers never wrap; its range is a hypothesis, `((0 : Int) ≤ a ∧ a ≤ (255 : Int))`, first among the lemma's, in a spec function's `h_req` guard, and after a bound variable (`∃ x, range ∧ p`). A suffix such as `9u8` names only the type, and `int x` is `x`. Anything else, such as `/`, a record field of type `u8`, a slice, a quantifier in a spec function's body or a `decreases` on the lemma, is an error from `--emit=lean` that says it has no translation yet. Only what a `by lean` lemma uses is translated.
 
 ## 2. Read the statements
 
@@ -92,6 +92,20 @@ end Proofs
 ```
 
 `tests/lean/Proofs.lean` is a complete, checked example, with a record and a `bool` spec function too.
+
+Machine integers need no more than `omega` when the goal is linear, since each range is a hypothesis. A spec function over them unfolds to its guard, which `split` and `omega` close, and a product is bounded by `Int.mul_le_mul` first (`tests/lean/Bytes.lean`):
+
+```lean
+theorem total_fits : bytes.total_fits := by
+  intro a b h
+  unfold bytes.total
+  split <;> omega
+
+theorem square_fits : bytes.square_fits := by
+  intro a ⟨h0, h1⟩
+  have h : a * a ≤ 255 * 255 := Int.mul_le_mul h1 h1 h0 (by omega)
+  omega
+```
 
 ## 4. Check it and pass the receipt
 

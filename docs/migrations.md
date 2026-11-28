@@ -23,6 +23,13 @@ When an old form still parses for one release after its change, every build repo
 
 Its test is [tests/migrate/type_makes_distinct.pia](https://github.com/deanberris/pia-lang/blob/main/tests/migrate/type_makes_distinct.pia).
 
+## In CI
+
+Two checks keep the rule from being forgotten:
+
+- A pull request that changes the grammar, the keyword table or the prelude (`src/syntax/Lexer.cpp`, `Token.h`, `Parser.cpp`, `Parser.h`, `Syntax.h`, `Prelude.cpp`), or deletes an ABI baseline, must add or change a rule in `src/migrate/rules/`. If no old source breaks, for example when a change only accepts more programs, a line of its description says why: `no-migration: only accepts more programs`. `tools/migrate/check.py` enforces this, and runs again when the description is edited.
+- The Linux CI job runs `piac migrate --check` over `lib/` and `examples/`, so a rule whose rewrite applies there fails until the rewrite is applied in the same pull request.
+
 ## Writing a rule
 
 A rule lives in `src/migrate/rules/`, one file each, registered in `src/migrate/Migrate.cpp`. It has an id, the piac version that introduced the change, and a matcher over the parsed syntax tree, before metaprograms run. For each old form, it reports a lint named after the rule, with the rewrite as the lint's edits:
