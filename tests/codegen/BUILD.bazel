@@ -437,7 +437,6 @@ genrule(
     srcs = ["collectives.pia"],
     outs = ["collectives.o"],
     cmd = "$(location //tools/piac) --emit=obj " + PIAC_TARGET_FLAGS + " -o $@ $<",
-    tags = ["manual"],  # TEMPORARY: out of //... until sum proves
     target_compatible_with = PIA_TARGETS,
     tools = ["//tools/piac"],
 )
@@ -448,7 +447,6 @@ cc_test(
         "collectives_test.c",
         ":collectives_obj",
     ],
-    tags = ["manual"],  # TEMPORARY
     target_compatible_with = PIA_TARGETS,
     deps = ["@llvm-project//mlir:mlir_async_runtime"],
 )

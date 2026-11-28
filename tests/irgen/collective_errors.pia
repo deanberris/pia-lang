@@ -59,5 +59,15 @@ let plain (xs : [u32]) : u32 @collective(xs) = 0
 let loose (r : range) : unit = ()
 
 (*
-// CHECK: error
+// CHECK: 17:19: error: every iteration must reach this call of the collective 'exchange' in the same order, but it is reached only wh
+// CHECK: 21:34: error: 'exchange' is a collective (@collective), which every iteration of a spread joins: it can only be called in a 
+// CHECK: 27:14: error: 'x' is computed by each iteration on one side of a collective and used on the other: the code between collecti
+// CHECK: 33:5: error: 'a' was passed to a collective, which published it: every iteration may read any of its cells and none may wri
+// CHECK: 40:7: error: every iteration must reach this call of the collective 'exchange' in the same order, but it is reached only wh
+// CHECK: 46:5: error: a while loop cannot hold a collective yet: use a for loop over a uniform range (ADR 0086)
+// CHECK: 51:53: error: 'total' runs once for every iteration, so this argument must be the same in each, and it depends on the iterat
+// CHECK: 53:40: error: a gathered parameter is an array over a range parameter, '(r : range) (x : [t; r])', which holds every iterati
+// CHECK: 55:72: error: a collective takes no out, inout or mutable parameter: it runs once for every iteration, so what it writes wou
+// CHECK: 57:42: error: a gathered parameter is an array over a range parameter, '(r : range) (xs : [t; r])', which holds every iterat
+// CHECK: 59:1: error: a range parameter is for a collective, which gets the range of the spread that calls it (ADR 0086)
 *)

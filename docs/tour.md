@@ -884,12 +884,12 @@ A collective is a function that every iteration of a spread calls together, once
 ```ocaml
 let sum (r : range) (xs : [u32; r]) : u64
   @collective(xs)
-  requires len xs <= 4'294'967'297
+  requires len xs <= 4'294'967'295
   ensures forall (k in r.lo .. r.hi). result >= xs.[k]
 = let s : mutable u64 = 0 in
   for j in r.lo .. r.hi
-    invariant s <= (j - r.lo) * 4'294'967'295
-    invariant forall (k in r.lo .. j). s >= xs.[k]
+    invariant forall (k in r.lo .. j). xs.[k] <= s
+    invariant s <= (j - r.lo) << 32
   do s <- s + xs.[j] done;
   s
 
@@ -910,7 +910,7 @@ let relax (a : borrowed inout mutable [u32]) (b : borrowed inout mutable [u32]) 
   done
 
 let share (xs : [u32]) (ys : out mutable [u64]) : unit
-  requires len ys = len xs && len xs <= 4294967296
+  requires len ys = len xs && len xs <= 4294967295
 = spread i in 0 .. len xs do
     let total = sum xs.[i] in
     ys.[i] <- total - xs.[i]

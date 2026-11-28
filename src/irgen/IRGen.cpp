@@ -7942,6 +7942,20 @@ class Gen {
     const Node *r = &req;
     std::vector<std::string> names, mods;
     std::vector<Type> ptypes;
+    // `(r : range) -> (xs : [t; r])`, as a definition's parameters
+    // (ADR 0086).
+    std::set<std::string> ranges;
+    for (const Node *a = r->kids[0]->kids[1].get();
+         a->kind == NodeKind::ArrowType; a = a->kids[1].get()) {
+      const Node &d = *a->kids[0];
+      if (d.kids[1]->kind == NodeKind::TypeName && d.kids[1]->text == "range")
+        ranges.insert(d.text);
+    }
+    types_.setRangeParams(ranges);
+    struct ClearRanges {
+      sema::TypeResolver &types;
+      ~ClearRanges() { types.setRangeParams({}); }
+    } clearRanges{types_};
     const Node *cur = r->kids[0]->kids[1].get();
     for (; cur->kind == NodeKind::ArrowType; cur = cur->kids[1].get()) {
       const Node &d = *cur->kids[0];

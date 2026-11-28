@@ -9,7 +9,7 @@ interface Phases @abi(c) = sig
   let relax : (a : borrowed inout mutable [u32]) -> (b : borrowed inout mutable [u32]) -> (steps : u32) -> unit
     requires len b = len a && len a <= 1000000
   let share : (xs : [u32]) -> (ys : out mutable [u64]) -> unit
-    requires len ys = len xs && len xs <= 4294967296
+    requires len ys = len xs && len xs <= 4294967295
   let spans : (xs : [i32]) -> (lo : out mutable [i32]) -> (hi : out mutable [i32]) -> unit
     requires len lo = len xs && len hi = len xs
   let any_zero : (xs : [u32]) -> (ys : out mutable [u8]) -> unit
@@ -20,12 +20,12 @@ let exchange (b : [u32]) : unit @collective = ()
 
 let sum (r : range) (xs : [u32; r]) : u64
   @collective(xs)
-  requires len xs <= 4'294'967'297
+  requires len xs <= 4'294'967'295
   ensures forall (k in r.lo .. r.hi). result >= xs.[k]
 = let s : mutable u64 = 0 in
   for j in r.lo .. r.hi
-    invariant s <= (j - r.lo) * 4'294'967'295
-    invariant forall (k in r.lo .. j). s >= xs.[k]
+    invariant forall (k in r.lo .. j). xs.[k] <= s
+    invariant s <= (j - r.lo) << 32
   do s <- s + xs.[j] done;
   s
 

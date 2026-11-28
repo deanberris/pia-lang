@@ -12,12 +12,12 @@
 
 let sum (r : range) (xs : [u32; r]) : u64
   @collective(xs)
-  requires len xs <= 4'294'967'297
+  requires len xs <= 4'294'967'295
   ensures forall (k in r.lo .. r.hi). result >= xs.[k]
 = let s : mutable u64 = 0 in
   for j in r.lo .. r.hi
-    invariant s <= (j - r.lo) * 4'294'967'295
-    invariant forall (k in r.lo .. j). s >= xs.[k]
+    invariant forall (k in r.lo .. j). xs.[k] <= s
+    invariant s <= (j - r.lo) << 32
   do s <- s + xs.[j] done;
   s
 
@@ -47,7 +47,7 @@ let relax (a : borrowed inout mutable [u32]) (b : borrowed inout mutable [u32]) 
   done
 
 let share (xs : [u32]) (ys : out mutable [u64]) : unit
-  requires len ys = len xs && len xs <= 4294967296
+  requires len ys = len xs && len xs <= 4294967295
 = spread i in 0 .. len xs do
     let total = sum xs.[i] in
     ys.[i] <- total - xs.[i]
@@ -74,5 +74,13 @@ let unbounded (xs : [u32]) (ys : out mutable [u64]) : unit
 = spread i in 0 .. len xs do ys.[i] <- sum xs.[i] done
 
 (*
-// CHECK: 0 skipped
+// CHECK: 21:13: proved: '+' does not overflow usize
+// CHECK: 16:3: proved: the postcondition holds
+// CHECK: 41:29: proved: the index is within bounds
+// CHECK: 52:17: proved: the precondition of 'sum' holds
+// CHECK: 53:21: proved: '-' does not overflow usize
+// CHECK: 60:17: proved: '-' does not overflow u32
+// CHECK: 68:18: failed: the iteration owns the cell it reads in 'a' (c = i)
+// CHECK: 74:40: failed: the precondition of 'sum' holds
+// CHECK: 54 proved, 2 failed, 0 skipped
 *)

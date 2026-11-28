@@ -30,7 +30,7 @@ Four things are open:
 ```ocaml
 let sum (r : range) (xs : [u32; r]) : u64
   @collective(xs)
-  requires len xs <= 4'294'967'297
+  requires len xs <= 4'294'967'295
   ensures forall (k in r.lo .. r.hi). result >= xs.[k]
 = ... (* an ordinary proved loop that adds xs up *)
 ```
@@ -48,8 +48,7 @@ let sum (r : range) (xs : [u32; r]) : u64
 
 | Function | Gathers | Result | What the contract says |
 | --- | --- | --- | --- |
-| `sum` | `u32` | `u64` | at least each contribution; `len xs <= 2^32 + 1` |
-| `sum` | `i32` | `i64` | `len xs <= 2^32`, which keeps the sum in `i64` |
+| `sum` | `u32` | `u64` | at least each contribution; `len xs < 2^32` |
 | `least`, `most` | `u32`, `i32`, `u64` or `i64` | the same type | at most, or at least, each contribution, and equal to one |
 | `any`, `every` | `bool` | `bool` | some, or every, contribution holds |
 | `exchange` | nothing; takes a buffer `b` | `unit` | `b` is published |
@@ -73,7 +72,7 @@ The check is keyed on the attribute, so the compiler knows no collective by name
 The verifier still sees one arbitrary iteration of the body, as in ADR 0060, and every collective is a barrier in it:
 
 - At a collective, and on entering and leaving an `if` or `for` that contains one, every cell that another iteration owns of every buffer the spread writes is forgotten (ADR 0060's havoc), since the others may have written it.
-- At a call, each gathered argument is a fresh array over the spread's range, a spec buffer ([ADR 0058](0058-spec-buffers.md)), of which the iteration knows one cell: its own argument, at its position `i`. The precondition is a goal over it, so `sum`'s `len xs <= 2^32 + 1` is a goal on the spread's range. The result is fresh, the postcondition is assumed of it, and so `sum x >= x` follows from `sum`'s contract.
+- At a call, each gathered argument is a fresh array over the spread's range, a spec buffer ([ADR 0058](0058-spec-buffers.md)), of which the iteration knows one cell: its own argument, at its position `i`. The precondition is a goal over it, so `sum`'s `len xs < 2^32` is a goal on the spread's range. The result is fresh, the postcondition is assumed of it, and so `sum x >= x` follows from `sum`'s contract.
 - After a call that publishes `b`, reads of `b` need no ownership goal and writes of `b` are rejected, until the next collective; a compound statement that contains a collective ends the window.
 
 ADR 0060's other rules stand: the body writes only cells it owns, and assigns no variable declared outside it.
