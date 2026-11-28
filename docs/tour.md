@@ -818,7 +818,7 @@ let install (t : inout [handler; 4]) : unit =
   t.[2].f <- t.[1].f
 ```
 
-A stored reference takes and returns integers, bools and floats for now. Copies of a mutable reference into a local, references in variants and `option`, and references passed to C come later.
+A variant carries a reference the same way, as a constructor's record payload, `| Run of step` with `step` such a record, and `option step` is a reference that may be missing. A stored reference takes and returns integers, bools and floats for now. Copies of a mutable reference into a local, `option (u8 -> u8)` as one nullable address, and references passed to C come later.
 
 ## Parallel loops
 

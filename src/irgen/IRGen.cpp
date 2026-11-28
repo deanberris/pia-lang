@@ -3572,6 +3572,33 @@ class Gen {
     return TV{create<RecordOp>(l, rt, fields).getResult(), rt};
   }
 
+  // A function reference that nothing calls, for an unused payload of a
+  // variant (ADR 0071): the address of a private function per type, which
+  // returns its result's default. Only the constructor's own payload is
+  // ever read, so no call reaches it.
+  Value placeholderReference(Location l, mlir::FunctionType ft) {
+    std::string symbol =
+        "pia$no_function$" + std::to_string(placeholders_.size());
+    if (auto it = placeholders_.find(ft.getAsOpaquePointer());
+        it != placeholders_.end())
+      symbol = it->second;
+    else {
+      placeholders_[ft.getAsOpaquePointer()] = symbol;
+      mlir::OpBuilder::InsertionGuard guard(b_);
+      b_.setInsertionPointToEnd(module_.getBody());
+      auto fn = create<mlir::func::FuncOp>(l, symbol, ft);
+      fn.setPrivate();
+      b_.setInsertionPointToStart(fn.addEntryBlock());
+      llvm::SmallVector<Value> rets;
+      for (Type r : ft.getResults())
+        rets.push_back(defaultValue(l, r));
+      create<mlir::func::ReturnOp>(l, rets);
+    }
+    return create<mlir::func::ConstantOp>(
+               l, ft, mlir::FlatSymbolRefAttr::get(b_.getContext(), symbol))
+        .getResult();
+  }
+
   // Some value of `t`: its lowest integer, false, an empty slice, or a
   // record of those.
   Value defaultValue(Location l, Type t) {
@@ -3593,6 +3620,8 @@ class Gen {
     }
     if (auto st = mlir::dyn_cast<SliceType>(t))
       return create<EmptyOp>(l, st).getResult();
+    if (auto ft = mlir::dyn_cast<mlir::FunctionType>(t))
+      return placeholderReference(l, ft);
     // An array of integers: constant data of each element's default.
     if (auto at = mlir::dyn_cast<ArrayType>(t)) {
       Type et = at.getElementType();
@@ -13291,6 +13320,7 @@ class Gen {
   std::set<std::string> references_;
   // The functions calls through mutable references go to (ADR 0071).
   std::set<std::string> proxies_;
+  std::map<const void *, std::string> placeholders_; // by function type
   // Lemmas queued and functions matched to requirements, in order, so a
   // concept check can tell which are its own (certify).
   std::vector<std::string> queuedLog_, matchedLog_;
