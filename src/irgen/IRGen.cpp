@@ -12423,13 +12423,40 @@ class Gen {
         call->add(syntax::clone(arg));
         continue;
       }
-      // A lone non-generic collective gives the element type, so that a
-      // u8 is gathered into its [u32; r].
+      // The overloads' element types say what the argument is gathered
+      // as: a lone one's, so that a u8 is gathered into its [u32; r], or
+      // among several, the narrowest that holds the argument's type, of
+      // its signedness first, as `sum` has a u32 and an i32 overload.
       Type elem;
       if (lone && p < lone->params.size())
         if (auto sl = mlir::dyn_cast<SliceType>(lone->params[p].type))
           elem = sl.getElementType();
       R x = genExpr(arg, elem);
+      if (x && !elem)
+        if (auto xt = mlir::dyn_cast<IntType>(x->type)) {
+          IntType best;
+          auto lo = [](IntType t) { return t.getLo().sextOrTrunc(kWidth); };
+          auto hi = [](IntType t) { return t.getHi().sextOrTrunc(kWidth); };
+          auto width = [&](IntType t) {
+            return (hi(t) - lo(t)).getActiveBits();
+          };
+          for (const sema::FuncSig *s : set) {
+            if (s->isGeneric() || p >= s->params.size())
+              continue;
+            auto sl = mlir::dyn_cast<SliceType>(s->params[p].type);
+            auto et =
+                sl ? mlir::dyn_cast<IntType>(sl.getElementType()) : IntType();
+            if (!et || lo(et).sgt(lo(xt)) || hi(et).slt(hi(xt)))
+              continue;
+            bool same = et.isSigned() == xt.isSigned();
+            bool bestSame = best && best.isSigned() == xt.isSigned();
+            if (!best || (same && !bestSame) ||
+                (same == bestSame && width(et) < width(best)))
+              best = et;
+          }
+          if (best)
+            elem = best;
+        }
       if (x && elem)
         x = coerce(*x, elem, arg);
       if (!x) {

@@ -48,15 +48,15 @@ let sum (r : range) (xs : [u32; r]) : u64
 
 | Function | Gathers | Result | What the contract says |
 | --- | --- | --- | --- |
-| `sum` | an unsigned integer of 32 bits or less | `u64` | at least each contribution; `len xs <= 2^32 + 1` |
-| `sum` | a signed integer of 32 bits or less | `i64` | `len xs <= 2^32`, which keeps the sum in `i64` |
-| `least`, `most` | an integer | the same type | at most, or at least, each contribution, and equal to one |
+| `sum` | `u32` | `u64` | at least each contribution; `len xs <= 2^32 + 1` |
+| `sum` | `i32` | `i64` | `len xs <= 2^32`, which keeps the sum in `i64` |
+| `least`, `most` | `u32`, `i32`, `u64` or `i64` | the same type | at most, or at least, each contribution, and equal to one |
 | `any`, `every` | `bool` | `bool` | some, or every, contribution holds |
-| `exchange` | nothing; takes `b : borrowed [t]` | `unit` | `b` is published |
+| `exchange` | nothing; takes a buffer `b` | `unit` | `b` is published |
 
-The signed and unsigned `sum` are generic over the integer type, told apart by `where` constraints ([ADR 0035](0035-substitution-failure-and-total-constraints.md)). Each is exported with its definition, as generics are, so an importer instantiates it in its own module.
+Each is an overload per element type, which the module exports as an ordinary function, its `@collective` attribute with it. At a call, a gathered argument goes to the overload with the narrowest element type that holds its type, of its own signedness first, so a `u8` is gathered as a `u32` and an `i16` as an `i32`. The functions run in the importer's spreads from the module's object file.
 
-The design's spelling is a metaprogram over them that importers run: `all_reduce add x` is `sum x`, `min` is `least`, `max` is `most`, `or` is `any` and `and` is `every`; `halo_exchange b` is `exchange b`. Any other operator is an error from the metaprogram.
+The design's spelling, `all_reduce add x` and `halo_exchange b`, would be a metaprogram that importers run, mapping `add` to `sum`, `min` to `least`, `max` to `most`, `or` to `any` and `and` to `every`. Metaprograms expand only at the top level and as operators today, not as calls in an expression, so that spelling waits for expression metaprograms; the functions are the interface until then.
 
 ### 3. Collectives match because the control flow that reaches them is uniform
 
@@ -66,7 +66,7 @@ The **protocol check** walks the body once and rejects a call of a `@collective`
 
 The error names the condition, for example: *every iteration must reach this call of the collective 'sum' in the same order, but it is reached only when the condition at 12:5 holds, and that depends on the iteration*.
 
-The check is keyed on the attribute, so the compiler knows no collective by name. This is ADR 0014's protocol check. Its model-checker pass, for protocols this check cannot settle, comes with [ADR 0053](0053-protocols-checked-with-spacer.md)'s checker.
+The check is keyed on the attribute, so the compiler knows no collective by name. This is ADR 0014's protocol check. Its model-checker pass, for protocols this check cannot settle, comes with [ADR 0053](0053-protocols-checked-by-z3.md)'s checker.
 
 ### 4. What each iteration knows
 
@@ -110,3 +110,4 @@ So that phases can be separate loops, a value computed in one phase and used in 
 1. `range` and arrays over a range, `@collective`, gathered parameters, the protocol check, publishing, and the goals and facts of section 4 in IRGen and the verifier; phases and gathered buffers in codegen; `Pia.Par`. Tests in `tests/verify/collectives.pia`, `tests/irgen/collective_errors.pia`, `tests/codegen/collectives.pia` and `tests/std/par.pia`.
 2. `sediment_step` with an `exchange` and a `sum` on CPU threads, in the docs.
 3. An atomic `@lower` for `sum`, `least`, `most`, `any` and `every`, and float sums with floats (M11).
+4. The `all_reduce` and `halo_exchange` spelling, once metaprograms expand in expressions.

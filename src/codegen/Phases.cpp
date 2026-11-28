@@ -235,7 +235,7 @@ private:
     if (ops.empty() && gathers.empty())
       return mlir::success();
     Location l =
-        !ops.empty() ? ops.front()->getLoc() : gathers.front().getLoc();
+        !ops.empty() ? ops.front()->getLoc() : gathers.front()->getLoc();
     auto par =
         make<scf::ParallelOp>(b_, l, mlir::ValueRange{lo_},
                               mlir::ValueRange{hi_}, mlir::ValueRange{one_});
