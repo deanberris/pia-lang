@@ -4,6 +4,7 @@
 #include <functional>
 #include <map>
 #include <set>
+#include <tuple>
 #include <vector>
 
 #include "syntax/Interfaces.h"
@@ -290,11 +291,26 @@ std::string erasedSource(const std::string &cname, const Node &concept,
                (p.receiver ? recvType : p.type) + ") -> ";
       out += "  let spec " + q.name + "_of : " + sig + q.result + "\n";
     }
-    // Which of this module's widened types a box holds, which `take` asks.
+    // A box's state (the amendment's theory of a box's state): whether it
+    // holds an object, and which of this module's widened types that is.
+    // Spec only: nothing at run time.
+    const std::string arg = "(" + self + " : " + recvType + ")";
+    out += "  let spec full_box : " + arg + " -> bool\n";
     if (closed)
       for (const std::string &t : *closed)
-        out += "  let spec holds_" + t + " : (" + self + " : " + recvType +
-               ") -> bool\n";
+        out += "  let spec holds_" + t + " : " + arg + " -> bool\n";
+    // A box that holds a type is full, and holds at most one type.
+    if (closed)
+      for (size_t i = 0; i < closed->size(); ++i) {
+        const std::string &t = (*closed)[i];
+        out += "  let axiom holds_" + t + "_full " + arg +
+               "\n  ensures holds_" + t + " " + self + " ==> full_box " + self +
+               "\n";
+        for (size_t j = i + 1; j < closed->size(); ++j)
+          out += "  let axiom holds_" + t + "_" + (*closed)[j] + " " + arg +
+                 "\n  ensures holds_" + t + " " + self + " ==> holds_" +
+                 (*closed)[j] + " " + self + " = false\n";
+      }
     for (const Requirement &q : reqs) {
       bool ensures = false;
       for (const Node *c : q.contracts)
@@ -337,6 +353,18 @@ std::string erasedSource(const std::string &cname, const Node &concept,
       src += std::string(w ? ";" : "") + " w" + std::to_string(w) + " : u64";
     src += " }\n\n";
   }
+  // A box's state as contracts name it: `requires full b`, `ensures
+  // unknown b` (every contract states it, the amendment's theory).
+  src += "let spec full (b : " + boxType + ") : bool = " + theory +
+         ".full_box b\n";
+  // `unknown` is true of every box: it only says a contract states that
+  // the caller cannot know the state, so it gives the solver nothing to
+  // instantiate, even under a `forall` over a slice.
+  src += "let spec unknown (b : " + boxType + ") : bool = true\n\n";
+  if (!closed)
+    src += "let is_full (b : " + boxType +
+           ") : bool\n  ensures result = " + theory +
+           ".full_box b\n= false\n\n";
   // The requirements a box can call, in the concept's order: the
   // descriptor's entries.
   std::vector<const Requirement *> callable;
@@ -376,8 +404,9 @@ std::string erasedSource(const std::string &cname, const Node &concept,
     // justifies it. Before the widened types are known, a stand-in.
     const std::string call = theory + "_call_" + q.name;
     src += "let " + call + params(q, boxType) + " : " + q.result +
-           requires(onSelf) + "\n  ensures result = " + theory + "." + q.name +
-           "_of" + args(q, self) + "\n= abort ()\n\n";
+           requires(onSelf) + "\n  requires " + theory + ".full_box " + self +
+           "\n  ensures result = " + theory + "." + q.name + "_of" +
+           args(q, self) + "\n= abort ()\n\n";
     if (closed) {
       BoxOp op;
       op.kind = BoxOp::Call;
@@ -403,7 +432,10 @@ std::string erasedSource(const std::string &cname, const Node &concept,
     std::string ps;
     for (const Param &p : q.params)
       ps += " (" + p.name + " : " + (p.receiver ? boxType : p.type) + ")";
+    // Only a full box has an object to call: a goal at each call, proved
+    // from the state the caller's contract or its own code gives the box.
     src += "let " + q.name + ps + " : " + q.result + requires(onBox) +
+           "\n  requires " + theory + ".full_box " + recv +
            "\n  ensures result = " + theory + "." + q.name + "_of" +
            args(q, recv) + "\n= " + theory + "_call_" + q.name + args(q, recv) +
            "\n\n";
@@ -412,7 +444,8 @@ std::string erasedSource(const std::string &cname, const Node &concept,
   std::string full = "\n  requires len b.slot = 1 && b.state = 1";
   if (!closed) {
     src += "let widen (t : type where " + conceptRef(cname) +
-           " t) (b : " + box + " t) : " + boxType + full + "\n= { tag = 0 }\n";
+           " t) (b : " + box + " t) : " + boxType + full + "\n  ensures " +
+           theory + ".full_box result\n= { tag = 0 }\n";
     src += "let take (t : type where " + conceptRef(cname) +
            " t) (b : inout "
            "mutable " +
@@ -426,6 +459,8 @@ std::string erasedSource(const std::string &cname, const Node &concept,
            boxType +
            ") : result t box_mismatch\n= Err "
            "Mismatch\n";
+    src += "let is (t : type where " + conceptRef(cname) +
+           " t) (b : " + boxType + ") : bool\n= false\n";
   } else {
     src += "let " + theory + "_check (t : type where " + conceptRef(cname) +
            " t) (b : " + box + " t) : unit = ()\n\n";
@@ -438,7 +473,22 @@ std::string erasedSource(const std::string &cname, const Node &concept,
     e.entry = static_cast<int>(callable.size());
     ops[empty] = e;
     src += "let " + empty + " (b : " + boxType + ") : " + boxType +
-           "\n= abort ()\n\n";
+           "\n  ensures " + theory + ".full_box result = false\n= abort ()\n\n";
+    // Whether a box is full, read at run time (an indeterminate state's
+    // query): its first word is not the empty control block's address.
+    const std::string isEmpty = theory + "_is_empty";
+    BoxOp ie;
+    ie.kind = BoxOp::Holds;
+    ie.descriptor = e.descriptor;
+    ie.entry = e.entry;
+    ie.emptyBlock = true;
+    ops[isEmpty] = ie;
+    src += "let " + isEmpty + " (b : " + boxType +
+           ") : bool\n  ensures result = (" + theory +
+           ".full_box b = false)\n= abort ()\n\n";
+    src += "let is_full (b : " + boxType +
+           ") : bool\n  ensures result = " + theory + ".full_box b\n= if " +
+           isEmpty + " b then false else true\n\n";
     for (const std::string &t : *closed) {
       // The object, packed into the box with its descriptor.
       const std::string pack = theory + "_pack_" + t;
@@ -448,10 +498,12 @@ std::string erasedSource(const std::string &cname, const Node &concept,
       for (const Requirement *q : callable)
         op.thunks.push_back(theory + "_thunk_" + q->name + "_" + t);
       ops[pack] = op;
-      src +=
-          "let " + pack + " (v : " + t + ") : " + boxType + "\n= abort ()\n\n";
+      const std::string holdsT = theory + ".holds_" + t;
+      src += "let " + pack + " (v : " + t + ") : " + boxType + "\n  ensures " +
+             holdsT + " result\n= abort ()\n\n";
       src += "let widen (b : " + box + " " + t + ") : " + boxType + full +
-             "\n= " + theory + "_check b;\n  " + pack + " b.slot.[0]\n\n";
+             "\n  ensures " + holdsT + " result\n= " + theory +
+             "_check b;\n  " + pack + " b.slot.[0]\n\n";
       // Taking it out (Dean, 2026-11-28): when the box's descriptor is
       // `t`'s, `take b d` copies its object into the caller's empty box
       // `d`, and `consume<t> b` returns it, and both leave `b` empty. IRGen
@@ -472,13 +524,20 @@ std::string erasedSource(const std::string &cname, const Node &concept,
              theory + ".holds_" + t + " b\n= abort ()\n\n";
       src += "let " + unpack + " (b : " + boxType + ") : " + t +
              "\n  requires " + theory + ".holds_" + t + " b\n= abort ()\n\n";
+      // On `Ok` the box is empty; on `Err`, its state is as it was.
+      std::string unchanged =
+          theory + ".full_box b = old (" + theory + ".full_box b)";
+      for (const std::string &u : *closed)
+        unchanged += " && " + theory + ".holds_" + u + " b = old (" + theory +
+                     ".holds_" + u + " b)";
+      const std::string emptied = theory + ".full_box b = false";
       src += "let take (b : inout mutable " + boxType +
              ") (d : inout mutable " + box + " " + t +
              ") : result unit box_mismatch"
              "\n  requires len d.slot = 1 && d.state = 0"
              "\n  ensures len d.slot = 1"
-             "\n  ensures (match result with | Ok -> d.state = 1 | Err _ -> "
-             "d.state = 0)\n= if " +
+             "\n  ensures (match result with | Ok -> d.state = 1 && " +
+             emptied + " | Err _ -> d.state = 0 && " + unchanged + ")\n= if " +
              holds + " b then\n    (d.slot.[0] <- " + unpack +
              " b;\n     b <- " + empty +
              " b;\n     d.state <- 1;"
@@ -486,9 +545,15 @@ std::string erasedSource(const std::string &cname, const Node &concept,
       // The where is written as the operator expands, since this source
       // is parsed after expansion.
       src += "let consume (t : type where eq t " + t + ") (b : inout mutable " +
-             boxType + ") : result " + t + " box_mismatch\n= if " + holds +
+             boxType + ") : result " + t +
+             " box_mismatch\n  ensures (match result with | Ok _ -> " +
+             emptied + " | Err _ -> " + unchanged + ")\n= if " + holds +
              " b then\n    (let v = " + unpack + " b in\n     b <- " + empty +
              " b;\n     Ok v)\n  else Err Mismatch\n\n";
+      // Which type a box holds, read at run time: `is<t> b`.
+      src += "let is (t : type where eq t " + t + ") (b : " + boxType +
+             ") : bool\n  ensures result = " + holdsT + " b\n= " + holds +
+             " b\n\n";
     }
   }
   return src;
@@ -534,7 +599,191 @@ void rewriteTypes(Node &n, bool inType, const std::set<std::string> &unsized,
   for (NodePtr &k : n.kids) rewriteTypes(*k, typeContext, unsized, cs, used, diags);
 }
 
+// Whether `mods`, a parameter's modifiers as written, has `word`.
+bool hasWord(const std::string &mods, const std::string &word) {
+  size_t at = 0;
+  while ((at = mods.find(word, at)) != std::string::npos) {
+    bool start = at == 0 || mods[at - 1] == ' ';
+    bool end = at + word.size() == mods.size() || mods[at + word.size()] == ' ';
+    if (start && end)
+      return true;
+    at += word.size();
+  }
+  return false;
+}
+
+// Whether `n` states the state of the box `name`: applies `full` or
+// `unknown` to it (or the theory's facts they stand for).
+bool statesState(const Node &n, const std::string &name) {
+  // The box itself, or an element of a slice of boxes, `xs.[i]`.
+  auto names = [&](const Node &a) {
+    const Node *b = &a;
+    if (b->kind == NodeKind::Index && !b->kids.empty())
+      b = b->kids[0].get();
+    return b->kind == NodeKind::Name && b->text == name;
+  };
+  if (n.kind == NodeKind::Apply && n.kids.size() == 2 && names(*n.kids[1])) {
+    const Node &f = *n.kids[0];
+    if ((f.kind == NodeKind::Name &&
+         (f.text == "full" || f.text == "unknown")) ||
+        (f.kind == NodeKind::Field && f.text == "full_box"))
+      return true;
+  }
+  for (const NodePtr &k : n.kids)
+    if (statesState(*k, name))
+      return true;
+  return false;
+}
+
+bool statedIn(const std::vector<const Node *> &contracts, NodeKind kind,
+              const std::string &name) {
+  for (const Node *c : contracts)
+    if (c->kind == kind && statesState(*c, name))
+      return true;
+  return false;
+}
+
+using Params = std::vector<std::tuple<std::string, std::string, const Node *>>;
+
+// Every contract states the state of each box over a concept in its
+// signature (Dean, 2026-11-28): a box it takes, in a `requires`, and a box
+// it hands out, as its result or an `inout` or `out` parameter, in an
+// `ensures`. `params` are the parameters' names, modifiers and types, and
+// `boxes` the box types.
+void checkStated(const std::string &fn, syntax::SourceLoc at,
+                 const Params &params, const Node *result,
+                 const std::vector<const Node *> &contracts,
+                 const std::set<std::string> &boxes,
+                 syntax::Diagnostics &diags) {
+  auto isBox = [&](const Node *t) {
+    return t && t->kind == NodeKind::TypeName && boxes.count(t->text);
+  };
+  // A slice or array of boxes: each element is a box of its own, so its
+  // state is stated element by element, `forall (i in 0 .. len xs). full
+  // xs.[i]`.
+  auto isBoxes = [&](const Node *t) {
+    return t &&
+           (t->kind == NodeKind::SliceType || t->kind == NodeKind::ArrayType) &&
+           !t->kids.empty() && isBox(t->kids[0].get());
+  };
+  for (const auto &[name, mods, type] : params) {
+    bool many = isBoxes(type);
+    if (!isBox(type) && !many)
+      continue;
+    bool out = hasWord(mods, "out");
+    // A caller sees what a function writes into a mutable slice.
+    bool inout = hasWord(mods, "inout") || (many && hasWord(mods, "mutable"));
+    if (many) {
+      std::string each =
+          "forall (i in 0 .. len " + name + "). full " + name + ".[i]";
+      if (!out && !statedIn(contracts, NodeKind::Requires, name))
+        diags.error(at, "'" + fn + "' takes the boxes in '" + name +
+                            "' and states no state for them: add 'requires " +
+                            each +
+                            "', or 'unknown' for an element callers "
+                            "may pass in any state (ADR 0046: each box in a "
+                            "slice is its own, and every contract states its "
+                            "state)");
+      if ((out || inout) && !statedIn(contracts, NodeKind::Ensures, name))
+        diags.error(at, "'" + fn + "' may write the boxes in '" + name +
+                            "' and states no state it leaves them in: add "
+                            "'ensures " +
+                            each +
+                            "' (ADR 0046: each box in a "
+                            "slice is its own, and every contract states its "
+                            "state)");
+      continue;
+    }
+    if (!out && !statedIn(contracts, NodeKind::Requires, name))
+      diags.error(at, "'" + fn + "' takes the box '" + name +
+                          "' and states no state for it: add 'requires full " +
+                          name + "', or 'requires unknown " + name +
+                          "' when callers may pass any (ADR 0046: every "
+                          "contract states a box's state)");
+    if ((out || inout) && !statedIn(contracts, NodeKind::Ensures, name))
+      diags.error(at, "'" + fn + "' hands back the box '" + name +
+                          "' and states no state it leaves it in: add "
+                          "'ensures full " +
+                          name + "', 'ensures full " + name +
+                          " = false' or 'ensures unknown " + name +
+                          "' (ADR 0046: every contract states a box's state)");
+  }
+  if (isBox(result) && !statedIn(contracts, NodeKind::Ensures, "result"))
+    diags.error(at, "'" + fn +
+                        "' returns a box and states no state for it: "
+                        "add 'ensures full result' or 'ensures unknown result' "
+                        "(ADR 0046: every contract states a box's state)");
+}
+
+// The state check over the program's own functions and the functions its
+// interfaces declare. A definition with no contract of its own inherits
+// its interface's (ADR 0077), so the interface's is checked instead.
+void checkStates(const Node &program, const std::set<std::string> &boxes,
+                 syntax::Diagnostics &diags) {
+  std::set<std::string> declared;
+  for (const NodePtr &item : program.kids) {
+    if (item->kind != NodeKind::Interface)
+      continue;
+    for (const NodePtr &k : item->kids) {
+      if (k->kind != NodeKind::SigVal || k->kids.size() < 3 ||
+          k->kids[0]->kids.size() < 2)
+        continue;
+      declared.insert(k->text);
+      Params params;
+      const Node *cur = k->kids[0]->kids[1].get();
+      for (; cur->kind == NodeKind::ArrowType; cur = cur->kids[1].get()) {
+        const Node &d = *cur->kids[0];
+        if (d.kind != NodeKind::Domain || d.kids.size() < 2)
+          continue;
+        params.emplace_back(d.text, d.kids[0]->text, d.kids[1].get());
+      }
+      std::vector<const Node *> contracts;
+      for (const NodePtr &c : k->kids[2]->kids)
+        contracts.push_back(c.get());
+      checkStated(k->text, k->loc, params, cur, contracts, boxes, diags);
+    }
+  }
+  for (const NodePtr &item : program.kids) {
+    if (item->kind != NodeKind::LetItem || item->kids.size() < 3 ||
+        item->kids[0]->kind != NodeKind::Params)
+      continue;
+    const Node *ret = nullptr, *cs = nullptr;
+    for (const NodePtr &k : item->kids) {
+      if (k->kind == NodeKind::RetAnnot && !k->kids.empty() &&
+          k->kids[0]->kind == NodeKind::Annot && k->kids[0]->kids.size() > 1)
+        ret = k->kids[0]->kids[1].get();
+      if (k->kind == NodeKind::Contracts)
+        cs = k.get();
+    }
+    std::vector<const Node *> contracts;
+    if (cs)
+      for (const NodePtr &c : cs->kids)
+        contracts.push_back(c.get());
+    if (contracts.empty() && declared.count(item->text))
+      continue;
+    Params params;
+    for (const NodePtr &p : item->kids[0]->kids) {
+      if (p->kind != NodeKind::Param || p->kids.empty() ||
+          p->kids[0]->kind != NodeKind::Annot || p->kids[0]->kids.size() < 2)
+        continue;
+      params.emplace_back(p->text, p->kids[0]->kids[0]->text,
+                          p->kids[0]->kids[1].get());
+    }
+    checkStated(item->text, item->loc, params, ret, contracts, boxes, diags);
+  }
+}
+
 }  // namespace
+
+// The boxes made so far; like boxOps(), it outlives the program's clone.
+static std::set<std::string> &conceptBoxes() {
+  static std::set<std::string> names;
+  return names;
+}
+
+bool isConceptBox(const std::string &name) {
+  return conceptBoxes().count(name) != 0;
+}
 
 bool hasErasedBoxes(const Node &program) {
   return !unsizedTypes(program).empty();
@@ -564,6 +813,15 @@ void expandErasedBoxes(
     rewriteTypes(*item, false, unsized, cs, used, diags);
   }
   if (diags.hasErrors() || used.empty()) return;
+  // Once, in the first pass: the second sees the same program.
+  if (!widened) {
+    std::set<std::string> boxes;
+    for (const std::string &c : used)
+      boxes.insert("box_" + mangle(c));
+    checkStates(program, boxes, diags);
+    if (diags.hasErrors())
+      return;
+  }
   // A box is one cache line whose layout is the target's and whose
   // descriptor's is the concept's (the cache-line amendment), so another
   // module that sees the concept makes the same box: an interface may show
@@ -642,6 +900,7 @@ void expandErasedBoxes(
         from = &imported;
       }
     }
+    conceptBoxes().insert("box_" + mangle(c));
     std::string src = erasedSource(c, *concept, box, *from, whyNot, closed,
                                    words, ops, diags);
     if (diags.hasErrors()) return;

@@ -733,12 +733,16 @@ def Pia_BoxHoldsOp : Pia_Op<"box_holds", [Pure]> {
     of `descriptor`, the constant describing one type under the concept.
     Descriptors are link-once, so every module that boxes the type agrees
     on the address. The verifier never looks inside: the function is a
-    proxy, and its result is an uninterpreted function of the box.
+    proxy, and its result is an uninterpreted function of the box. With
+    `entries`, the descriptor is the concept's empty control block, which
+    has that many entries (`is_full` asks for it).
   }];
-  let arguments = (ins StrAttr:$descriptor, Variadic<AnyType>:$box);
+  let arguments = (ins StrAttr:$descriptor, OptionalAttr<I64Attr>:$entries,
+                       Variadic<AnyType>:$box);
   let results = (outs I1:$result);
   let assemblyFormat = [{
-    $descriptor `(` $box `)` attr-dict `:` functional-type($box, $result)
+    $descriptor (`entries` $entries^)? `(` $box `)` attr-dict `:`
+    functional-type($box, $result)
   }];
 }
 

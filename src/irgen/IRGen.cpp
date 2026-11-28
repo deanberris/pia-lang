@@ -4216,7 +4216,7 @@ class Gen {
       }
       auto p = create<RecPayloadOp>(l, mlir::TypeRange{c->payload}, b->value,
                                     b_.getStringAttr(c->name));
-      return TV{p->getResult(0), c->payload};
+      return stored(n, TV{p->getResult(0), c->payload});
     }
     auto rt = mlir::cast<RecordType>(b->type);
     if (n.kids[0]->text == "#is") {
@@ -4230,7 +4230,7 @@ class Gen {
     }
     Value v = create<FieldOp>(l, c->payload, b->value,
                               b_.getStringAttr(c->name));
-    return TV{v, c->payload};
+    return stored(n, TV{v, c->payload});
   }
 
   // `abort ()`: proved unreachable. In a context that wants a value it has
@@ -5304,7 +5304,8 @@ class Gen {
         unconsume(*args[i]);
       else if (!moveArgument(*args[i], c->type, sig, sig.params[i]))
         return std::nullopt;
-      if (!emptyBox(*args[i], c->type, sig, sig.params[i]))
+      if (!emptyBox(*args[i], c->type, sig, sig.params[i]) ||
+          !fullForGeneric(*args[i], *c, sig, i))
         return std::nullopt;
       // `inout` may update a lender, as `alloc` updates its allocator:
       // what the callee's contract promises keeps the loans valid. `out`
@@ -8098,8 +8099,26 @@ class Gen {
                 sigValUnmet(*r, key, scope, via, nullptr))
           return why;
       } else if (r->kind == NodeKind::SigLemma) {
+        NodePtr contracts = syntax::clone(*r->kids[1]);
+        // A law holds of a box over a concept when it is full, as the
+        // requirements do (queueContractLemma).
+        for (const syntax::NodePtr &p : r->kids[0]->kids) {
+          if (p->kids.empty() || p->kids[0]->kind != NodeKind::Annot ||
+              p->kids[0]->kids[1]->kind != NodeKind::TypeName)
+            continue;
+          auto t = scope.find(p->kids[0]->kids[1]->text);
+          auto rt = t == scope.end() ? RecordType()
+                                     : mlir::dyn_cast<RecordType>(t->second);
+          if (!rt || !isConceptBox(rt.getName().str()))
+            continue;
+          Node *req =
+              contracts->add(syntax::makeNode(NodeKind::Requires, r->loc));
+          Node *full = req->add(syntax::makeNode(NodeKind::Apply, r->loc));
+          full->add(syntax::makeNode(NodeKind::Name, r->loc, "full"));
+          full->add(syntax::makeNode(NodeKind::Name, r->loc, p->text));
+        }
         queueLemma(key + "." + r->text, syntax::clone(*r->kids[0]),
-                   syntax::clone(*r->kids[1]),
+                   std::move(contracts),
                    syntax::makeNode(NodeKind::Unit, r->loc), scope, r->loc,
                    via);
       }
@@ -8272,6 +8291,16 @@ class Gen {
                                                               : nullptr);
       contracts->add(std::move(copy));
     }
+    // A box over a concept meets it when full: a call of generic code
+    // passes only full boxes (fullForGeneric).
+    for (size_t i = 0; i < names.size(); ++i)
+      if (auto rt = mlir::dyn_cast<RecordType>(found.params[i].type);
+          rt && isConceptBox(rt.getName().str())) {
+        Node *r = contracts->add(syntax::makeNode(NodeKind::Requires, at));
+        Node *full = r->add(syntax::makeNode(NodeKind::Apply, at));
+        full->add(syntax::makeNode(NodeKind::Name, at, "full"));
+        full->add(syntax::makeNode(NodeKind::Name, at, found.params[i].name));
+      }
     // The body asserts the function's own preconditions, in its own names.
     // A lemma's postcondition names no `result`, so the body ends with a
     // call of it, which assumes what the lemma proved (#305).
@@ -10366,7 +10395,7 @@ class Gen {
     if (rt.isSpecField(*i))
       specFieldSeen_ = true;
     Value v = create<FieldOp>(loc(n), ft, obj->value, b_.getStringAttr(n.text));
-    return TV{v, ft};
+    return stored(n, TV{v, ft});
   }
 
   // `xs.[i].r <- v` reads element i, replaces its field and writes it back.
@@ -10710,6 +10739,69 @@ class Gen {
   // from after the call, except in a match's `Err` arms (genMatch). Only
   // a local or a `moved` parameter can be left empty, since the checker
   // tracks nothing else.
+  // `full v` for a box over a concept (ADR 0046, a box's state), assumed
+  // or asserted with the claim `claim`; nothing for any other value, or in
+  // a contract.
+  bool boxFull(const Node &at, Value v, Type t, bool assume,
+               const std::string &claim) {
+    auto rt = mlir::dyn_cast<RecordType>(t);
+    if (contract_ || ghost_ || !rt || !isConceptBox(rt.getName().str()))
+      return true;
+    const std::string hidden = "pia$box";
+    NodePtr call = syntax::makeNode(NodeKind::Apply, at.loc);
+    call->add(syntax::makeNode(NodeKind::Name, at.loc, "full"));
+    call->add(syntax::makeNode(NodeKind::Name, at.loc, hidden));
+    scopes_.emplace_back();
+    auto binding = std::make_shared<Binding>();
+    binding->name = hidden;
+    binding->value = v;
+    binding->type = t;
+    scopes_.back()[hidden] = std::move(binding);
+    R p = genPredicate(*call);
+    scopes_.pop_back();
+    if (!p)
+      return false;
+    Location l = loc(at);
+    if (assume) {
+      create<contract::AssumeOp>(l, p->value);
+      return true;
+    }
+    auto a = create<contract::AssertOp>(l, p->value);
+    a->setAttr("pia.claim", b_.getStringAttr(claim));
+    return true;
+  }
+
+  // A box read from a field or a payload is full until the amendment's
+  // step 3 states them: only a local or a `moved` parameter can be left
+  // empty, and the move checker keeps a box so left from being stored
+  // anywhere, so no empty box is there. A slice's boxes are each their own
+  // (Dean, 2026-11-28): their states are stated in contracts, element by
+  // element, and never assumed.
+  R stored(const Node &at, R r) {
+    if (r && !boxFull(at, r->value, r->type, /*assume=*/true, ""))
+      return std::nullopt;
+    return r;
+  }
+
+  // A box passed to a generic function as a value of its type parameter
+  // must be full: the box meets its concept only then, and generic code
+  // states no box's state.
+  bool fullForGeneric(const Node &arg, const TV &v, const sema::FuncSig &sig,
+                      size_t i) {
+    if (sig.typeArgs.empty() || !sig.item)
+      return true;
+    std::vector<const Node *> ps = valueParamsOf(sig);
+    if (i >= ps.size() || ps[i]->kids.empty() ||
+        ps[i]->kids[0]->kind != NodeKind::Annot)
+      return true;
+    const Node &type = *ps[i]->kids[0]->kids[1];
+    if (type.kind != NodeKind::TypeName || !sig.typeArgs.count(type.text))
+      return true;
+    return boxFull(arg, v.value, v.type, /*assume=*/false,
+                   "the box passed as '" + type.text + "' to '" + sig.source() +
+                       "' is full");
+  }
+
   bool emptyBox(const Node &arg, Type t, const sema::FuncSig &sig,
                 const sema::Param &p) {
     if (contract_ || ghost_ || !sig.item)
@@ -11182,7 +11274,11 @@ class Gen {
                              b_.getArrayAttr(thunks), args)
                .getOperation();
     } else if (box.kind == BoxOp::Holds) {
-      op = create<BoxHoldsOp>(loc(body), b_.getStringAttr(box.descriptor), args)
+      mlir::IntegerAttr entries;
+      if (box.emptyBlock)
+        entries = b_.getI64IntegerAttr(box.entry);
+      op = create<BoxHoldsOp>(loc(body), b_.getStringAttr(box.descriptor),
+                              entries, args)
                .getOperation();
     } else if (box.kind == BoxOp::Unpack) {
       op = create<BoxUnpackOp>(loc(body), results, args).getOperation();

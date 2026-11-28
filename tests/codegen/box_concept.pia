@@ -15,11 +15,17 @@ interface Run @abi(c) = sig
   let square = type { side : u8 }
   let rect = type { w : u8; h : u8 }
   let run : (sq : borrowed mutable [square]) -> (rc : borrowed mutable [rect]) -> (xs : borrowed inout mutable [box Shape]) -> u32
-    requires len sq = 1 && len rc = 1 && len xs = 2
+    requires len sq = 1 && len rc = 1 && len xs = 2 && forall (k in 0 .. len xs). unknown xs.[k]
+    ensures forall (k in 0 .. len xs). unknown xs.[k]
   let peek : (xs : borrowed inout mutable [box Shape]) -> (i : usize) -> (s : borrowed mutable [square]) -> u8
-    requires len xs = 2 && i < 2 && len s = 1
+    requires len xs = 2 && i < 2 && len s = 1 && forall (k in 0 .. len xs). full xs.[k]
+    ensures forall (k in 0 .. len xs). full xs.[k]
   let side_of : (xs : borrowed inout mutable [box Shape]) -> (i : usize) -> u8
-    requires len xs = 2 && i < 2
+    requires len xs = 2 && i < 2 && forall (k in 0 .. len xs). full xs.[k]
+    ensures forall (k in 0 .. len xs). full xs.[k]
+  let kind : (xs : borrowed inout mutable [box Shape]) -> (i : usize) -> u8
+    requires len xs = 2 && i < 2 && forall (k in 0 .. len xs). full xs.[k]
+    ensures forall (k in 0 .. len xs). full xs.[k]
 end
 
 let oom = type | OutOfMemory
@@ -69,10 +75,15 @@ let fits (s : rect) (w : u32) : bool requires w > 0 = s.w <= w
 let total (xs : [box Shape]) : u32
   requires len xs = 2
   ensures result <= 20000
+  requires forall (i in 0 .. len xs). full xs.[i]
 = area xs.[0] + area xs.[1]
 
 let two (sq : borrowed mutable [square]) (rc : borrowed mutable [rect]) (xs : borrowed inout mutable [box Shape]) : result u32 oom
   requires len sq = 1 && len rc = 1 && len xs = 2
+  requires forall (i in 0 .. len xs). unknown xs.[i]
+  ensures (match result with
+           | Ok _ -> forall (i in 0 .. len xs). full xs.[i]
+           | Err _ -> forall (i in 0 .. len xs). unknown xs.[i])
 = let ms : mutable bump square = { mem = sq; used = 0 } in
   let mr : mutable bump rect = { mem = rc; used = 0 } in
   let a = make ms { side = 3 }? in
@@ -90,6 +101,7 @@ let twice (t : type where Shape t) (s : t) : u32
 let doubled (xs : [box Shape]) : u32
   requires len xs = 2
   ensures result <= 20000
+  requires forall (i in 0 .. len xs). full xs.[i]
 = twice xs.[1]
 
 
@@ -104,6 +116,8 @@ let run (sq : borrowed mutable [square]) (rc : borrowed mutable [rect]) (xs : bo
    rectangle. *)
 let peek (xs : borrowed inout mutable [box Shape]) (i : usize) (s : borrowed mutable [square]) : u8
   requires len xs = 2 && i < 2 && len s = 1
+  requires forall (i1 in 0 .. len xs). full xs.[i1]
+  ensures forall (i1 in 0 .. len xs). full xs.[i1]
 = let b : mutable box Shape = xs.[i] in
   let d : mutable box square = { slot = s; state = 0 } in
   match take b d with
@@ -113,7 +127,21 @@ let peek (xs : borrowed inout mutable [box Shape]) (i : usize) (s : borrowed mut
 (* The same through `consume`, which copies the square to the stack. *)
 let side_of (xs : borrowed inout mutable [box Shape]) (i : usize) : u8
   requires len xs = 2 && i < 2
+  requires forall (i1 in 0 .. len xs). full xs.[i1]
+  ensures forall (i1 in 0 .. len xs). full xs.[i1]
 = let b : mutable box Shape = xs.[i] in
   match consume<square> b with
   | Ok v -> v.side
   | Err _ -> 0
+
+(* What box_concept_test.c checks of the queries, which read word 0: 1
+   for a square, 2 for a rectangle, then 3 for any other full box. *)
+let kind (xs : borrowed inout mutable [box Shape]) (i : usize) : u8
+  requires len xs = 2 && i < 2
+  requires forall (i1 in 0 .. len xs). full xs.[i1]
+  ensures forall (i1 in 0 .. len xs). full xs.[i1]
+= let b = xs.[i] in
+  if is<square> b then 1
+  else if is<rect> b then 2
+  else if is_full b then 3
+  else 0

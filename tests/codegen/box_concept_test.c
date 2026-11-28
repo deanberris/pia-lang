@@ -6,7 +6,7 @@
 // the boxed type's descriptor, and the object starts at word 1 in its C
 // layout: square's side is its low byte, and rect's w and h its two low
 // bytes. `peek` and `side_of` take a square out of a box, and find that a
-// rectangle's box holds no square.
+// rectangle's box holds no square. `kind` asks which type a box holds.
 
 #include <stdint.h>
 #include <stdio.h>
@@ -32,6 +32,7 @@ uint32_t run(uint8_t *sq_side, uint64_t sq_len, uint8_t *rc_w, uint64_t rc_len,
 uint8_t peek(uint64_t *xs_w0, uint64_t xs_len, REST, uint64_t i,
              uint8_t *s_side, uint64_t s_len);
 uint8_t side_of(uint64_t *xs_w0, uint64_t xs_len, REST, uint64_t i);
+uint8_t kind(uint64_t *xs_w0, uint64_t xs_len, REST, uint64_t i);
 
 int main(void) {
   uint8_t sq_side[1] = {0};
@@ -71,6 +72,12 @@ int main(void) {
   if (side_of(w[0], 2, REST_ARGS(w), 0) != 3 ||
       side_of(w[0], 2, REST_ARGS(w), 1) != 0) {
     fprintf(stderr, "side_of: expected 3 and 0\n");
+    ++failures;
+  }
+  // is<square>, is<rect> and is_full compare word 0 with the descriptors.
+  if (kind(w[0], 2, REST_ARGS(w), 0) != 1 ||
+      kind(w[0], 2, REST_ARGS(w), 1) != 2) {
+    fprintf(stderr, "kind: expected 1 and 2\n");
     ++failures;
   }
   return failures ? 1 : 0;

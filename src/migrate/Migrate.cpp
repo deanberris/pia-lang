@@ -25,7 +25,7 @@ unsigned long commits(std::string_view version) {
 
 const std::vector<Rule> &rules() {
   static const std::vector<Rule> all = [] {
-    std::vector<Rule> r = {typeMakesDistinct()};
+    std::vector<Rule> r = {typeMakesDistinct(), boxStates()};
     std::stable_sort(r.begin(), r.end(), [](const Rule &a, const Rule &b) {
       return commits(a.introduced) < commits(b.introduced);
     });
