@@ -100,5 +100,5 @@ let severity (nf : borrowed mutable [not_found]) (ov : borrowed mutable [overflo
 // CHECK: box_error_payload.pia:78:3: proved: the postcondition holds [smt]
 // CHECK: box_error_payload.pia:92:15: proved: the precondition of 'clamp(box_Exception, u8)' holds [smt]
 // CHECK: box_error_payload.pia:87:3: proved: the postcondition holds [smt]
-// CHECK: 62 proved, 0 failed, 0 skipped
+// CHECK: 69 proved, 0 failed, 0 skipped
 *)

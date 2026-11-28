@@ -1089,6 +1089,39 @@ mlir::LLVM::GlobalOp boxDescriptor(OpBuilder &b, mlir::ModuleOp module,
                                     mlir::Attribute());
 }
 
+// The concept's empty control block `sym`, defined here once per module
+// and link-once across a program: size 0, alignment 1, no drop and null
+// entries, since nothing calls through an empty box. A `holds` lowered
+// first may have declared it as a placeholder, which this replaces.
+void emptyBlock(mlir::ConversionPatternRewriter &rw, mlir::ModuleOp module,
+                Location loc, llvm::StringRef sym, uint64_t entries) {
+  if (auto g = module.lookupSymbol<mlir::LLVM::GlobalOp>(sym)) {
+    if (!g.getInitializerRegion().empty())
+      return;
+    rw.eraseOp(g);
+  }
+  mlir::MLIRContext *ctx = rw.getContext();
+  auto ptr = mlir::LLVM::LLVMPointerType::get(ctx);
+  auto i64 = rw.getI64Type();
+  llvm::SmallVector<Type> fields{i64, i64, ptr};
+  for (uint64_t i = 0; i < entries; ++i)
+    fields.push_back(ptr);
+  auto type = mlir::LLVM::LLVMStructType::getLiteral(ctx, fields);
+  mlir::OpBuilder::InsertionGuard guard(rw);
+  rw.setInsertionPointToStart(module.getBody());
+  auto g = make<mlir::LLVM::GlobalOp>(rw, loc, type, /*isConstant=*/true,
+                                      mlir::LLVM::Linkage::LinkonceODR, sym,
+                                      mlir::Attribute());
+  mlir::Block *init = rw.createBlock(&g.getInitializerRegion());
+  rw.setInsertionPointToStart(init);
+  Value v = make<mlir::LLVM::ZeroOp>(rw, loc, type);
+  Value one =
+      make<mlir::LLVM::ConstantOp>(rw, loc, i64, rw.getI64IntegerAttr(1));
+  v = make<mlir::LLVM::InsertValueOp>(rw, loc, v, one,
+                                      llvm::ArrayRef<int64_t>{1});
+  make<mlir::LLVM::ReturnOp>(rw, loc, v);
+}
+
 // A stack slot for a box's words, so that its object has an address.
 Value boxSlot(OpBuilder &b, Location loc, int64_t words) {
   auto ptr = mlir::LLVM::LLVMPointerType::get(b.getContext());
@@ -1230,7 +1263,10 @@ struct BoxHoldsLowering : mlir::OpConversionPattern<BoxHoldsOp> {
     if (box.empty() || box.front().getType() != rw.getI64Type())
       return mlir::failure();
     auto module = op->getParentOfType<mlir::ModuleOp>();
-    boxDescriptor(rw, module, loc, op.getDescriptor());
+    if (auto entries = op.getEntries())
+      emptyBlock(rw, module, loc, op.getDescriptor(), *entries);
+    else
+      boxDescriptor(rw, module, loc, op.getDescriptor());
     Value desc =
         make<mlir::LLVM::AddressOfOp>(rw, loc, ptr, op.getDescriptor());
     Value addr = make<mlir::LLVM::PtrToIntOp>(rw, loc, rw.getI64Type(), desc);
@@ -1277,40 +1313,19 @@ struct BoxUnpackLowering : mlir::OpConversionPattern<BoxUnpackOp> {
 };
 
 // `pia.box_empty`: a box whose first word is the address of the
-// concept's static control block, defined here once per module and
-// link-once across a program: size 0, alignment 1, no drop and null
-// entries, since nothing calls through an empty box.
+// concept's static control block (emptyBlock).
 struct BoxEmptyLowering : mlir::OpConversionPattern<BoxEmptyOp> {
   using OpConversionPattern::OpConversionPattern;
   LogicalResult
   matchAndRewrite(BoxEmptyOp op, OpAdaptor adaptor,
                   mlir::ConversionPatternRewriter &rw) const override {
     Location loc = op.getLoc();
-    mlir::MLIRContext *ctx = rw.getContext();
-    auto ptr = mlir::LLVM::LLVMPointerType::get(ctx);
+    auto ptr = mlir::LLVM::LLVMPointerType::get(rw.getContext());
     auto i64 = rw.getI64Type();
     int64_t words = op.getNumResults();
     auto module = op->getParentOfType<mlir::ModuleOp>();
     llvm::StringRef sym = op.getDescriptor();
-    if (!module.lookupSymbol<mlir::LLVM::GlobalOp>(sym)) {
-      llvm::SmallVector<Type> entries{i64, i64, ptr};
-      for (uint64_t i = 0; i < op.getEntries(); ++i)
-        entries.push_back(ptr);
-      auto type = mlir::LLVM::LLVMStructType::getLiteral(ctx, entries);
-      mlir::OpBuilder::InsertionGuard guard(rw);
-      rw.setInsertionPointToStart(module.getBody());
-      auto g = make<mlir::LLVM::GlobalOp>(rw, loc, type, /*isConstant=*/true,
-                                          mlir::LLVM::Linkage::LinkonceODR, sym,
-                                          mlir::Attribute());
-      mlir::Block *init = rw.createBlock(&g.getInitializerRegion());
-      rw.setInsertionPointToStart(init);
-      Value v = make<mlir::LLVM::ZeroOp>(rw, loc, type);
-      Value one =
-          make<mlir::LLVM::ConstantOp>(rw, loc, i64, rw.getI64IntegerAttr(1));
-      v = make<mlir::LLVM::InsertValueOp>(rw, loc, v, one,
-                                          llvm::ArrayRef<int64_t>{1});
-      make<mlir::LLVM::ReturnOp>(rw, loc, v);
-    }
+    emptyBlock(rw, module, loc, sym, op.getEntries());
     llvm::SmallVector<Value> out;
     Value desc = make<mlir::LLVM::AddressOfOp>(rw, loc, ptr, sym);
     out.push_back(make<mlir::LLVM::PtrToIntOp>(rw, loc, i64, desc));

@@ -12,6 +12,10 @@ namespace pia::migrate {
 // ADR 0064: `let n = type e` made an alias of `e` and now makes a new type.
 Rule typeMakesDistinct();
 
+// ADR 0046, a box's state: every contract states the state of each box over
+// a concept in its signature.
+Rule boxStates();
+
 } // namespace pia::migrate
 
 #endif // PIA_MIGRATE_RULES_RULES_H

@@ -20,6 +20,8 @@ interface Run @abi(c) = sig
     requires len xs = 2 && i < 2 && len s = 1
   let side_of : (xs : borrowed inout mutable [box Shape]) -> (i : usize) -> u8
     requires len xs = 2 && i < 2
+  let kind : (xs : borrowed inout mutable [box Shape]) -> (i : usize) -> u8
+    requires len xs = 2 && i < 2
 end
 
 let oom = type | OutOfMemory
@@ -117,3 +119,13 @@ let side_of (xs : borrowed inout mutable [box Shape]) (i : usize) : u8
   match consume<square> b with
   | Ok v -> v.side
   | Err _ -> 0
+
+(* What box_concept_test.c checks of the queries, which read word 0: 1
+   for a square, 2 for a rectangle, then 3 for any other full box. *)
+let kind (xs : borrowed inout mutable [box Shape]) (i : usize) : u8
+  requires len xs = 2 && i < 2
+= let b = xs.[i] in
+  if is<square> b then 1
+  else if is<rect> b then 2
+  else if is_full b then 3
+  else 0

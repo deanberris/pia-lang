@@ -26,24 +26,28 @@ let same (a : token) (b : token) : bool = a.id = b.id
 
 let unmet (b : box triangle) : box Shape
   requires b.state = 1
+  ensures full result
 (* CHECK: box_concept_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: {{.*}}triangle{{.*}}Shape
 *)
 = widen b
 
 let hidden (b : box token) : box Shape
   requires b.state = 1
+  ensures full result
 (* CHECK: box_concept_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: a value of the @linear type token cannot be boxed as a concept: the box would hide the obligation to release it (ADR 0046)
 *)
 = widen b
 
-let compare (x : box Shape) (y : box Shape) : bool =
+let compare (x : box Shape) (y : box Shape) : bool
+  requires full x && full y
+=
 (* CHECK: box_concept_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'same' cannot be called through a box over 'Shape': it takes 2 values of the concept's type, and two boxes may hold values of different types (ADR 0046, section 4)
 *)
   same x y
 
 (* take empties the box in its Ok arm, so the box is moved from there. *)
 let reuse (x : box Shape) (s : borrowed mutable [square]) : u32
-  requires len s = 1
+  requires len s = 1 && full x
 = let b : mutable box Shape = x in
   let d : mutable box square = { slot = s; state = 0 } in
   match take b d with

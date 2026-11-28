@@ -15,6 +15,10 @@ namespace pia::irgen {
 // so that expandErasedBoxes has something to do.
 bool hasErasedBoxes(const syntax::Node &program);
 
+// Whether `name` is a box over a concept that a program here made, as
+// `box_Shape`: its state is the theory's `full` (ADR 0046, a box's state).
+bool isConceptBox(const std::string &name);
+
 // A box over a concept, `box Shape r` (ADR 0046, steps 2 to 4), for the
 // verifier. A type function whose first parameter is `@unsized`, such as
 // `let box = let (@unsized t : type) (r : region) => type { ... }`, takes a
@@ -62,8 +66,12 @@ struct BoxOp {
   enum Kind { None, Pack, Call, Holds, Unpack, Empty } kind = None;
   std::string descriptor; // Pack, Holds, Empty: the descriptor's symbol
   std::vector<std::string> thunks; // Pack: one per callable requirement
-  int entry = 0;                   // Call: which requirement; Empty: how many
-  int words = 0;                   // Call: the box's words
+  int entry = 0; // Call: which requirement; Empty, and Holds of the empty
+                 // block: how many
+  int words = 0; // Call: the box's words
+  // Holds: the descriptor is the concept's empty control block, which the
+  // module defines if nothing else has.
+  bool emptyBlock = false;
 };
 BoxOp boxOp(const syntax::Node &item);
 

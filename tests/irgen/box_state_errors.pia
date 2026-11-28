@@ -1,0 +1,39 @@
+(* Every contract states a box's state (ADR 0046, a theory of a box's
+   state): a box a function takes in a `requires`, and a box it hands
+   back, as its result or an `inout` or `out` parameter, in an `ensures`.
+   With no such clause the error names the clause to add. A definition
+   with no contract of its own inherits its interface's, which is checked
+   instead.
+// RUN: not piac --emit=mlir --no-lint %s 2>&1 | FileCheck %s
+*)
+let box = let (@unsized t : type) (r : region) => type { slot : borrowed(r) mutable [t]; state : int }
+
+let meta Shape (t : type) : concept = sig
+  let area : (s : t) -> u32
+end
+
+let square = type { side : u8 }
+let area (s : square) : u32 = s.side
+
+(* CHECK: box_state_errors.pia:[[@LINE+2]]:1: error: 'size' takes the box 'x' and states no state for it: add 'requires full x', or 'requires unknown x' when callers may pass any (ADR 0046: every contract states a box's state)
+*)
+let size (x : box Shape) : u32 = area x
+
+(* CHECK: box_state_errors.pia:[[@LINE+2]]:1: error: 'make' returns a box and states no state for it: add 'ensures full result' or 'ensures unknown result' (ADR 0046: every contract states a box's state)
+*)
+let make (b : box square) : box Shape
+  requires b.state = 1
+= widen b
+
+(* CHECK: box_state_errors.pia:[[@LINE+2]]:1: error: 'swap' hands back the box 'x' and states no state it leaves it in: add 'ensures full x', 'ensures full x = false' or 'ensures unknown x' (ADR 0046: every contract states a box's state)
+*)
+let swap (x : inout mutable box Shape) (y : box Shape) : unit
+  requires full x && full y
+= x <- y
+
+(* Stated: no error. *)
+let fine (x : box Shape) : u32
+  requires unknown x
+= if is_full x then area x else 0
+(* CHECK-NOT: 'fine'
+*)
