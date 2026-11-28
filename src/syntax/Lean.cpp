@@ -68,6 +68,20 @@ bool isRecordType(const Node &item) {
          item.kids[3]->kids[0]->kind == N::RecordType;
 }
 
+bool isVariantType(const Node &item) {
+  return item.kind == N::LetItem && item.kids.size() > 3 &&
+         item.kids[0]->kids.empty() && item.kids[3]->kind == N::TypeValue &&
+         !item.kids[3]->kids.empty() &&
+         item.kids[3]->kids[0]->kind == N::Variants;
+}
+
+// The payload type of a constructor, or null when it has none.
+const Node *payload(const Node &ctor) {
+  if (ctor.kids.empty() || ctor.kids[0]->kind == N::None)
+    return nullptr;
+  return ctor.kids[0].get();
+}
+
 // Where an expression sits: in a statement, where `&&` is `∧` and a
 // comparison is a `Prop`, or in a value, where they are `Bool`.
 enum class Mode { Prop, Value };
@@ -75,9 +89,14 @@ enum class Mode { Prop, Value };
 class Emitter {
 public:
   Emitter(const Node &program, Diagnostics &diags) : diags_(diags) {
-    for (const NodePtr &k : program.kids)
-      if (k->kind == N::LetItem)
-        items_.emplace(k->text, k.get());
+    for (const NodePtr &k : program.kids) {
+      if (k->kind != N::LetItem)
+        continue;
+      items_.emplace(k->text, k.get());
+      if (isVariantType(*k))
+        for (const NodePtr &c : k->kids[3]->kids[0]->kids)
+          ctors_.emplace(c->text, std::make_pair(k.get(), c.get()));
+    }
   }
 
   // Emits the definition of `name` and everything it uses, once. False
@@ -114,6 +133,8 @@ public:
     std::string text;
     if (isRecordType(item))
       text = structure(item);
+    else if (isVariantType(item))
+      text = variant(item);
     else if (isByLean(item))
       text = statement(item);
     else if (hasWord(item.flags, "spec") && !hasWord(item.flags, "abstract"))
@@ -247,11 +268,29 @@ private:
                ".len → " + elem + ")";
       return out;
     }
+    if (t.kind == N::TypeName && machineRange(t.text)) {
+      auto r = machineRange(t.text);
+      return "(" + intLit(r->first) + " ≤ " + x + " ∧ " + x + " ≤ " +
+             intLit(r->second) + ")";
+    }
     if (t.kind == N::TypeName) {
-      if (auto r = machineRange(t.text))
-        return "(" + intLit(r->first) + " ≤ " + x + " ∧ " + x + " ≤ " +
-               intLit(r->second) + ")";
-      return "";
+      auto it = items_.find(t.text);
+      if (decidable)
+        return "";
+      if (it == items_.end() || !isVariantType(*it->second) ||
+          !ranged(*it->second))
+        return "";
+      // The payload's range, for the constructor that built `x`. `p'` is
+      // a name no program writes.
+      std::string out = "(match " + x + " with";
+      for (const NodePtr &c : it->second->kids[3]->kids[0]->kids) {
+        const Node *pay = payload(*c);
+        std::string r = pay ? range(*pay, "p'") : "";
+        if (r.empty())
+          continue;
+        out += " | " + ident(t.text) + "." + ident(c->text) + " p' => " + r;
+      }
+      return out + " | _ => True)";
     }
     if (t.kind == N::RangeType && t.kids.size() == 2)
       return "(" + expr(*t.kids[0], Mode::Value) + " ≤ " + x + " ∧ " + x +
@@ -276,6 +315,18 @@ private:
       if (machineRange(t.text) && !field)
         return "Int";
       auto it = items_.find(t.text);
+      if (it != items_.end() && isVariantType(*it->second)) {
+        if (field && ranged(*it->second)) {
+          fail(t.loc, "a record field or payload of a variant with machine "
+                      "integer payloads has no Lean translation yet (ADR "
+                      "0061, step 3)");
+          return "Int";
+        }
+        if (!need(t.text, t.loc))
+          return "Int";
+        use(t.text);
+        return ident(t.text);
+      }
       if (it != items_.end() && isRecordType(*it->second)) {
         if (!need(t.text, t.loc))
           return "Int";
@@ -353,6 +404,45 @@ private:
     std::string out = "structure " + ident(item.text) + " where\n";
     for (const NodePtr &f : item.kids[3]->kids[0]->kids)
       out += "  " + ident(f->text) + " : " + type(*f->kids[0], true) + "\n";
+    return out + "  deriving DecidableEq, Inhabited\n\n";
+  }
+
+  // Whether a payload has a range, which only a hypothesis can carry.
+  bool ranged(const Node &item) {
+    for (const NodePtr &c : item.kids[3]->kids[0]->kids) {
+      const Node *pay = payload(*c);
+      if (!pay)
+        continue;
+      const Node &t = pay->kind == N::Annot ? *pay->kids[1] : *pay;
+      if (t.kind == N::RangeType ||
+          (t.kind == N::TypeName && machineRange(t.text)))
+        return true;
+    }
+    return false;
+  }
+
+  // `let t = type | A of p | B`, as an inductive type. Its payload of a
+  // machine integer is an `Int`, whose range is the hypothesis range()
+  // writes for each value of the type.
+  std::string variant(const Node &item) {
+    std::string name = ident(item.text);
+    std::string out = "inductive " + name + " where\n";
+    for (const NodePtr &c : item.kids[3]->kids[0]->kids) {
+      const Node *pay = payload(*c);
+      out += "  | " + ident(c->text) + " : ";
+      if (pay) {
+        const Node &t = pay->kind == N::Annot ? *pay->kids[1] : *pay;
+        if (t.kind == N::TypeName && t.text == item.text) {
+          fail(pay->loc, "a recursive variant has no Lean translation yet "
+                         "(ADR 0061, step 3)");
+          return "";
+        }
+        bool machine = t.kind == N::RangeType ||
+                       (t.kind == N::TypeName && machineRange(t.text));
+        out += (machine ? std::string("Int") : type(*pay, true)) + " → ";
+      }
+      out += name + "\n";
+    }
     return out + "  deriving DecidableEq, Inhabited\n\n";
   }
 
@@ -549,6 +639,8 @@ private:
              " }";
     case N::Quantifier:
       return quantifier(n, m);
+    case N::Match:
+      return match(n, m);
     default:
       return unsupported(n, std::string("'") + nodeKindName(n.kind) + "'");
     }
@@ -567,6 +659,8 @@ private:
   std::string name(const Node &n) {
     if (auto it = locals_.find(n.text); it != locals_.end())
       return it->second;
+    if (auto c = ctor(n.text, n.loc))
+      return *c;
     if (n.text == "result")
       return unsupported(n, "'result'");
     if (!need(n.text, n.loc))
@@ -617,6 +711,12 @@ private:
     }
     if (locals_.count(head.text))
       return unsupported(n, "a call of a parameter");
+    if (n.kids.size() == 2 && ctors_.count(head.text)) {
+      auto c = ctor(head.text, head.loc);
+      if (!c)
+        return "default";
+      return "(" + *c + " " + expr(*n.kids[1], Mode::Value) + ")";
+    }
     // A conversion to `int` is exact (docs/verifier.md), so it is its
     // operand. An integer meets a machine type without one, where the
     // verifier proves it fits; `u8 x` converts a float, which has no
@@ -633,6 +733,67 @@ private:
     for (size_t i = 1; i < n.kids.size(); ++i)
       call += " " + expr(*n.kids[i], Mode::Value);
     return asProp(call + ")", m);
+  }
+
+  // A constructor of a variant type, by its full Lean name.
+  std::optional<std::string> ctor(const std::string &name, SourceLoc at) {
+    auto it = ctors_.find(name);
+    if (it == ctors_.end())
+      return std::nullopt;
+    const Node &type = *it->second.first;
+    if (!need(type.text, at))
+      return std::string("default");
+    use(type.text);
+    return ident(type.text) + "." + ident(name);
+  }
+
+  // `match e with | C x -> a | _ -> b`. The verifier has proved it
+  // exhaustive, and Lean checks it is too.
+  std::string match(const Node &n, Mode m) {
+    std::string out = "(match " + expr(*n.kids[0], Mode::Value) + " with";
+    for (size_t i = 1; i < n.kids.size(); ++i) {
+      const Node &arm = *n.kids[i];
+      if (arm.kind != N::Arm || arm.kids.size() < 2)
+        return unsupported(arm, "this match arm");
+      if (arm.kids.size() > 2 && arm.kids[2]->kind != N::None &&
+          !arm.kids[2]->kids.empty())
+        return unsupported(arm, "a match arm with a contract");
+      const Node &p = *arm.kids[0];
+      std::vector<std::string> bound;
+      std::string pat;
+      auto bind = [&](const Node &v) -> std::string {
+        if (v.kind != N::PVar)
+          return "";
+        if (v.text == "_")
+          return "_";
+        if (ctors_.count(v.text) || locals_.count(v.text))
+          return "";
+        locals_[v.text] = ident(v.text);
+        bound.push_back(v.text);
+        return ident(v.text);
+      };
+      if (p.kind == N::PVar && ctors_.count(p.text)) {
+        auto c = ctor(p.text, p.loc);
+        pat = c ? *c : "_";
+      } else if (p.kind == N::PVar) {
+        pat = bind(p);
+      } else if (p.kind == N::PCtor && ctors_.count(p.text)) {
+        auto c = ctor(p.text, p.loc);
+        pat = c ? *c : "_";
+        for (const NodePtr &k : p.kids) {
+          std::string x = bind(*k);
+          if (x.empty())
+            return unsupported(*k, "a nested pattern");
+          pat += " " + x;
+        }
+      }
+      if (pat.empty())
+        return unsupported(p, "this pattern");
+      out += " | " + pat + " => " + expr(*arm.kids[1], m);
+      for (const std::string &x : bound)
+        locals_.erase(x);
+    }
+    return out + ")";
   }
 
   std::string quantifier(const Node &n, Mode m) {
@@ -672,6 +833,8 @@ private:
 
   Diagnostics &diags_;
   std::map<std::string, const Node *> items_;
+  // Each constructor's variant type and its `Ctor` node.
+  std::map<std::string, std::pair<const Node *, const Node *>> ctors_;
   std::map<std::string, std::string> text_;
   std::map<std::string, std::set<std::string>> deps_;
   std::set<std::string> failed_;
